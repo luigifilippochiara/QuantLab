@@ -1,0 +1,3 @@
+# Snapshot files are hashed byte-for-byte (data/catalog.json). Disable end-of-line
+# conversion so a checkout on any OS gets identical bytes and identical hashes.
+data/snapshots/*.csv -text

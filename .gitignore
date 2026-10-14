@@ -1,10 +1,15 @@
 # Secrets: never commit real API keys (.env.example is the committed template)
 .env
 
-# Data snapshots: pulled or cached market data stays local.
-# The tiny synthetic file in data/sample/ IS committed so the demo runs out of the box.
-data/snapshots/
-*.parquet
+# Run records, plan cache and the monitoring event log are local, per machine.
+runs/
+
+# Evaluation reports are timestamped outputs; regenerate with `quantlab.cli eval`.
+eval/reports/*
+!eval/reports/.gitkeep
+
+# NOTE: data/snapshots/*.csv IS committed on purpose, so every run is reproducible
+# from a clean clone without network access (see data/README.md).
 
 # Python / uv
 .venv/
