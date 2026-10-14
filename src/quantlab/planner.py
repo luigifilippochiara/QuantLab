@@ -197,6 +197,14 @@ def make_client(settings: Settings) -> anthropic.Anthropic:
     )
 
 
+def api_error_message(exc: Exception, settings: Settings) -> str:
+    """describe_api_error, plus a hint when no API key is configured at all."""
+    message = describe_api_error(exc)
+    if not settings.has_api_key:
+        message += " (No ANTHROPIC_API_KEY is configured: set it in .env, or use mock mode.)"
+    return message
+
+
 def describe_api_error(exc: Exception) -> str:
     """One-line, user-facing description of an Anthropic SDK error (most specific first)."""
     if isinstance(exc, anthropic.AuthenticationError):
@@ -281,7 +289,7 @@ class AnthropicPlanner:
             )
         except Exception as exc:  # the SDK raises many error types; all become a G01
             result.latency_ms = round((time.perf_counter() - started) * 1000, 1)
-            result.error = describe_api_error(exc)
+            result.error = api_error_message(exc, self.settings)
             result.issues = [planner_failure_issue(result.error)]
             return result
 

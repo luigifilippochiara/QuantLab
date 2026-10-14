@@ -26,7 +26,7 @@ from pydantic import BaseModel, Field
 from quantlab.capabilities import count_episodes
 from quantlab.config import Settings
 from quantlab.plan import Plan, describe_plan
-from quantlab.planner import FALLBACK_BETA, describe_api_error, make_client
+from quantlab.planner import FALLBACK_BETA, api_error_message, make_client
 from quantlab.types import ANNUALISATION_FACTORS, Artifact, DataType
 from quantlab.validation import Issue
 
@@ -469,7 +469,7 @@ def _llm_narrative(
             fallbacks="default",
         )
     except Exception as exc:  # any API failure falls back to the deterministic template
-        return None, describe_api_error(exc)
+        return None, api_error_message(exc, settings)
 
     text = " ".join(b.text for b in response.content if b.type == "text").strip()
     if response.stop_reason in ("refusal", "max_tokens") or not text:
