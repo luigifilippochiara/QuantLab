@@ -9,6 +9,9 @@ returns but sum log returns). Metadata travels in the Artifact, never in
 pandas `.attrs`, so it is always visible and never silently dropped.
 """
 
+import hashlib
+import json
+import math
 from dataclasses import dataclass, field
 from enum import StrEnum
 from typing import Any
@@ -110,3 +113,65 @@ def date_span(series: pd.Series) -> tuple[int, str | None, str | None]:
     if series.empty:
         return 0, None, None
     return len(series), series.index[0].strftime("%Y-%m-%d"), series.index[-1].strftime("%Y-%m-%d")
+
+
+# Floats are written with 12 significant digits in the canonical form. That is far
+# beyond any meaningful precision of these statistics, yet it absorbs last-bit
+# differences between BLAS/CPU builds (e.g. in OLS), so a replay on another
+# machine still matches while any real change in a result does not.
+CANONICAL_SIGNIFICANT_DIGITS = 12
+
+
+def _canonical_scalar(value: Any) -> Any:
+    """Round floats to CANONICAL_SIGNIFICANT_DIGITS; leave other scalars unchanged."""
+    if isinstance(value, bool) or not isinstance(value, float):
+        return value
+    if math.isnan(value) or math.isinf(value):
+        return value
+    return float(f"{value:.{CANONICAL_SIGNIFICANT_DIGITS}g}")
+
+
+def _canonical_json(value: Any) -> Any:
+    """Recursively round the floats inside a (nested) dict or list."""
+    if isinstance(value, dict):
+        return {key: _canonical_json(item) for key, item in value.items()}
+    if isinstance(value, list):
+        return [_canonical_json(item) for item in value]
+    return _canonical_scalar(value)
+
+
+def canonical_text(artifact: Artifact) -> str:
+    """Deterministic text form of an artifact's value: the basis of its hash.
+
+    Series and flags become CSV ("date,value" lines); tables and test results
+    become JSON with sorted keys. The same value always gives the same text, on
+    any machine, so the same inputs always give the same hash. This text is
+    also what lineage saves as the step's output file.
+
+    Args:
+        artifact: the artifact to serialise.
+
+    Returns:
+        The canonical text.
+    """
+    if isinstance(artifact.value, pd.Series):
+        lines = ["date,value"]
+        for date, value in artifact.value.items():
+            shown = str(bool(value)) if artifact.data_type == DataType.FLAGS else value
+            if not isinstance(shown, str):
+                shown = repr(_canonical_scalar(float(shown)))
+            lines.append(f"{date:%Y-%m-%d},{shown}")
+        return "\n".join(lines) + "\n"
+    return json.dumps(_canonical_json(artifact.value), sort_keys=True, indent=2) + "\n"
+
+
+def artifact_hash(artifact: Artifact) -> str:
+    """SHA-256 of an artifact's canonical text.
+
+    Args:
+        artifact: the artifact.
+
+    Returns:
+        64-character hex digest.
+    """
+    return hashlib.sha256(canonical_text(artifact).encode("utf-8")).hexdigest()

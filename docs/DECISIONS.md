@@ -148,3 +148,37 @@ sidebar and tests all need them, so they live in one place instead of inside
 planner.py. Scenario C's canned plan is deliberately bad (the validator catches
 G02 and G08); scenario D's is a planner refusal (G13), so the demo shows both
 lines of defence.
+
+## Execution, lineage and monitoring
+
+**The executor is the final gate.** `execute_plan` re-runs `validate_plan` and
+refuses to start if any BLOCK exists or any APPROVAL issue id is not in the
+approved set. The engine checks the same things first (to drive the UI), but
+the executor does not trust its caller, so notebooks, tests and replay cannot
+skip the checks.
+
+**Output hashes use a canonical text with floats rounded to 12 significant
+digits.** Series become `date,value` CSV lines, tables and test results become
+JSON with sorted keys. The 12-digit rounding absorbs last-bit differences between
+BLAS builds (OLS, ADF), so a replay on another machine still matches, while any
+change that matters does not. The saved output file IS this canonical text, so
+`shasum -a 256 runs/<id>/outputs/<file>` equals the hash in the manifest.
+
+**R03 is checked from what `load_series` actually dropped**
+(`meta.n_dropped_missing`), not from catalog counts. **R04** compares the size of
+the inner join with the size of EACH input and warns if either lost more than
+10%. Scenario F triggers it with the real data: DGS2 starts in 1976 and DGS10 in
+1962, so the spread silently loses 22% of the 10-year history. That warning is
+correct, so F completes "with warnings" rather than cleanly.
+
+**Two extra event types**, `plan_validated` and `execution_finished`, carry the
+validation and execution stage latencies needed for the per-stage latency
+table; the spec's list had no event that closes those stages.
+
+**A run's final status is its LAST terminal event.** A plan that is blocked,
+then edited and executed, emits `run_failed` (blocked) and later
+`run_completed` under the same run id; the dashboard counts it once, as completed.
+
+**The manifest records the git commit and whether the tree was dirty**, in
+addition to the library versions, because `registry_version` only changes when a
+capability's interface changes, not when its code does.
