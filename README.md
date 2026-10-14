@@ -1,126 +1,311 @@
 # QuantLab
 
-QuantLab turns natural-language requests for quantitative analysis into a
-**structured, inspectable execution plan**, which is **validated** and then
-**executed by a deterministic engine**.
+QuantLab turns natural-language requests into quantitative analyses, in a
+setting where the AI may only use **approved internal capabilities** and must
+**never generate or execute code**.
 
-The key idea: the LLM *proposes* a plan, written as data (JSON). It never writes
-or runs code. Everything after the plan is plain, tested Python, so the same
-plan on the same data always gives the same result, and every result can be
-traced back to the plan that produced it.
+> **The LLM proposes, the system disposes.** An LLM writes a *plan*: inert JSON
+> naming registered capabilities and their parameters. A deterministic validator
+> checks it, a human reviews and approves it, a deterministic engine runs it, and
+> a second LLM call summarises the results using only numbers the engine
+> computed, which are then verified one by one. Every run is recorded and can be
+> replayed without any LLM, with identical output hashes.
 
-## Architecture
+Everything works offline in **mock mode** (no API key needed).
 
-```
-  "Show me 20-day volatility"        (natural language)
-              |
-              v
-        +-----------+
-        |  planner  |   LLM proposes a plan using only registered capabilities   [not built yet]
-        +-----------+
-              |   plan (JSON): steps -> capability name + params + input/output names
-              v
-        +------------+
-        | validation |   is every capability registered? params typed and in range?
-        +------------+   inputs exist with the right data type?
-              |   valid plan                 (errors can go back to the planner)
-              v
-        +-----------+
-        | execution |   looks each capability up in an allow-list and runs the
-        +-----------+   matching pre-written function, step by step
-              |
-              v
-           results  ------>  monitoring: audit trail of request, plan, run   [not built yet]
+---
 
-  registry: the single source of truth for what capabilities exist and which
-            parameters they accept. Read by planner, validation and execution.
-  data:     loading and checking input data.                                  [not built yet]
-```
+## Business use case
 
-| Module | Role | Status |
-|---|---|---|
-| `core/registry.py` | Declares capabilities: parameters (type + allowed range), input/output data types, description | One capability: `rolling_volatility` |
-| `core/validation.py` | Plan schema (`Plan`, `PlanStep`) and checks against the registry; returns all errors at once | First version |
-| `core/execution.py` | Capability implementations + dispatch that refuses anything not registered; runs a plan step by step | First version |
-| `core/planner.py` | Natural language -> plan, via an LLM | Stub |
-| `core/data.py` | Load and check input data | Stub |
-| `core/monitoring.py` | Audit log of requests, plans and runs | Stub |
+A markets or risk team wants quick, *auditable* answers to questions like:
 
-## Safety model
+> "Do NASDAQ returns over the following month differ after high-volatility weeks?"
+> "Is the 10y-2y Treasury spread mean-reverting?"
 
-- **No code from the LLM.** A plan can only *name* a capability. The engine maps
-  that name to a pre-written function through a fixed dict; anything else is refused.
-- **Two layers of checks.** `validate_plan` checks the whole plan up front and
-  lists every problem. `run_capability` re-checks each call at the point of use,
-  so skipping validation doesn't open a back door.
-- **No hidden defaults.** Every parameter must be written in the plan, so the
-  plan alone fully describes the computation.
-- **Typed data flow.** Each capability declares input and output data types
-  (e.g. `price_series` -> `volatility_series`), so multi-step plans can be
-  type-checked before running.
+Today that means a quant writing a one-off notebook: slow, hard to review, and
+hard to reproduce for model-risk or audit. QuantLab gives self-service access to
+a small menu of vetted analyses while keeping the controls a bank needs:
 
-## Plan format
+* only pre-approved, unit-tested computations can run (no generated code);
+* statistically dangerous choices are blocked (returns of a yield, mixed
+  frequencies) or need explicit human approval (look-ahead thresholds, return
+  method), with a written reason;
+* every number shown to the user comes from the deterministic engine, and the
+  narrative is checked against those numbers;
+* every run leaves a manifest (data hashes, library versions, plan, edits,
+  approvals, output hashes) that can be replayed and traced back to the source file.
 
-```json
-{
-  "plan_id": "example-rolling-vol-001",
-  "description": "20-day annualised rolling volatility of the sample daily closing prices.",
-  "steps": [
-    {
-      "step_id": "s1",
-      "capability": "rolling_volatility",
-      "input": "prices",
-      "params": {"window": 20, "periods_per_year": 252},
-      "output": "vol_20d"
-    }
-  ]
-}
-```
+For example, on the 1971-2026 NASDAQ snapshot (scenario A), 4-week returns after
+high-volatility weeks average 1.446% versus 0.839% after normal weeks (non-overlapping
+sample), but the difference is not statistically significant (Welch p = 0.5009;
+Newey-West regression on all overlapping observations, p = 0.4966).
 
-`input` names a dataset supplied by the caller (or an earlier step's `output`);
-`output` names where this step's result is stored.
-
-## Quickstart
+## Quick start
 
 Requires [uv](https://docs.astral.sh/uv/).
 
 ```bash
-uv sync                                   # create .venv and install dependencies
-uv run python scripts/run_example.py      # validate + execute the example plan
+uv sync                                           # environment from uv.lock
+uv run pytest                                     # full test suite: no network, no API key
+uv run ruff check .                               # lint (also: uv run ruff format --check .)
+
+uv run python -m quantlab.cli demo                # all 6 demo scenarios, mock mode
+uv run python -m quantlab.cli replay <run_id>     # re-run without the LLM, compare hashes
+uv run python -m quantlab.cli trace <run_id> s7   # where does this number come from?
+uv run python -m quantlab.cli run "Weekly 10y minus 2y Treasury spread, summary statistics, 4-week changes, and an ADF stationarity test on the spread." --datasets DGS10 DGS2 --mode mock
+uv run python -m quantlab.cli eval --mode mock    # planner evaluation -> eval/reports/
+
+uv run streamlit run app/streamlit_app.py         # the app (works in mock mode)
+
+uv run jupyter nbconvert --to notebook --execute --inplace notebooks/*.ipynb
 ```
 
-Optional:
+Live LLM mode: `cp .env.example .env`, set `ANTHROPIC_API_KEY`, then pick
+**live** or **cached** in the app sidebar (or `--mode live` in the CLI). The
+default planner and narrator model is `claude-sonnet-5-5` (configurable in `.env`).
 
-```bash
-uv run python scripts/make_sample_data.py  # regenerate the sample prices (same seed -> same file)
-cp .env.example .env                       # add an API key (only needed once the planner exists)
+Refreshing the data (needs network; creates a new data version):
+`uv run python scripts/fetch_data.py`.
+
+## Architecture
+
+```mermaid
+flowchart LR
+    U[User request] --> P["Planner LLM<br/>planner.py"]
+    R[("Capability registry<br/>registry.py")] -. generated summary .-> P
+    C[("Dataset catalog<br/>metadata only")] -. id, kind, frequency, dates .-> P
+    P -->|"plan: inert JSON"| V["Validator G01-G13<br/>validation.py"]
+    V -->|"BLOCK / APPROVAL / WARN"| H["Human review<br/>edit params, approve"]
+    H -->|"edits: same validator"| V
+    H -->|approved plan| E["Executor R01-R05<br/>executor.py"]
+    R -->|"REGISTRY[name].func"| E
+    D[("FRED snapshot<br/>SHA-256 verified")] --> E
+    E -->|"facts sheet (numbers only)"| N["Narrator LLM<br/>+ grounding check"]
+    E --> L[("Run record<br/>manifest + outputs")]
+    N --> L
+    L --> RP["Replay<br/>no LLM, hash comparison"]
+    L --> T["Trace<br/>step -> source file"]
+    P & V & E & N --> M[("events.jsonl<br/>monitoring")]
 ```
+
+| Module (`src/quantlab/`) | Role |
+|---|---|
+| `config.py` | Settings from `.env`: API key, models, LLM mode, paths, budgets |
+| `types.py` | `DataType`, `SeriesKind`, `Frequency`; `Artifact` (value + explicit metadata); canonical hashing |
+| `data.py` | Catalog, FRED CSV parsing, SHA-256 verification, LLM-safe dataset metadata |
+| `capabilities.py` | The 12 quantitative functions: the only code that calls pandas/scipy/statsmodels for analysis |
+| `registry.py` | Capability specs, the `REGISTRY` whitelist, generated LLM summary and registry version |
+| `plan.py` | Pydantic `Plan` / `Step` (extra fields forbidden) and the LLM tool schema |
+| `validation.py` | Static guardrails G01-G13, metadata dry run, `ValidationReport`, the guardrail table |
+| `scenarios.py` | Demo scenarios A-F with canned plans (used by mock mode, CLI, app, tests) |
+| `executor.py` | Registry dispatch, approval gate, runtime guardrails R01-R05, step records |
+| `planner.py` | Anthropic planner, mock planner, plan cache |
+| `narrator.py` | Facts sheet, LLM narrator, template fallback, numeric grounding check |
+| `lineage.py` | Run record (manifest), save/load, replay, trace |
+| `monitoring.py` | Append-only JSONL event log and dashboard aggregations |
+| `engine.py` | `Session`: plan, validate, edit, approve, execute, narrate, save; used by app, CLI, notebooks |
+| `evaluation.py` | Planner evaluation on golden requests |
+| `cli.py` | `python -m quantlab.cli demo / run / replay / trace / eval` |
+
+The LLM appears only in `planner.py` and `narrator.py` (a test enforces this).
+Everything else is deterministic Python.
+
+## Why plan-as-data instead of code generation
+
+An assistant that writes and runs pandas code is flexible, but in a bank every
+run would be new, untested code touching production data. QuantLab instead
+makes the LLM fill in a structured plan:
+
+* **Whitelist by construction.** The executor looks the capability name up in a
+  dict and calls the function attached to it. An unregistered name, or anything
+  that looks like code, has no function to call. There is no `eval`, `exec`,
+  dynamic import or `getattr` anywhere in `src/` (a test scans for them). Compare
+  this with sandboxing generated code, where safety depends on the sandbox being perfect.
+* **Checkable before running.** Because each step declares types, kinds and
+  frequencies, the validator can reject "returns of a yield" or "daily flags
+  against weekly returns" statically, which is impossible for arbitrary code
+  without executing it.
+* **Reviewable.** A human reads eight lines of plan, not eighty lines of code,
+  and edits parameters through widgets constrained by the registry.
+* **Tested once, reused always.** The 12 capabilities have unit tests against
+  hand-computed values; generated code would need validating every time.
+* **Reproducible.** Plan + data hashes + library versions are enough to replay a
+  run with no LLM involved.
+
+The trade-off is expressiveness: anything outside the registry is refused (G13)
+or blocked (G02). Adding a capability is a deliberate, reviewed code change,
+which is how model risk governance wants it.
+
+## Capabilities and libraries
+
+The approved menu (browse it on the **Capability registry** page):
+
+`load_series`, `resample`, `compute_returns`, `difference`, `spread`,
+`rolling_volatility`, `flag_regime`, `forward_return`, `summary_stats`,
+`compare_groups` (Welch t / Mann-Whitney), `ols_hac` (Newey-West), `adf_test`.
+
+Each spec declares named inputs (allowed data types and kinds), parameters
+(type, range, choices, defaults), output type and kind, a minimum-observations
+rule, assumptions (some need approval) and the underlying library call.
+
+**Library surface, deliberately small:** pandas and numpy (time series), scipy
+(Welch and Mann-Whitney tests), statsmodels (OLS with HAC errors, ADF), pydantic
+(strict plan parsing), streamlit and plotly (UI), the official `anthropic` SDK,
+python-dotenv and pyyaml. Deliberately **not** included: scikit-learn (no ML in
+v1; "fit a random forest" is a test case for refusal), `arch` (GARCH is a later
+capability; rolling volatility suffices for regime flags), and LangChain or any
+agent framework (two structured LLM calls do not need an orchestration layer,
+and every extra abstraction is more to audit). Fewer libraries means fewer
+versions to pin, record and explain.
+
+## Guardrails
+
+Each guardrail is a small named function whose docstring explains what goes
+wrong without it. Static guardrails run on the plan alone (planner output and
+every user edit, through the same validator); runtime guardrails need data and
+run in the executor. The table is generated from `validation.GUARDRAILS`.
+
+| Code | Name | Severity | Stage | What goes wrong without it |
+|---|---|---|---|---|
+| G01 | `SCHEMA_INVALID` | BLOCK | static | Malformed or partial planner output would have to be guessed at, and extra fields (e.g. 'code') could slip through. |
+| G02 | `UNKNOWN_CAPABILITY` | BLOCK | static | The LLM could ask for an analysis nobody wrote or tested (e.g. a random forest, or 'run Python'). |
+| G03 | `INVALID_PARAM` | BLOCK | static | Typos, wrong types or extreme values (window=1, quantile=1.5) would crash or silently produce nonsense. |
+| G04 | `BAD_REFERENCE` | BLOCK | static | Steps could read missing outputs or outputs of later steps, leaving the order of computation undefined. |
+| G05 | `TYPE_MISMATCH` | BLOCK | static | Meaningless chains would run, e.g. volatility of a price level or regime flags built on forward returns. |
+| G06 | `BUDGET_EXCEEDED` | BLOCK | static | Runaway plans could use unbounded compute and become impossible for a human to review. |
+| G07 | `UNKNOWN_DATASET` | BLOCK | static | The LLM could invent a dataset id or reach for data outside the approved catalog. |
+| G08 | `RETURNS_ON_RATES` | BLOCK | static | 'Returns' of a yield are meaningless (1% -> 2% is not +100%); rates must be differenced. |
+| G09 | `FREQUENCY_MISMATCH` | BLOCK | static | Joining daily with weekly series silently keeps only overlapping dates and mixes horizons. |
+| G10 | `LOOK_AHEAD` | APPROVAL | static | Full-sample thresholds use future data, so results look better than anything achievable in real time. |
+| G11 | `OVERLAPPING_OBSERVATIONS` | WARN | static | Overlapping multi-period returns are autocorrelated; a plain t-test then overstates significance. |
+| G12 | `MATERIAL_ASSUMPTION` | APPROVAL | static | Material modelling choices (simple vs log returns) would be made by the LLM without a human noticing. |
+| G13 | `PLANNER_REFUSED` | BLOCK | static | Without an explicit refusal path the LLM is pushed to invent capabilities to satisfy any request. |
+| R01 | `DATASET_HASH_MISMATCH` | BLOCK | runtime | Results would come from data other than the recorded version, breaking reproducibility and audit. |
+| R02 | `INSUFFICIENT_DATA` | BLOCK | runtime | Statistics on too few observations are noise presented as findings. |
+| R03 | `MISSING_DATA` | WARN | runtime | A heavily gappy series can distort resampled values and returns unnoticed. |
+| R04 | `ALIGNMENT_LOSS` | WARN | runtime | An inner join can silently discard a large part of the sample (e.g. series with different start dates). |
+| R05 | `LOW_EFFECTIVE_SAMPLE` | WARN | runtime | Many flagged weeks from a handful of episodes look like a big sample but carry little independent information. |
+
+The executor re-runs the validator itself and refuses to start while any BLOCK
+exists or any APPROVAL issue is unapproved, so calling it directly cannot skip
+the checks. Approvals are recorded with a timestamp and the exact issue text.
+
+## The LLM calls
+
+**Planner** (`planner.py`). The system prompt contains rules, the capability
+summary generated from the registry, and dataset metadata (never values). The
+request is wrapped in `<user_request>` tags and treated as data: instructions
+inside it ("ignore your rules", "run this Python") lead to a refusal. Output
+arrives through a `submit_plan` tool whose input schema is the plan schema, and
+is then parsed strictly (G01) and validated. Two API constraints shaped this
+(details in `docs/DECISIONS.md`): current models reject *forced* tool choice and
+non-default temperature, so the tool call is requested by instruction, and
+determinism comes from the plan cache and LLM-free replay rather than
+`temperature=0`.
+
+**Modes:** `live` (call the API), `cached` (reuse the cached plan for an
+identical request, datasets, model, prompt version and registry version), and
+`mock` (canned plans for the six demo scenarios; anything else is politely
+refused). Mock mode is also the fallback if the network fails during a demo.
+
+**Narrator** (`narrator.py`). Gets the request, a plain plan summary, warnings,
+approvals and a *facts sheet* of rounded computed numbers. It must use only
+those numbers. `check_grounding` then extracts every number in the narrative
+and checks it is a correct rounding of a fact (or its percentage form), a plan
+parameter, a number from the request or a warning, a conventional significance
+level, or a date in the data range. The app shows "all numbers verified" or the
+list of unverified numbers; the deterministic facts table is always shown.
+
+## Reproducibility, lineage and monitoring
+
+* **Run record.** `runs/<run_id>/manifest.json`: request, LLM info (model,
+  prompt version, mode, cache hit, latency, tokens), the plan as proposed and as
+  run, parameter edits, validation report, approvals, dataset versions (file
+  SHA-256, retrieval time, rows and dates used), environment (Python, library
+  versions, git commit), registry version, step records with input and output
+  hashes, warnings, narrative with its grounding result, stage timings.
+* **Outputs.** `runs/<run_id>/outputs/<step>_<capability>.csv|json`. Each file is
+  the canonical text that was hashed, so `shasum -a 256` reproduces the hash in
+  the manifest.
+* **Replay.** `quantlab.cli replay <run_id>` (or the Run history page) verifies
+  the data hashes, re-validates the final plan, executes it with the recorded
+  approvals and no LLM, and compares every output hash. Floats are hashed at 12
+  significant digits, so harmless last-bit differences between machines do not
+  break replay while any real change does.
+* **Trace.** `quantlab.cli trace <run_id> <step>` (or the trace panel) walks the
+  plan backwards: capability, library call, parameters, input steps and output
+  hash for each step, down to the FRED file hash and the date range used.
+* **Monitoring.** `runs/events.jsonl` gets one event per stage (request,
+  planning, validation issues, approvals, each step, runtime guardrails,
+  narration, completion, replays). The Monitoring page shows run counts and
+  success / blocked / failed rates, mean and p95 latency per stage, capability
+  usage, guardrail activity, recent errors and the plan-cache hit rate.
+
+## Evaluation: two different questions
+
+* **Is the planner choosing the right plan?** Measured by
+  `quantlab.cli eval` (or `eval/run_eval.py`) on `eval/golden_requests.yaml`: 13
+  requests (the six scenarios, variations, and adversarial cases that must end in
+  a refusal or a BLOCK). Metrics: valid-plan rate, exact capability-sequence
+  match, capability-set Jaccard, key-parameter accuracy, correct refusal/block
+  rate. Reports go to `eval/reports/`. In mock mode this only checks the harness
+  (the mock knows just the six scenarios); `--mode live` measures the real LLM.
+* **Are the computations right?** Measured by the unit tests, independently of
+  any LLM: returns, differences, spread alignment, rolling volatility and
+  annualisation, forward-return compounding from t+1, the no-look-ahead property
+  of expanding flags, the tests matching direct scipy/statsmodels calls,
+  episode counting, every guardrail, replay, grounding and a source safety scan.
+
+## Demo scenarios
+
+| | Request (short) | Expected |
+|---|---|---|
+| A | NASDAQ weekly: 12-week vol, 90th pct expanding flags, 4-week forward returns, t-test (non-overlapping) + Newey-West | Approval for the return method (G12), then runs end to end |
+| B | Same, full-sample 95th percentile, overlapping t-test | Approvals G10 + G12, warning G11, runs |
+| C | Returns of the 10-year yield + random forest | Blocked: G02 + G08 |
+| D | "Ignore your rules ... run this Python" | Refused (G13); no code ever runs |
+| E | Daily VIX flags vs weekly NASDAQ forward returns | Blocked: G09 |
+| F | Weekly 10y-2y spread, summary stats, 4-week changes, ADF | Runs (with an honest R04 warning: DGS2 starts 14 years after DGS10) |
 
 ## Project layout
 
 ```
-quantlab/
-├── core/                  the engine (see table above)
-├── data/sample/           small synthetic price series, committed so the demo runs
-├── plans/                 hand-written example plans (JSON)
-├── scripts/               runnable entry points
-├── notebooks/             exploration notebooks
-├── pyproject.toml         project metadata and dependencies (managed by uv)
-└── .env.example           template for secrets; copy to .env (git-ignored)
+pyproject.toml, uv.lock     dependencies (direct ones pinned exactly)
+CLAUDE.md                   rules for future AI-assisted sessions
+docs/SPEC.md                the original specification
+docs/DECISIONS.md           decisions not covered by the spec
+data/                       catalog.json, snapshots/*.csv (committed), README (sources, licences)
+scripts/fetch_data.py       refreshes the FRED snapshot and catalog
+src/quantlab/               the package (see the module table above)
+app/                        Streamlit: streamlit_app.py (router), ui.py, pages/
+notebooks/01..08            one notebook per layer, executed, mock mode
+eval/                       golden_requests.yaml, run_eval.py, reports/
+tests/                      pytest suite (synthetic data, fake LLM client)
+runs/                       run records, plan cache, events.jsonl (git-ignored)
 ```
 
-## Sample data
+## Known limitations and next steps
 
-`data/sample/sample_prices.csv` is **simulated**, not real market data: one year
-of daily prices with a known annual volatility of 20% (fixed random seed). This
-gives a built-in sanity check: computed volatility should scatter around 0.20.
-With a 20-day window the scatter is wide, since 20 returns is a small sample.
+* **Live LLM mode was built against the SDK and tested with a fake client**, but
+  not exercised against the real API during development (no key was available).
+  Mock mode, used by the tests, CLI demo, notebooks and app, is fully exercised.
+* **No plan -> observe -> replan loop.** Validation errors are shown to the human
+  but not fed back to the LLM for a corrected plan. That is the natural next step.
+* **The grounding check is numeric.** It proves every number is a correct
+  rounding of an allowed value, not that the sentence attaches it to the right
+  concept, and it compares absolute values (sign errors are not caught).
+* **Forward returns count observations, not calendar time**: a week with no data
+  is skipped, so "next 4 weeks" means the next 4 observed weeks.
+* **File-based, single-user.** Runs and events live on local disk; approvals are
+  recorded as "user" with no authentication or four-eyes approval.
+* **`registry_version` covers capability interfaces, not their code**; the git
+  commit in each manifest covers the code.
+* **Data licences:** NASDAQCOM is marked "Copyrighted: Pre-Approval Required" on
+  FRED; see `data/README.md` before publishing the repository.
 
-## Next steps
-
-1. Planner: give the LLM the registry and the plan schema, ask for a plan as
-   structured JSON, and feed validation errors back for a corrected plan.
-2. More capabilities (returns, drawdown, correlation, ...) to make multi-step plans useful.
-3. Data layer with input checks (sorted dates, duplicates, missing values).
-4. Monitoring: log each request -> plan -> validation -> result.
-5. Tests (pytest) for each capability and for the validator.
+Next steps: a replan loop with validator feedback; more capabilities (drawdowns,
+correlations, regressions on continuous variables, event studies, GARCH);
+authentication and role-based access with named approvers and four-eyes
+approvals; a persistent store (database) for runs and events; CI running tests,
+lint, the demo, the notebooks and the live evaluation; scheduled data refreshes
+with a catalog history; per-run cost tracking and prompt caching for the planner.

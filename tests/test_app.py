@@ -4,7 +4,6 @@ Covers the demo path: scenario A planned, approved, executed, narrated, traced
 and replayed; a blocked scenario cannot execute; the other pages render.
 """
 
-
 import pytest
 from streamlit.testing.v1 import AppTest
 

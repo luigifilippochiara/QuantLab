@@ -304,3 +304,20 @@ always refers to the issue text of the plan that actually runs.
 **The app is regression-tested headlessly** with `streamlit.testing.AppTest`
 (scenario A planned, approved, executed, narrated, traced and replayed; a
 blocked scenario cannot execute; all pages render).
+
+## Notebooks and documentation
+
+**Notebooks are committed executed, in mock mode, on the real snapshot.** Each
+of the eight notebooks starts with a markdown cell on what its layer does and
+why, imports everything from `quantlab` (no logic is copied) and is executed with
+`jupyter nbconvert --execute --inplace`, so a reader sees outputs without
+running anything. Outputs avoid absolute paths. Notebook 05 switches to live
+mode automatically when `ANTHROPIC_API_KEY` is set. They write their runs to
+`runs/` like the app and the CLI. No charts are embedded, to keep the files small.
+
+**The README's guardrail table is checked against the code** (`tests/test_docs.py`),
+as are the capability names, so the documentation cannot silently drift.
+
+**Evaluation reports are not committed** (`eval/reports/` is git-ignored except
+for a `.gitkeep`): they are timestamped outputs; regenerate them with
+`quantlab.cli eval`.
