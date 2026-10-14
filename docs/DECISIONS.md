@@ -110,3 +110,41 @@ the test's power.
 
 **TEST_RESULT values are `{"test", "statistic", "p_value", "details"}`.** For
 `ols_hac` the statistic is the t-statistic of the flag coefficient.
+
+## Plans and validation
+
+**The LLM tool schema is the Plan schema minus `plan_id` and `request`.** The
+system sets those two fields itself; asking the LLM to echo the request would
+waste tokens and invite tampering. The Step definition is inlined (no `$ref`)
+so the tool schema is one self-contained object.
+
+**Strict parameter types, no coercion.** `"12"` is not an int, `true` is not an
+int (Python treats bool as int, so this is checked explicitly) and NaN fails
+every range check. A live LLM very rarely writes `12.0` for an integer, and if
+it does, G03 says so clearly. Alternative: let Pydantic coerce, rejected because
+silent conversions are exactly what an audit trail should not contain.
+
+**Extra guardrail cases folded into existing codes.** An empty (non-refusal)
+plan is G01; duplicate step ids and unknown input names are G04; the request
+length and the number of distinct datasets are G06 budgets (default 2,000
+characters and 5 datasets) alongside the 15-step limit.
+
+**G08 replaces G05 for returns of a rate.** `compute_returns` on a `rate_level`
+input would also be a kind mismatch (G05); only the more specific G08 is
+reported because its suggestion ("use difference") is the actionable one.
+
+**The dry run's parameter-driven metadata is declared in the registry**
+(`meta_from_params`, e.g. resample sets `frequency` from `freq`). The validator
+predicts output metadata from it; a test runs scenario A on synthetic data and
+checks the prediction equals what the capability functions actually produced.
+
+**Issue ids are `code:step[:key]`** (e.g. `G12:s3:return_method`). Approvals are
+recorded against these ids. Any parameter edit re-validates the plan and clears
+earlier approvals, so an approval always refers to the plan as it will run.
+
+**A `scenarios.py` module (not in the spec's layout)** holds the six demo
+scenarios and their canned plans as plain data. The MockPlanner, CLI demo, app
+sidebar and tests all need them, so they live in one place instead of inside
+planner.py. Scenario C's canned plan is deliberately bad (the validator catches
+G02 and G08); scenario D's is a planner refusal (G13), so the demo shows both
+lines of defence.

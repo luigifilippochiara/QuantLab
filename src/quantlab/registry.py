@@ -16,7 +16,7 @@ us in code, hold function references, and are never parsed from outside input.
 import hashlib
 import json
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any, Literal
 
 from quantlab import capabilities
@@ -124,6 +124,9 @@ class CapabilitySpec:
         assumptions: modelling assumptions (some need approval).
         library_calls: the underlying library calls, for traceability.
         reads_catalog: True only for load_series; the executor passes the catalog.
+        meta_from_params: output metadata fields set from a parameter, e.g.
+            {"frequency": "freq"} for resample. The validator's dry run uses this
+            to predict output metadata without running anything.
     """
 
     name: str
@@ -137,6 +140,7 @@ class CapabilitySpec:
     assumptions: tuple[Assumption, ...]
     library_calls: str
     reads_catalog: bool = False
+    meta_from_params: dict[str, str] = field(default_factory=dict)
 
     def param(self, name: str) -> ParamSpec | None:
         """Return the ParamSpec called `name`, or None."""
@@ -221,6 +225,7 @@ RESAMPLE = CapabilitySpec(
         ),
     ),
     library_calls="pandas.Series.resample('W-FRI' | 'ME').last() | .mean()",
+    meta_from_params={"frequency": "freq"},
 )
 
 COMPUTE_RETURNS = CapabilitySpec(
@@ -268,6 +273,7 @@ COMPUTE_RETURNS = CapabilitySpec(
         ),
     ),
     library_calls="P / P.shift(k) - 1 (pandas) | numpy.log(P / P.shift(k))",
+    meta_from_params={"return_method": "method", "periods": "periods"},
 )
 
 DIFFERENCE = CapabilitySpec(
@@ -288,6 +294,7 @@ DIFFERENCE = CapabilitySpec(
         Assumption("units", "Changes are in the input's units (percentage points for yields)."),
     ),
     library_calls="pandas.Series - pandas.Series.shift(k)",
+    meta_from_params={"periods": "periods"},
 )
 
 SPREAD = CapabilitySpec(
@@ -451,6 +458,7 @@ FORWARD_RETURN = CapabilitySpec(
     library_calls=(
         "((1 + r).rolling(h).apply(numpy.prod) - 1).shift(-h) | r.rolling(h).sum().shift(-h)"
     ),
+    meta_from_params={"horizon": "horizon"},
 )
 
 SUMMARY_STATS = CapabilitySpec(

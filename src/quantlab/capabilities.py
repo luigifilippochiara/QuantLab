@@ -117,6 +117,11 @@ def count_episodes(flags: pd.Series) -> int:
     return int(starts.sum())
 
 
+def merged_sources(*artifacts: Artifact) -> list[str]:
+    """Source dataset ids of several artifacts, each id once, in order of first appearance."""
+    return list(dict.fromkeys(d for a in artifacts for d in a.meta.source_dataset_ids))
+
+
 def _flag_split(values: Artifact, flags: Artifact) -> pd.DataFrame:
     """Inner-join a value series with a flag series into columns "value" and "flag"."""
     joined = inner_join(values.value, flags.value, ("value", "flag"))
@@ -287,13 +292,11 @@ def spread(a: Artifact, b: Artifact) -> Artifact:
     """
     joined = inner_join(a.value, b.value, ("a", "b"))
     result = (joined["a"] - joined["b"]).rename("spread")
-    # Keep each dataset id once, in order of first appearance.
-    sources = list(dict.fromkeys(a.meta.source_dataset_ids + b.meta.source_dataset_ids))
     meta = derive_meta(
         a.meta,
         result,
         kind=SeriesKind.SPREAD,
-        source_dataset_ids=sources,
+        source_dataset_ids=merged_sources(a, b),
         notes=["a - b on the inner join of both date indexes"],
     )
     return Artifact(value=result, data_type=DataType.SERIES, meta=meta)
@@ -537,6 +540,7 @@ def compare_groups(
         values.meta,
         joined["value"],
         kind=None,
+        source_dataset_ids=merged_sources(values, flags),
         notes=[f"{test} on {len(joined)} observations (nonoverlapping={nonoverlapping})"],
     )
     return Artifact(value=value, data_type=DataType.TEST_RESULT, meta=meta)
@@ -602,6 +606,7 @@ def ols_hac(y: Artifact, flags: Artifact, maxlags: int | None = None) -> Artifac
         y.meta,
         joined["value"],
         kind=None,
+        source_dataset_ids=merged_sources(y, flags),
         notes=[f"OLS y ~ const + flag, Newey-West SE with maxlags={maxlags} ({lag_source})"],
     )
     return Artifact(value=value, data_type=DataType.TEST_RESULT, meta=meta)

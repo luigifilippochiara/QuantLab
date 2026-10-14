@@ -7,6 +7,7 @@ so the canned demo plans run unchanged.
 """
 
 import json
+import shutil
 from pathlib import Path
 
 import numpy as np
@@ -118,11 +119,22 @@ def build_synthetic_data_dir(data_dir: Path, missing_every: int = 50) -> Path:
     return catalog_path
 
 
-@pytest.fixture
-def settings(tmp_path: Path) -> Settings:
-    """Settings pointing at a fresh synthetic data folder and an empty runs folder."""
-    data_dir = tmp_path / "data"
+@pytest.fixture(scope="session")
+def synthetic_data_template(tmp_path_factory: pytest.TempPathFactory) -> Path:
+    """Build the synthetic data folder once per test session (it takes ~0.3 s)."""
+    data_dir = tmp_path_factory.mktemp("template") / "data"
     build_synthetic_data_dir(data_dir)
+    return data_dir
+
+
+@pytest.fixture
+def settings(tmp_path: Path, synthetic_data_template: Path) -> Settings:
+    """Settings pointing at a private copy of the synthetic data and an empty runs folder.
+
+    Each test gets its own copy, so a test that tampers with a file cannot affect others.
+    """
+    data_dir = tmp_path / "data"
+    shutil.copytree(synthetic_data_template, data_dir)
     return Settings(
         anthropic_api_key=None,
         planner_model="test-model",
