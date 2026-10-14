@@ -66,6 +66,7 @@ class ArtifactMeta:
         return_method: "simple" or "log" for returns and anything derived from them.
         horizon: forward-return horizon in periods (forward returns and derived results).
         periods: the lag used by compute_returns / difference (1 = one-period changes).
+        n_dropped_missing: load_series only, missing values dropped from the raw file.
         notes: human-readable assumptions recorded at run time (e.g. annualisation factor).
     """
 
@@ -78,6 +79,7 @@ class ArtifactMeta:
     return_method: str | None = None
     horizon: int | None = None
     periods: int | None = None
+    n_dropped_missing: int | None = None
     notes: list[str] = field(default_factory=list)
 
 

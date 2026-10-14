@@ -1,0 +1,671 @@
+"""Capability registry: the approved menu of analyses, and the only route to running code.
+
+Role in the architecture:
+- The planner shows the LLM `llm_summary()`, generated from this file, so the LLM
+  knows exactly which capabilities exist and which parameters they accept.
+- The validator checks every plan step against these specs (names, parameter
+  types and ranges, input data types and kinds).
+- The executor dispatches by looking a step's capability name up in `REGISTRY`
+  and calling `spec.func`. A name that is not a key in `REGISTRY` has no
+  function attached, so it cannot run: the whitelist holds by construction.
+
+Specs are frozen dataclasses (not Pydantic models) because they are written by
+us in code, hold function references, and are never parsed from outside input.
+"""
+
+import hashlib
+import json
+from collections.abc import Callable
+from dataclasses import dataclass
+from typing import Any, Literal
+
+from quantlab import capabilities
+from quantlab.types import Artifact, DataType, SeriesKind
+
+ParamType = Literal["int", "float", "str", "bool"]
+
+# Special values for CapabilitySpec.output_kind, besides a fixed SeriesKind.
+SAME_AS_INPUT = "same_as_input"  # e.g. resample keeps the kind of its input
+FROM_CATALOG = "from_catalog"  # load_series takes the kind from the dataset catalog
+
+
+@dataclass(frozen=True)
+class InputSpec:
+    """One named input of a capability: a reference to an earlier step's output.
+
+    Fields:
+        name: input name used in plans, e.g. "series" or "flags".
+        data_types: DataTypes this input accepts.
+        description: what the input is for.
+        kinds: SeriesKinds accepted (None = any kind).
+    """
+
+    name: str
+    data_types: tuple[DataType, ...]
+    description: str
+    kinds: tuple[SeriesKind, ...] | None = None
+
+
+@dataclass(frozen=True)
+class ParamSpec:
+    """One parameter of a capability.
+
+    Fields:
+        name: parameter name used in plans.
+        type: "int", "float", "str" or "bool".
+        description: what it controls, in plain words.
+        required: if True the plan must give a value; if False `default` is filled in.
+        default: value used when the plan omits an optional parameter.
+        min: smallest allowed value (numbers only, inclusive).
+        max: largest allowed value (numbers only, inclusive).
+        choices: allowed values (strings only).
+    """
+
+    name: str
+    type: ParamType
+    description: str
+    required: bool = True
+    default: Any = None
+    min: float | None = None
+    max: float | None = None
+    choices: tuple[str, ...] | None = None
+
+
+@dataclass(frozen=True)
+class Assumption:
+    """A modelling assumption a capability makes, shown to the user.
+
+    Fields:
+        id: short identifier, e.g. "return_method".
+        text: the assumption in plain words.
+        requires_approval: if True the user must explicitly approve it (guardrail G12).
+        param: the parameter whose chosen value the assumption is about, if any.
+    """
+
+    id: str
+    text: str
+    requires_approval: bool = False
+    param: str | None = None
+
+
+@dataclass(frozen=True)
+class MinObsRule:
+    """How many observations a capability needs (checked at run time by guardrail R02).
+
+    Fields:
+        description: the rule in words, shown to users and the LLM.
+        min_obs: absolute minimum number of usable (aligned) observations.
+        window_param: if set, also require window_multiple x params[window_param].
+        window_multiple: multiplier for window_param.
+        min_per_group: if set, minimum observations in EACH of the flagged and
+            normal groups (flag-split tests only).
+    """
+
+    description: str
+    min_obs: int = 1
+    window_param: str | None = None
+    window_multiple: int = 1
+    min_per_group: int | None = None
+
+
+@dataclass(frozen=True)
+class CapabilitySpec:
+    """Everything the system knows about one capability.
+
+    Fields:
+        name: unique name used in plans.
+        description: what it does, written for the LLM and the user.
+        func: the wrapper function in capabilities.py (never shown to the LLM).
+        inputs: named inputs (references to earlier steps).
+        params: parameters.
+        output_type: DataType of the output.
+        output_kind: a SeriesKind, SAME_AS_INPUT, FROM_CATALOG, or None (tables/tests).
+        min_obs: observation-count rule.
+        assumptions: modelling assumptions (some need approval).
+        library_calls: the underlying library calls, for traceability.
+        reads_catalog: True only for load_series; the executor passes the catalog.
+    """
+
+    name: str
+    description: str
+    func: Callable[..., Artifact]
+    inputs: tuple[InputSpec, ...]
+    params: tuple[ParamSpec, ...]
+    output_type: DataType
+    output_kind: SeriesKind | str | None
+    min_obs: MinObsRule
+    assumptions: tuple[Assumption, ...]
+    library_calls: str
+    reads_catalog: bool = False
+
+    def param(self, name: str) -> ParamSpec | None:
+        """Return the ParamSpec called `name`, or None."""
+        return next((p for p in self.params if p.name == name), None)
+
+    def input(self, name: str) -> InputSpec | None:
+        """Return the InputSpec called `name`, or None."""
+        return next((i for i in self.inputs if i.name == name), None)
+
+
+# Kinds that are levels (things you can aggregate by "last" or difference).
+LEVEL_KINDS = (
+    SeriesKind.PRICE_LEVEL,
+    SeriesKind.INDEX_LEVEL,
+    SeriesKind.RATE_LEVEL,
+    SeriesKind.SPREAD,
+    SeriesKind.VOLATILITY,
+    SeriesKind.OTHER,
+)
+ANY_SERIES_KIND_EXCEPT_FORWARD = (
+    *LEVEL_KINDS,
+    SeriesKind.RETURNS,
+    SeriesKind.CHANGES,
+)
+
+
+LOAD_SERIES = CapabilitySpec(
+    name="load_series",
+    description="Load one dataset from the catalog as a daily time series (hash-verified).",
+    func=capabilities.load_series,
+    inputs=(),
+    params=(
+        ParamSpec(
+            "dataset_id",
+            "str",
+            "Id of a dataset from the dataset list (e.g. NASDAQCOM).",
+        ),
+    ),
+    output_type=DataType.SERIES,
+    output_kind=FROM_CATALOG,
+    min_obs=MinObsRule("at least 1 observation"),
+    assumptions=(
+        Assumption(
+            "snapshot",
+            "Uses the committed FRED snapshot, verified by SHA-256; missing values "
+            "(holidays) are dropped, not filled.",
+        ),
+    ),
+    library_calls="pandas.read_csv; hashlib.sha256 (file hash check)",
+    reads_catalog=True,
+)
+
+RESAMPLE = CapabilitySpec(
+    name="resample",
+    description=(
+        "Convert a level series to weekly (week ending Friday) or monthly (month end) "
+        "frequency. Resample levels BEFORE computing returns or changes."
+    ),
+    func=capabilities.resample,
+    inputs=(InputSpec("series", (DataType.SERIES,), "Level series to aggregate.", LEVEL_KINDS),),
+    params=(
+        ParamSpec(
+            "freq", "str", "Target frequency: W (weekly) or M (monthly).", choices=("W", "M")
+        ),
+        ParamSpec(
+            "how",
+            "str",
+            "last = value at period end (e.g. Friday close); mean = period average.",
+            required=False,
+            default="last",
+            choices=("last", "mean"),
+        ),
+    ),
+    output_type=DataType.SERIES,
+    output_kind=SAME_AS_INPUT,
+    min_obs=MinObsRule("at least 2 observations", min_obs=2),
+    assumptions=(
+        Assumption(
+            "period_end",
+            "Weeks end on Friday (W-FRI) and months at calendar month end (ME); "
+            "periods with no data are dropped.",
+        ),
+    ),
+    library_calls="pandas.Series.resample('W-FRI' | 'ME').last() | .mean()",
+)
+
+COMPUTE_RETURNS = CapabilitySpec(
+    name="compute_returns",
+    description="Returns of a price or index level. Not for rates or yields: use difference.",
+    func=capabilities.compute_returns,
+    inputs=(
+        InputSpec(
+            "series",
+            (DataType.SERIES,),
+            "Price or index level series.",
+            (SeriesKind.PRICE_LEVEL, SeriesKind.INDEX_LEVEL),
+        ),
+    ),
+    params=(
+        ParamSpec(
+            "method",
+            "str",
+            "simple = P_t/P_{t-k} - 1; log = ln(P_t/P_{t-k}).",
+            choices=("simple", "log"),
+        ),
+        ParamSpec(
+            "periods",
+            "int",
+            "k, the number of periods each return spans.",
+            required=False,
+            default=1,
+            min=1,
+            max=52,
+        ),
+    ),
+    output_type=DataType.SERIES,
+    output_kind=SeriesKind.RETURNS,
+    min_obs=MinObsRule(
+        "at least 2 x periods observations", min_obs=2, window_param="periods", window_multiple=2
+    ),
+    assumptions=(
+        Assumption(
+            "return_method",
+            "The return method is a material modelling choice: simple returns compound "
+            "multiplicatively, log returns add up over time; it changes forward returns "
+            "and test results.",
+            requires_approval=True,
+            param="method",
+        ),
+    ),
+    library_calls="P / P.shift(k) - 1 (pandas) | numpy.log(P / P.shift(k))",
+)
+
+DIFFERENCE = CapabilitySpec(
+    name="difference",
+    description=(
+        "Change over k periods, x_t - x_{t-k}, in the series' own units. "
+        "The correct transform for rates, yields and spreads."
+    ),
+    func=capabilities.difference,
+    inputs=(InputSpec("series", (DataType.SERIES,), "Level series.", LEVEL_KINDS),),
+    params=(ParamSpec("periods", "int", "k, the lag of the difference.", min=1, max=52),),
+    output_type=DataType.SERIES,
+    output_kind=SeriesKind.CHANGES,
+    min_obs=MinObsRule(
+        "at least 2 x periods observations", min_obs=2, window_param="periods", window_multiple=2
+    ),
+    assumptions=(
+        Assumption("units", "Changes are in the input's units (percentage points for yields)."),
+    ),
+    library_calls="pandas.Series - pandas.Series.shift(k)",
+)
+
+SPREAD = CapabilitySpec(
+    name="spread",
+    description="Difference a - b of two series with the same frequency, on their common dates.",
+    func=capabilities.spread,
+    inputs=(
+        InputSpec(
+            "a",
+            (DataType.SERIES,),
+            "First series (minuend).",
+            (SeriesKind.RATE_LEVEL, SeriesKind.RETURNS, SeriesKind.CHANGES, SeriesKind.VOLATILITY),
+        ),
+        InputSpec(
+            "b",
+            (DataType.SERIES,),
+            "Second series (subtracted).",
+            (SeriesKind.RATE_LEVEL, SeriesKind.RETURNS, SeriesKind.CHANGES, SeriesKind.VOLATILITY),
+        ),
+    ),
+    params=(),
+    output_type=DataType.SERIES,
+    output_kind=SeriesKind.SPREAD,
+    min_obs=MinObsRule("at least 2 common observations", min_obs=2),
+    assumptions=(Assumption("inner_join", "Only dates present in both series are kept."),),
+    library_calls="pandas.concat([a, b], join='inner'); a - b",
+)
+
+ROLLING_VOLATILITY = CapabilitySpec(
+    name="rolling_volatility",
+    description=(
+        "Trailing rolling volatility (sample standard deviation) of returns, changes or "
+        "a spread, annualised by default."
+    ),
+    func=capabilities.rolling_volatility,
+    inputs=(
+        InputSpec(
+            "series",
+            (DataType.SERIES,),
+            "Returns, changes or spread series.",
+            (SeriesKind.RETURNS, SeriesKind.CHANGES, SeriesKind.SPREAD),
+        ),
+    ),
+    params=(
+        ParamSpec("window", "int", "Observations per rolling window.", min=4, max=260),
+        ParamSpec(
+            "annualize",
+            "bool",
+            "Scale by sqrt(periods per year) of the input frequency.",
+            required=False,
+            default=True,
+        ),
+    ),
+    output_type=DataType.SERIES,
+    output_kind=SeriesKind.VOLATILITY,
+    min_obs=MinObsRule(
+        "at least 3 x window observations", min_obs=12, window_param="window", window_multiple=3
+    ),
+    assumptions=(
+        Assumption(
+            "annualisation",
+            "Annualised by sqrt(periods per year): 252 daily, 52 weekly, 12 monthly "
+            "(divided by k for k-period returns or changes).",
+        ),
+    ),
+    library_calls="pandas.Series.rolling(window).std(ddof=1) * sqrt(factor)",
+)
+
+FLAG_REGIME = CapabilitySpec(
+    name="flag_regime",
+    description=(
+        "Flag observations above a quantile threshold (e.g. high-volatility weeks). "
+        "Prefer method=expanding: it only uses past data."
+    ),
+    func=capabilities.flag_regime,
+    inputs=(
+        InputSpec(
+            "series",
+            (DataType.SERIES,),
+            "Series to threshold, e.g. a volatility or the VIX level. Never forward returns.",
+            ANY_SERIES_KIND_EXCEPT_FORWARD,
+        ),
+    ),
+    params=(
+        ParamSpec(
+            "quantile",
+            "float",
+            "Threshold quantile, e.g. 0.90 flags values above the 90th percentile.",
+            required=False,
+            default=0.90,
+            min=0.50,
+            max=0.99,
+        ),
+        ParamSpec(
+            "method",
+            "str",
+            "expanding = threshold from data up to t-1 only; full_sample = one threshold "
+            "from all data (look-ahead, needs approval).",
+            required=False,
+            default="expanding",
+            choices=("expanding", "full_sample"),
+        ),
+        ParamSpec(
+            "min_periods",
+            "int",
+            "Expanding method: past observations required before flagging starts.",
+            required=False,
+            default=52,
+            min=20,
+            max=520,
+        ),
+    ),
+    output_type=DataType.FLAGS,
+    output_kind=SeriesKind.FLAGS,
+    min_obs=MinObsRule(
+        "at least 2 x min_periods observations",
+        min_obs=40,
+        window_param="min_periods",
+        window_multiple=2,
+    ),
+    assumptions=(
+        Assumption(
+            "threshold",
+            "A flag means the value is strictly above the threshold; the expanding "
+            "threshold at t uses values up to t-1 only.",
+        ),
+    ),
+    library_calls=(
+        "pandas.Series.shift(1).expanding(min_periods).quantile(q) | pandas.Series.quantile(q)"
+    ),
+)
+
+FORWARD_RETURN = CapabilitySpec(
+    name="forward_return",
+    description=(
+        "Return over the next h periods (t+1 to t+h), placed on date t: compounded for "
+        "simple returns, summed for log returns."
+    ),
+    func=capabilities.forward_return,
+    inputs=(
+        InputSpec(
+            "returns",
+            (DataType.SERIES,),
+            "One-period returns series.",
+            (SeriesKind.RETURNS,),
+        ),
+    ),
+    params=(ParamSpec("horizon", "int", "h, number of future periods.", min=1, max=26),),
+    output_type=DataType.SERIES,
+    output_kind=SeriesKind.FORWARD_RETURN,
+    min_obs=MinObsRule(
+        "at least 2 x horizon observations", min_obs=2, window_param="horizon", window_multiple=2
+    ),
+    assumptions=(
+        Assumption(
+            "window",
+            "Forward return at t covers the next h observations (t+1..t+h); the last h "
+            "dates have no forward return and are dropped.",
+        ),
+    ),
+    library_calls=(
+        "((1 + r).rolling(h).apply(numpy.prod) - 1).shift(-h) | r.rolling(h).sum().shift(-h)"
+    ),
+)
+
+SUMMARY_STATS = CapabilitySpec(
+    name="summary_stats",
+    description="Descriptive statistics: count, mean, std, min, max, skew, excess kurtosis.",
+    func=capabilities.summary_stats,
+    inputs=(InputSpec("series", (DataType.SERIES,), "Any series."),),
+    params=(),
+    output_type=DataType.TABLE,
+    output_kind=None,
+    min_obs=MinObsRule("at least 4 observations", min_obs=4),
+    assumptions=(
+        Assumption("estimators", "Sample std (ddof=1); skew and excess kurtosis bias-adjusted."),
+    ),
+    library_calls="pandas.Series.mean / .std(ddof=1) / .min / .max / .skew / .kurt",
+)
+
+COMPARE_GROUPS = CapabilitySpec(
+    name="compare_groups",
+    description=(
+        "Test whether a series (e.g. forward returns) differs between flagged and normal "
+        "periods. Set nonoverlapping=true for multi-period forward returns."
+    ),
+    func=capabilities.compare_groups,
+    inputs=(
+        InputSpec("values", (DataType.SERIES,), "Values to compare, e.g. forward returns."),
+        InputSpec("flags", (DataType.FLAGS,), "Regime flags with the same frequency."),
+    ),
+    params=(
+        ParamSpec(
+            "test",
+            "str",
+            "welch_t = difference in means (unequal variances); mann_whitney = rank test.",
+            required=False,
+            default="welch_t",
+            choices=("welch_t", "mann_whitney"),
+        ),
+        ParamSpec(
+            "nonoverlapping",
+            "bool",
+            "Keep every horizon-th observation so forward returns do not overlap.",
+            required=False,
+            default=False,
+        ),
+    ),
+    output_type=DataType.TEST_RESULT,
+    output_kind=None,
+    min_obs=MinObsRule(
+        "at least 20 observations in each group (flagged and normal)",
+        min_obs=40,
+        min_per_group=20,
+    ),
+    assumptions=(
+        Assumption(
+            "independence",
+            "Observations are treated as independent; overlapping forward returns break "
+            "this unless nonoverlapping=true (or use ols_hac).",
+        ),
+    ),
+    library_calls=(
+        "scipy.stats.ttest_ind(equal_var=False) | scipy.stats.mannwhitneyu(alternative='two-sided')"
+    ),
+)
+
+OLS_HAC = CapabilitySpec(
+    name="ols_hac",
+    description=(
+        "Regress y on a constant and a flag dummy with Newey-West (HAC) standard errors; "
+        "robust to the overlap of multi-period forward returns."
+    ),
+    func=capabilities.ols_hac,
+    inputs=(
+        InputSpec("y", (DataType.SERIES,), "Dependent series, e.g. forward returns."),
+        InputSpec("flags", (DataType.FLAGS,), "Regime flags with the same frequency."),
+    ),
+    params=(
+        ParamSpec(
+            "maxlags",
+            "int",
+            "Newey-West lags; omit to use horizon - 1 from the forward returns.",
+            required=False,
+            default=None,
+            min=0,
+            max=52,
+        ),
+    ),
+    output_type=DataType.TEST_RESULT,
+    output_kind=None,
+    min_obs=MinObsRule(
+        "at least 20 observations in each group (flagged and normal)",
+        min_obs=40,
+        min_per_group=20,
+    ),
+    assumptions=(
+        Assumption(
+            "hac_lags",
+            "Newey-West (Bartlett kernel) standard errors; default maxlags = horizon - 1 "
+            "covers the overlap of h-period forward returns.",
+        ),
+    ),
+    library_calls=(
+        "statsmodels.api.OLS(y, add_constant(flag)).fit(cov_type='HAC', cov_kwds={'maxlags': L})"
+    ),
+)
+
+ADF_TEST = CapabilitySpec(
+    name="adf_test",
+    description="Augmented Dickey-Fuller unit-root (stationarity) test.",
+    func=capabilities.adf_test,
+    inputs=(InputSpec("series", (DataType.SERIES,), "Series to test."),),
+    params=(
+        ParamSpec(
+            "regression",
+            "str",
+            "c = constant only; ct = constant and linear trend.",
+            required=False,
+            default="c",
+            choices=("c", "ct"),
+        ),
+    ),
+    output_type=DataType.TEST_RESULT,
+    output_kind=None,
+    min_obs=MinObsRule("at least 50 observations", min_obs=50),
+    assumptions=(
+        Assumption("null", "Null hypothesis: unit root (non-stationary); lags chosen by AIC."),
+    ),
+    library_calls="statsmodels.tsa.stattools.adfuller(x, regression, autolag='AIC')",
+)
+
+
+# The registry itself: capability name -> spec. Built from a list so each key is
+# guaranteed to equal the spec's own name. This dict IS the whitelist.
+REGISTRY: dict[str, CapabilitySpec] = {
+    spec.name: spec
+    for spec in [
+        LOAD_SERIES,
+        RESAMPLE,
+        COMPUTE_RETURNS,
+        DIFFERENCE,
+        SPREAD,
+        ROLLING_VOLATILITY,
+        FLAG_REGIME,
+        FORWARD_RETURN,
+        SUMMARY_STATS,
+        COMPARE_GROUPS,
+        OLS_HAC,
+        ADF_TEST,
+    ]
+}
+
+
+def describe_capability(spec: CapabilitySpec) -> dict[str, Any]:
+    """Describe one capability as plain data (no function, no library calls).
+
+    Args:
+        spec: the capability.
+
+    Returns:
+        A JSON-serialisable dict: name, description, inputs, params, output,
+        min_obs rule and assumptions. Optional fields that are unset are omitted.
+    """
+    params = []
+    for p in spec.params:
+        described: dict[str, Any] = {"name": p.name, "type": p.type, "required": p.required}
+        if not p.required:
+            described["default"] = p.default
+        if p.min is not None:
+            described["min"] = p.min
+        if p.max is not None:
+            described["max"] = p.max
+        if p.choices is not None:
+            described["choices"] = list(p.choices)
+        described["description"] = p.description
+        params.append(described)
+
+    return {
+        "name": spec.name,
+        "description": spec.description,
+        "inputs": [
+            {
+                "name": i.name,
+                "data_types": [t.value for t in i.data_types],
+                "kinds": [k.value for k in i.kinds] if i.kinds else "any",
+                "description": i.description,
+            }
+            for i in spec.inputs
+        ],
+        "params": params,
+        "output": {
+            "data_type": spec.output_type.value,
+            "kind": str(spec.output_kind) if spec.output_kind else None,
+        },
+        "min_obs": spec.min_obs.description,
+        "assumptions": [
+            {"text": a.text, "requires_approval": a.requires_approval} for a in spec.assumptions
+        ],
+    }
+
+
+def llm_summary() -> str:
+    """Return the LLM-facing description of every registered capability, as JSON text.
+
+    Generated from REGISTRY (never hand-written), so the menu the LLM sees can
+    never drift from what the validator and executor actually accept.
+
+    Returns:
+        A JSON array, one object per capability, in registry order.
+    """
+    return json.dumps([describe_capability(spec) for spec in REGISTRY.values()], indent=1)
+
+
+def registry_version() -> str:
+    """Return the SHA-256 of `llm_summary()`; stored in every run record and cache key.
+
+    Returns:
+        64-character hex digest. Changes whenever any capability's interface changes.
+    """
+    return hashlib.sha256(llm_summary().encode("utf-8")).hexdigest()
