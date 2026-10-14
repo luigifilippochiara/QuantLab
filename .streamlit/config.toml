@@ -1,0 +1,5 @@
+# Streamlit settings for QuantLab, read when you run `streamlit run` from the repo root.
+
+[browser]
+# No usage telemetry: an enterprise deployment must not send data to third parties.
+gatherUsageStats = false

@@ -321,3 +321,7 @@ as are the capability names, so the documentation cannot silently drift.
 **Evaluation reports are not committed** (`eval/reports/` is git-ignored except
 for a `.gitkeep`): they are timestamped outputs; regenerate them with
 `quantlab.cli eval`.
+
+**Streamlit telemetry is off** (`.streamlit/config.toml`,
+`browser.gatherUsageStats = false`): by default Streamlit sends usage statistics
+to a third party, which an internal bank tool should not do.
