@@ -182,3 +182,61 @@ then edited and executed, emits `run_failed` (blocked) and later
 **The manifest records the git commit and whether the tree was dirty**, in
 addition to the library versions, because `registry_version` only changes when a
 capability's interface changes, not when its code does.
+
+## Planner and narrator (LLM calls)
+
+**No forced tool call: `tool_choice: auto` plus an explicit instruction.** The
+spec asked for a forced tool call. Current models (`claude-sonnet-5-5`, the
+default) reject forced `tool_choice` (`any`/`tool`) with a 400. The plan schema
+is still the tool's `input_schema`, so output arrives as structured JSON, and
+the prompt says "respond only by calling submit_plan". If the model answers in
+text, that is a G01. Strict tool mode or `output_config.format` would guarantee
+schema-valid JSON, but both require closed objects (`additionalProperties:
+false`) everywhere, and plan `params`/`inputs` are free-form maps. Schema
+conformance is therefore enforced by our own Pydantic parse (G01), which has to
+run anyway.
+
+**No `temperature=0`.** Current models reject non-default sampling parameters
+(the SDK no longer even exposes `temperature` on this endpoint). Determinism
+comes from elsewhere: the plan cache (`cached` mode returns the identical plan
+for an identical request, prompt, model and registry), and replay, which never
+calls an LLM. Reasoning depth is set with `effort` instead (`medium` for the
+planner, `low` for the narrator; configurable in `.env`).
+
+**Refusal fallback enabled.** Both LLM calls use the API's server-side refusal
+fallback (`fallbacks="default"`, beta `server-side-fallback-2026-07-01`): if the
+model declines on safety grounds, the API retries on a fallback model. The
+model that actually answered is recorded (`served_model`) so the run record
+stays accurate. It can be removed by deleting two arguments in planner.py and
+narrator.py.
+
+**Timeouts and retries tuned for a live demo:** 90 s per call and one SDK retry,
+so a stuck call fails within about 3 minutes and the presenter can switch to
+cached or mock mode.
+
+**The plan cache stores only successful planner output, and re-parses it on
+load.** A broken plan is never cached (it would be served forever in cached
+mode), and a cached plan goes through the same G01 parse as a fresh one. Each
+cache hit gets a fresh `plan_id`. Narratives are not cached; in cached mode the
+narrator calls the LLM if it can and otherwise uses the template.
+
+**The mock planner refuses requests it does not recognise** (G13, "switch to
+live mode") instead of guessing. Keyword matching is ordered most-specific
+first, so the injection scenario D wins over everything else.
+
+**Grounding check rules.** A number written with d decimals is grounded if it
+is within half a unit of its last digit of an allowed value, i.e. it is a
+correct rounding (so 13.86%, 14% and 0.14 all match a volatility of 0.138642,
+but 0.1390 does not). Allowed values are the facts (and their x100 percentage
+forms), the facts' display strings (e.g. "<0.0001"), numeric plan parameters,
+numbers in the request, in warning/approval messages and in dataset titles
+("10-Year"), the conventional levels 1/5/10% and 90/95/99%, and the
+annualisation factors. Dates and years are allowed only within the facts' date
+range. Absolute values are compared, so "-2.80" and "2.80" both match: sign
+errors are a semantic problem this numeric check does not claim to catch. Known
+limitation: the check proves every number is a correct rounding of SOME allowed
+value, not that it is attached to the right concept.
+
+**Facts are displayed with at least 4 significant figures and never in
+scientific notation** (27204.38 shows as "27,204"; p-values with 4 decimals or
+"<0.0001"), so the narrator can quote them verbatim.

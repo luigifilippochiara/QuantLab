@@ -9,6 +9,8 @@ Environment variables (all optional):
     ANTHROPIC_API_KEY          key for the planner and narrator LLM calls
     QUANTLAB_PLANNER_MODEL     model id for the planner (default: claude-sonnet-5-5)
     QUANTLAB_NARRATOR_MODEL    model id for the narrator (default: same as planner)
+    QUANTLAB_PLANNER_EFFORT    planner reasoning effort: low|medium|high (default: medium)
+    QUANTLAB_NARRATOR_EFFORT   narrator reasoning effort: low|medium|high (default: low)
     QUANTLAB_LLM_MODE          live | cached | mock (default: cached with a key, mock without)
     QUANTLAB_DATA_DIR          folder holding catalog.json and snapshots/ (default: ./data)
     QUANTLAB_RUNS_DIR          folder for run records, plan cache and events (default: ./runs)
@@ -47,9 +49,12 @@ class Settings:
         max_steps: budget, maximum number of steps in a plan.
         max_datasets: budget, maximum number of distinct datasets in a plan.
         max_request_chars: budget, longest request accepted (protects the prompt size).
+        planner_effort: reasoning effort for the planner call.
+        narrator_effort: reasoning effort for the narrator call.
         llm_timeout_seconds: timeout for one LLM API call.
-        planner_max_tokens: output token cap for the planner call.
-        narrator_max_tokens: output token cap for the narrator call.
+        llm_max_retries: SDK retries on rate limits / server errors (kept low for live demos).
+        planner_max_tokens: output token cap for the planner call (includes thinking).
+        narrator_max_tokens: output token cap for the narrator call (includes thinking).
     """
 
     anthropic_api_key: str | None
@@ -61,9 +66,12 @@ class Settings:
     max_steps: int = 15
     max_datasets: int = 5
     max_request_chars: int = 2000
-    llm_timeout_seconds: float = 60.0
-    planner_max_tokens: int = 4096
-    narrator_max_tokens: int = 1024
+    planner_effort: str = "medium"
+    narrator_effort: str = "low"
+    llm_timeout_seconds: float = 90.0
+    llm_max_retries: int = 1
+    planner_max_tokens: int = 16000
+    narrator_max_tokens: int = 8000
 
     @property
     def catalog_path(self) -> Path:
@@ -120,4 +128,6 @@ def load_settings() -> Settings:
         runs_dir=Path(os.environ.get("QUANTLAB_RUNS_DIR") or PROJECT_ROOT / "runs"),
         max_steps=int(os.environ.get("QUANTLAB_MAX_STEPS") or 15),
         max_datasets=int(os.environ.get("QUANTLAB_MAX_DATASETS") or 5),
+        planner_effort=os.environ.get("QUANTLAB_PLANNER_EFFORT") or "medium",
+        narrator_effort=os.environ.get("QUANTLAB_NARRATOR_EFFORT") or "low",
     )
