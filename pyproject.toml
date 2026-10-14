@@ -1,0 +1,26 @@
+[project]
+name = "quantlab"
+version = "0.1.0"
+description = "Natural-language requests -> validated, inspectable execution plans -> deterministic quantitative analysis."
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "numpy>=1.26",
+    "pandas>=2.2",
+    "pydantic>=2.7",
+]
+
+[dependency-groups]
+# Tools used while developing, not needed to run the engine itself.
+dev = [
+    "ipykernel>=6.29", # lets Jupyter / VS Code notebooks use this project's environment
+]
+
+# A build backend makes `core` an installable package, so `import core` works
+# from anywhere (scripts/, notebooks/) once `uv sync` has run.
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["core"]

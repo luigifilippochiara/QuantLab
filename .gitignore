@@ -1,0 +1,21 @@
+# Secrets: never commit real API keys (.env.example is the committed template)
+.env
+
+# Data snapshots: pulled or cached market data stays local.
+# The tiny synthetic file in data/sample/ IS committed so the demo runs out of the box.
+data/snapshots/
+*.parquet
+
+# Python / uv
+.venv/
+__pycache__/
+*.py[cod]
+*.egg-info/
+build/
+dist/
+
+# Notebooks and tooling
+.ipynb_checkpoints/
+.pytest_cache/
+.ruff_cache/
+.DS_Store

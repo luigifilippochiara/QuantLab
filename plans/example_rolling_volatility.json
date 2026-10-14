@@ -1,0 +1,16 @@
+{
+  "plan_id": "example-rolling-vol-001",
+  "description": "20-day annualised rolling volatility of the sample daily closing prices.",
+  "steps": [
+    {
+      "step_id": "s1",
+      "capability": "rolling_volatility",
+      "input": "prices",
+      "params": {
+        "window": 20,
+        "periods_per_year": 252
+      },
+      "output": "vol_20d"
+    }
+  ]
+}
