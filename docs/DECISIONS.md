@@ -277,3 +277,30 @@ parameter counts as correct only if EVERY step using that capability has the
 expected value (both resample steps of scenario F must be weekly). Exact
 sequence match is order-sensitive by definition, so equivalent plans that
 load datasets in a different order lose that metric but keep a Jaccard of 1.
+
+## Streamlit app
+
+**`st.navigation` with explicit page titles.** `app/streamlit_app.py` is a small
+router; the four pages are plain scripts in `app/pages/` and shared rendering
+helpers live in `app/ui.py`. This gives readable page names ("Run history"
+rather than file names) and keeps each page a top-to-bottom script.
+
+**One colour pair for both themes.** Charts use blue `#3987e5` for series and
+orange `#d95926` for flagged regimes. The pair was run through a colour-vision
+validator against both Streamlit backgrounds (white and `#0e1117`): lightness,
+chroma, colour-blind separation (CVD Delta E 26.8) and contrast all pass, so no
+runtime theme detection is needed. Streamlit's theme detection can be wrong on
+a session's first run, which made the per-theme alternative unreliable.
+
+**One run = one execution.** After a run completes, its plan is locked in the
+UI; changing anything means generating a new plan (a new run id), so a run
+record always describes exactly one execution. A run stopped by a runtime
+BLOCK (e.g. R02) can still be edited and re-executed under the same id.
+
+**Approvals are ticked in the UI and recorded at execution time.** Editing any
+parameter clears the engine's approvals and unticks the boxes, so an approval
+always refers to the issue text of the plan that actually runs.
+
+**The app is regression-tested headlessly** with `streamlit.testing.AppTest`
+(scenario A planned, approved, executed, narrated, traced and replayed; a
+blocked scenario cannot execute; all pages render).

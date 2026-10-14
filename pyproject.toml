@@ -54,7 +54,7 @@ ignore = ["SIM108"]
 
 [tool.ruff.lint.isort]
 known-first-party = ["quantlab"]
-known-local-folder = ["conftest", "fakes"]  # test helper modules in tests/
+known-local-folder = ["conftest", "fakes", "ui"]  # helper modules in tests/ and app/
 
 [tool.ruff.lint.per-file-ignores]
 # Notebooks import after explanatory markdown cells and end cells with bare expressions.
