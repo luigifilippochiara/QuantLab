@@ -6,7 +6,6 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 import pytest
-from conftest import build_synthetic_data_dir
 
 from quantlab.data import Catalog, file_sha256, load_catalog
 from quantlab.executor import (
@@ -21,6 +20,8 @@ from quantlab.registry import REGISTRY
 from quantlab.scenarios import SCENARIOS_BY_ID
 from quantlab.types import Artifact, ArtifactMeta, DataType, Frequency, SeriesKind
 from quantlab.validation import fill_defaults, validate_plan
+
+from conftest import build_synthetic_data_dir
 
 ALL_APPROVALS = {"G12:s3:return_method", "G10:s5"}
 

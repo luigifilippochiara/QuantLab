@@ -41,7 +41,8 @@ class LLMInfo(BaseModel):
 
     Fields:
         provider: "anthropic" or "mock".
-        model: model id (or "mock").
+        model: model id requested (or "mock").
+        served_model: model that actually answered (differs if a refusal fallback ran).
         prompt_version: planner prompt version.
         mode: LLM mode used: live, cached or mock.
         from_cache: True if the plan came from the plan cache.
@@ -53,6 +54,7 @@ class LLMInfo(BaseModel):
 
     provider: str
     model: str
+    served_model: str | None = None
     prompt_version: str
     mode: str
     from_cache: bool = False

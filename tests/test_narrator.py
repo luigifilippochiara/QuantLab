@@ -1,7 +1,6 @@
 """Narrator: facts sheet, formatting, numeric grounding check, template and LLM paths."""
 
 import pytest
-from fakes import FakeClient, text_response
 
 from quantlab.config import Settings
 from quantlab.data import Catalog
@@ -16,6 +15,8 @@ from quantlab.narrator import (
 from quantlab.plan import Plan
 from quantlab.scenarios import SCENARIOS_BY_ID
 from quantlab.validation import fill_defaults, validate_plan
+
+from fakes import FakeClient, text_response
 
 
 def run_scenario(scenario_id: str, catalog: Catalog):

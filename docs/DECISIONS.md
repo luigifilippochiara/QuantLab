@@ -240,3 +240,40 @@ value, not that it is attached to the right concept.
 **Facts are displayed with at least 4 significant figures and never in
 scientific notation** (27204.38 shows as "27,204"; p-values with 4 decimals or
 "<0.0001"), so the narrator can quote them verbatim.
+
+## Engine, CLI and evaluation
+
+**The engine is a `Session` dataclass with one method per stage**
+(`create_plan`, `validate`, `apply_param_edits`, `approve`, `execute`,
+`narrate`, `save_record`), plus `run_request` that chains them for headless
+use. The app keeps the Session in `st.session_state`; the CLI and notebooks use
+`run_request`. Alternative: a stateless function pipeline, rejected because
+the UI genuinely needs to pause between stages for human review.
+
+**Blocked runs are recorded immediately.** A plan that is blocked (by the
+validator, the planner or missing approvals) is saved as a `blocked` run with
+its issues, so refusals and blocks appear in the run history and monitoring. If
+the user then fixes the plan and executes it, the same run id is overwritten as
+`completed`; the dashboard counts the run once, by its last terminal event.
+
+**Over-budget requests never reach the LLM.** The request-length budget (G06)
+is checked before planning, so a 50 KB paste costs nothing.
+
+**The CLI has an extra `trace <run_id> <step_id>` command**, and `demo` accepts
+`--mode` (default `mock`, as specified). Exit codes: 0 when the outcome is the
+expected one (or the run completed / all hashes match), 1 otherwise, so the
+commands can be used in CI.
+
+**Evaluation logic lives in `src/quantlab/evaluation.py`**, not in
+`eval/run_eval.py`: the package's CLI cannot import a script outside the
+package without dynamic imports (which the safety rules forbid). `eval/run_eval.py`
+is a three-line wrapper around the same code.
+
+**The golden set references demo scenarios by id** (`scenario: A`) instead of
+repeating their request text, so it cannot drift from `scenarios.py`. In mock
+mode only the six canned scenarios can match, so the mock report is a harness
+check (the report says so); `--mode live` measures the real planner. A
+parameter counts as correct only if EVERY step using that capability has the
+expected value (both resample steps of scenario F must be weekly). Exact
+sequence match is order-sensitive by definition, so equivalent plans that
+load datasets in a different order lose that metric but keep a Jaccard of 1.

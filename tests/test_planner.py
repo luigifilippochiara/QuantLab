@@ -5,7 +5,6 @@ import copy
 import anthropic
 import httpx2
 import pytest
-from fakes import FakeClient, text_response, tool_response
 
 from quantlab.config import Settings
 from quantlab.data import Catalog, load_dataset
@@ -19,6 +18,8 @@ from quantlab.planner import (
     plan_from_output,
 )
 from quantlab.scenarios import SCENARIOS, SCENARIOS_BY_ID
+
+from fakes import FakeClient, text_response, tool_response
 
 PLAN_A = SCENARIOS_BY_ID["A"].plan
 

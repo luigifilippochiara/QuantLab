@@ -1,0 +1,256 @@
+"""Command-line interface.
+
+    uv run python -m quantlab.cli demo                    # all demo scenarios, mock mode
+    uv run python -m quantlab.cli run "<request>" --datasets NASDAQCOM --mode mock --approve-all
+    uv run python -m quantlab.cli replay <run_id>          # re-run without the LLM, compare hashes
+    uv run python -m quantlab.cli trace <run_id> <step_id> # where does this number come from?
+    uv run python -m quantlab.cli eval --mode mock         # planner evaluation report
+
+Role in the architecture: a thin, headless front end over engine.py,
+lineage.py and evaluation.py; it contains no analysis logic of its own.
+"""
+
+import argparse
+import sys
+from collections.abc import Sequence
+
+from quantlab.config import LLM_MODES, Settings, load_settings
+from quantlab.engine import Session, run_request
+from quantlab.evaluation import run_evaluation, write_report
+from quantlab.lineage import load_run, replay, trace
+from quantlab.plan import describe_plan
+from quantlab.scenarios import SCENARIOS
+
+
+def print_table(headers: Sequence[str], rows: Sequence[Sequence[object]]) -> None:
+    """Print rows as a plain-text table with aligned columns."""
+    cells = [[str(h) for h in headers]] + [[str(c) for c in row] for row in rows]
+    widths = [max(len(row[i]) for row in cells) for i in range(len(headers))]
+    for index, row in enumerate(cells):
+        print("  ".join(cell.ljust(width) for cell, width in zip(row, widths, strict=True)))
+        if index == 0:
+            print("  ".join("-" * width for width in widths))
+
+
+def all_issue_codes(session: Session) -> list[str]:
+    """Sorted codes of every static and runtime issue raised in a session."""
+    codes = set(session.report.codes()) if session.report else set()
+    if session.execution:
+        codes |= {issue.code for issue in session.execution.issues}
+    return sorted(codes)
+
+
+def print_session(session: Session) -> None:
+    """Print a run: plan, issues, approvals, results, narrative and where it was saved."""
+    print(f"Run {session.run_id}  (LLM mode: {session.mode})")
+    if session.plan is not None:
+        print("\nPlan:")
+        for line in describe_plan(session.plan).splitlines():
+            print(f"  {line}")
+        if session.plan.planner_notes:
+            print(f"  planner notes (unverified): {session.plan.planner_notes}")
+    issues = list(session.report.issues) if session.report else []
+    if session.execution:
+        issues += [i for i in session.execution.issues if i not in issues]
+    if issues:
+        print("\nIssues:")
+        for issue in issues:
+            print(f"  [{issue.severity}] {issue.code} {issue.issue_id}: {issue.message}")
+            if issue.suggestion:
+                print(f"      -> {issue.suggestion}")
+    for approval in session.approvals:
+        print(f"  approved {approval.issue_id} by {approval.approved_by} at {approval.approved_at}")
+
+    print(f"\nStatus: {session.status}")
+    reason = session.build_record().error
+    if reason:
+        print(f"  {reason}")
+    if session.narrative is not None:
+        print("\nResults (facts sheet):")
+        by_step: dict[str, list[str]] = {}
+        for fact in session.narrative.facts:
+            step_id, key = fact.fact_id.split(".", 1)
+            by_step.setdefault(step_id, []).append(f"{key}={fact.display}")
+        for step in session.plan.steps:
+            if step.id in by_step:
+                print(f"  {step.id} {step.capability}: " + " ".join(by_step[step.id]))
+        grounding = session.narrative.grounding
+        badge = (
+            "all numbers verified"
+            if grounding.grounded
+            else f"UNGROUNDED numbers: {grounding.ungrounded}"
+        )
+        print(f"\nNarrative ({session.narrative.source}; {badge}):")
+        print(f"  {session.narrative.text}")
+    if session.manifest_path:
+        print(f"\nManifest: {session.manifest_path}")
+
+
+# ---------------------------------------------------------------------------
+# Subcommands
+# ---------------------------------------------------------------------------
+
+
+def cmd_demo(args: argparse.Namespace, settings: Settings) -> int:
+    """Run every demo scenario headlessly and compare with the expected outcome."""
+    rows = []
+    all_ok = True
+    for scenario in SCENARIOS:
+        session = run_request(
+            scenario.request,
+            list(scenario.dataset_ids),
+            mode=args.mode,
+            approve=scenario.auto_approve,  # only A and B are auto-approved
+            settings=settings,
+        )
+        codes = all_issue_codes(session)
+        ok = session.status == scenario.expected_status and set(scenario.expected_codes) <= set(
+            codes
+        )
+        all_ok &= ok
+        rows.append(
+            [
+                scenario.id,
+                scenario.expected_status,
+                session.status,
+                ",".join(codes) or "-",
+                session.run_id,
+                "ok" if ok else "MISMATCH",
+            ]
+        )
+    print_table(["scenario", "expected", "status", "issue codes", "run_id", "check"], rows)
+    print("\nAll scenarios behaved as expected." if all_ok else "\nSome scenarios did NOT.")
+    return 0 if all_ok else 1
+
+
+def cmd_run(args: argparse.Namespace, settings: Settings) -> int:
+    """Run one request through the whole pipeline."""
+    session = run_request(
+        args.request, args.datasets, mode=args.mode, approve=args.approve_all, settings=settings
+    )
+    print_session(session)
+    if session.unresolved_approvals() and not args.approve_all:
+        print("\nNothing was executed: re-run with --approve-all to approve the issues above.")
+    return 0 if session.status == "completed" else 1
+
+
+def cmd_replay(args: argparse.Namespace, settings: Settings) -> int:
+    """Replay a recorded run without the LLM and compare every output hash."""
+    report = replay(args.run_id, settings)
+    print(f"Replay of {report.run_id}: original status {report.original_status}, "
+          f"replay status {report.replay_status}")  # fmt: skip
+    if report.datasets:
+        print("\nDatasets:")
+        print_table(
+            ["dataset", "recorded sha256", "current sha256", "match"],
+            [
+                [c.dataset_id, c.recorded_sha256[:16], (c.current_sha256 or "missing")[:16],
+                 "yes" if c.match else "NO"]
+                for c in report.datasets
+            ],
+        )  # fmt: skip
+    if report.steps:
+        print("\nSteps:")
+        print_table(
+            ["step", "capability", "original hash", "replay hash", "match"],
+            [
+                [s.step_id, s.capability, (s.original_hash or "-")[:16],
+                 (s.replay_hash or "-")[:16], "yes" if s.match else "NO"]
+                for s in report.steps
+            ],
+        )  # fmt: skip
+    print(f"\n{report.message}")
+    print("ALL HASHES MATCH" if report.all_match else "MISMATCH")
+    return 0 if report.all_match else 1
+
+
+def cmd_trace(args: argparse.Namespace, settings: Settings) -> int:
+    """Print the lineage of one step back to the source files."""
+    result = trace(load_run(args.run_id, settings.runs_dir), args.step_id)
+    print(f"Lineage of {result.step_id} in run {result.run_id}:\n")
+    for step in result.chain:
+        inputs = ", ".join(f"{k}<-{v}" for k, v in step.inputs.items()) or "-"
+        print(f"{step.step_id} {step.capability}  inputs: {inputs}")
+        print(f"    params:  {step.params}")
+        print(f"    library: {step.library_calls}")
+        print(f"    output:  {step.n_obs} obs {step.start}..{step.end}  sha256 {step.output_hash}")
+    print("\nSources:")
+    for source in result.sources:
+        print(f"  {source.dataset_id} (FRED {source.fred_id}) sha256 {source.sha256}")
+        print(f"    retrieved {source.retrieved_at}, used {source.start}..{source.end}, "
+              f"{source.rows_used} rows")  # fmt: skip
+    return 0
+
+
+def cmd_eval(args: argparse.Namespace, settings: Settings) -> int:
+    """Evaluate the planner on the golden requests and write a Markdown report."""
+    report = run_evaluation(args.mode, settings)
+    path = write_report(report)
+    print_table(
+        ["case", "expect", "correct", "planned / issues"],
+        [
+            [s.case_id, s.expect, "yes" if s.correct else "NO",
+             f"{len(s.planned)} steps; {','.join(s.issue_codes) or '-'}"]
+            for s in report.scores
+        ],
+    )  # fmt: skip
+    print("\nMetrics:")
+    for name, value in report.metrics.items():
+        print(f"  {name}: {'n/a' if value is None else value}")
+    print(f"\nReport written to {path}")
+    return 0
+
+
+def build_parser() -> argparse.ArgumentParser:
+    """Define the command-line arguments."""
+    parser = argparse.ArgumentParser(
+        prog="python -m quantlab.cli",
+        description=__doc__,
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    commands = parser.add_subparsers(dest="command", required=True)
+
+    demo = commands.add_parser("demo", help="run demo scenarios A-F headlessly")
+    demo.add_argument("--mode", choices=LLM_MODES, default="mock")
+
+    run = commands.add_parser("run", help="run one request")
+    run.add_argument("request")
+    run.add_argument("--datasets", nargs="+", required=True)
+    run.add_argument("--mode", choices=LLM_MODES, default=None, help="default: from .env")
+    run.add_argument("--approve-all", action="store_true", help="approve every APPROVAL issue")
+
+    replay_cmd = commands.add_parser("replay", help="replay a run without the LLM")
+    replay_cmd.add_argument("run_id")
+
+    trace_cmd = commands.add_parser("trace", help="lineage of a step back to the source files")
+    trace_cmd.add_argument("run_id")
+    trace_cmd.add_argument("step_id")
+
+    evaluate = commands.add_parser("eval", help="evaluate the planner on golden requests")
+    evaluate.add_argument("--mode", choices=LLM_MODES, default="mock")
+    return parser
+
+
+def main(argv: Sequence[str] | None = None) -> int:
+    """Parse arguments and run a subcommand.
+
+    Args:
+        argv: arguments (default: sys.argv[1:]).
+
+    Returns:
+        Process exit code: 0 on success / expected outcome, 1 otherwise.
+    """
+    args = build_parser().parse_args(argv)
+    settings = load_settings()
+    handlers = {
+        "demo": cmd_demo,
+        "run": cmd_run,
+        "replay": cmd_replay,
+        "trace": cmd_trace,
+        "eval": cmd_eval,
+    }
+    return handlers[args.command](args, settings)
+
+
+if __name__ == "__main__":
+    sys.exit(main())
