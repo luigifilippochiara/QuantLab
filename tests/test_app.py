@@ -217,3 +217,20 @@ def test_period_editing_with_date_widgets_and_extremes_table(app_env: Settings) 
     trace = next(d.value for d in app.dataframe if "library call" in d.value.columns)
     params = dict(zip(trace["step"], trace["params"], strict=True))
     assert "start=2021-01-01 (edited, was 2020-01-01)" in params["s5"]
+
+
+@pytest.mark.parametrize(("edited", "rows"), [("both", ["max", "min"]), ("min", ["min"])])
+def test_find_extremes_which_edit_in_the_editor(
+    edited: str, rows: list[str], app_env: Settings
+) -> None:
+    app = open_page("analysis.py")
+    request = CANNED_REQUESTS_BY_ID["nasdaq_peak_5y"].request  # find_extremes(which="max")
+    app.text_area(key="request_text").input(request).run()
+    button(app, "Generate plan").click().run()
+    next(s for s in app.selectbox if s.key.endswith("-s3-which")).select(edited).run()
+    button(app, "Apply changes").click().run()
+    button(app, "Execute").click().run()
+    assert not app.exception, app.exception
+    table = next(d.value for d in app.dataframe if "extreme" in d.value.columns)
+    assert table["extreme"].tolist() == rows
+    assert any("numbers verified" in s.value for s in app.success)
