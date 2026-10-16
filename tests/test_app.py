@@ -1,7 +1,7 @@
 """Streamlit app, driven headlessly with streamlit.testing.AppTest (mock mode, synthetic data).
 
-Covers the demo path: scenario A planned, approved, executed, narrated, traced
-and replayed; a blocked scenario cannot execute; the other pages render.
+Covers the demo path: scenario 1 planned, approved, executed, narrated, traced
+and replayed; blocked scenarios cannot execute; the other pages render.
 """
 
 import pytest
@@ -35,9 +35,11 @@ def button(app: AppTest, label: str):
     return next(b for b in app.button if b.label.startswith(label))
 
 
-def test_scenario_a_full_flow(app_env: Settings) -> None:
+def test_scenario_1_full_flow(app_env: Settings) -> None:
     app = open_page("analysis.py")
-    app.sidebar.button(key="scenario-A").click().run()
+    labels = [b.label for b in app.sidebar.button]
+    assert labels[0] == "1 · Volatility flag (success)" and len(labels) == 5
+    app.sidebar.button(key="scenario-volatility_flag_success").click().run()
     button(app, "Generate plan").click().run()
     assert not app.exception, app.exception
 
@@ -49,19 +51,22 @@ def test_scenario_a_full_flow(app_env: Settings) -> None:
 
     successes = [s.value for s in app.success]
     assert any("numbers verified" in text for text in successes)
-    assert [h.value for h in app.subheader][-2:] == [
-        "Trace: where does this number come from?",
-        "Run record",
-    ]
-    assert len(app.get("plotly_chart")) >= 2  # the prices and the returns
+    subheaders = [h.value for h in app.subheader]
+    # The trace panel sits directly under the results.
+    assert subheaders[subheaders.index("Results") + 1] == "Trace a result"
+    assert subheaders[-1] == "Run record"
+    assert len(app.get("plotly_chart")) >= 4  # daily, weekly, returns, shaded volatility
 
     button(app, "Replay this run").click().run()
-    assert any("3 of 3 step outputs match" in s.value for s in app.success)
+    assert any("5 of 5 step outputs match" in s.value for s in app.success)
 
 
-def test_blocked_scenario_cannot_execute(app_env: Settings) -> None:
+@pytest.mark.parametrize(
+    "scenario_id", ["random_forest_block", "prompt_injection_block", "frequency_mismatch_block"]
+)
+def test_blocked_scenario_cannot_execute(scenario_id: str, app_env: Settings) -> None:
     app = open_page("analysis.py")
-    app.sidebar.button(key="scenario-C").click().run()
+    app.sidebar.button(key=f"scenario-{scenario_id}").click().run()
     button(app, "Generate plan").click().run()
     assert button(app, "Execute").disabled
     assert any("blocked" in m.value for m in app.markdown if "Run `" in m.value)

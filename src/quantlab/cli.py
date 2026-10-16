@@ -17,7 +17,7 @@ from collections.abc import Sequence
 from quantlab.config import LLM_MODES, Settings, load_settings
 from quantlab.engine import Session, run_request
 from quantlab.evaluation import run_evaluation, write_report
-from quantlab.lineage import load_run, replay, trace
+from quantlab.lineage import TraceResult, load_run, replay, trace
 from quantlab.plan import describe_plan
 from quantlab.scenarios import SCENARIOS
 
@@ -92,44 +92,48 @@ def print_session(session: Session) -> None:
 
 
 def cmd_demo(args: argparse.Namespace, settings: Settings) -> int:
-    """Run every demo scenario headlessly and compare with the expected outcome.
+    """Run demo scenarios 1-5 headlessly, then print scenario 1's trace (scenario 6).
 
-    In mock mode the plans are the canned ones, so both the status and the issue
+    Only scenarios 1 and 2 are auto-approved; blocked scenarios stay blocked. In
+    mock mode the plans are the canned ones, so both the status and the issue
     codes must match. With a real LLM (live/cached) only the status is checked:
-    the LLM may legitimately block for a different reason, e.g. refuse scenario C
-    outright (G13) instead of proposing a plan that the validator blocks (G02).
+    the LLM may legitimately block for a different reason, e.g. refuse scenario 5
+    outright (G13) instead of proposing a plan that the validator blocks (G09).
     Running it in live mode also fills the plan cache for a cached-mode demo.
     """
     rows = []
     all_ok = True
+    sessions = {}
     for scenario in SCENARIOS:
         session = run_request(
             scenario.request,
             list(scenario.dataset_ids),
             mode=args.mode,
-            approve=scenario.auto_approve,  # only A and B need (and get) approval
+            approve=scenario.auto_approve,
             settings=settings,
         )
+        sessions[scenario.id] = session
         codes = all_issue_codes(session)
         ok = session.status == scenario.expected_status
         if args.mode == "mock":
             ok = ok and set(scenario.expected_codes) <= set(codes)
         all_ok &= ok
         rows.append(
-            [
-                scenario.id,
-                scenario.expected_status,
-                session.status,
-                ",".join(codes) or "-",
-                session.run_id,
-                "ok" if ok else "MISMATCH",
-            ]
-        )
-    print_table(["scenario", "expected", "status", "issue codes", "run_id", "check"], rows)
+            [scenario.id, session.status, ",".join(codes) or "-", session.run_id,
+             "ok" if ok else "MISMATCH"]
+        )  # fmt: skip
+    print_table(["scenario", "status", "issue codes", "run_id", "check"], rows)
     if args.mode != "mock":
         print(f"\n(LLM: {settings.llm_provider} / {settings.planner_model}; only the outcome "
               "status is checked, the issue codes show how each block happened.)")  # fmt: skip
     print("\nAll scenarios behaved as expected." if all_ok else "\nSome scenarios did NOT.")
+
+    # Scenario 6 is the audit trail of scenario 1: trace its last step (flag_regime)
+    # back to the snapshot file.
+    first = sessions["volatility_flag_success"]
+    if first.status == "completed":
+        print("\nScenario 6 (traceability): ", end="")
+        print_trace(first.trace(first.plan.steps[-1].id))
     return 0 if all_ok else 1
 
 
@@ -174,10 +178,9 @@ def cmd_replay(args: argparse.Namespace, settings: Settings) -> int:
     return 0 if report.all_match else 1
 
 
-def cmd_trace(args: argparse.Namespace, settings: Settings) -> int:
-    """Print the lineage of one step back to the source files."""
-    result = trace(load_run(args.run_id, settings.runs_dir), args.step_id)
-    print(f"Lineage of {result.step_id} in run {result.run_id}:\n")
+def print_trace(result: TraceResult) -> None:
+    """Print a lineage chain: each step back to the source files."""
+    print(f"lineage of {result.step_id} in run {result.run_id}:\n")
     for step in result.chain:
         inputs = ", ".join(f"{k}<-{v}" for k, v in step.inputs.items()) or "-"
         print(f"{step.step_id} {step.capability}  inputs: {inputs}")
@@ -189,6 +192,11 @@ def cmd_trace(args: argparse.Namespace, settings: Settings) -> int:
         print(f"  {source.dataset_id} (FRED {source.fred_id}) sha256 {source.sha256}")
         print(f"    retrieved {source.retrieved_at}, used {source.start}..{source.end}, "
               f"{source.rows_used} rows")  # fmt: skip
+
+
+def cmd_trace(args: argparse.Namespace, settings: Settings) -> int:
+    """Print the lineage of one step back to the source files."""
+    print_trace(trace(load_run(args.run_id, settings.runs_dir), args.step_id))
     return 0
 
 
@@ -220,7 +228,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     commands = parser.add_subparsers(dest="command", required=True)
 
-    demo = commands.add_parser("demo", help="run demo scenarios A-E headlessly")
+    demo = commands.add_parser("demo", help="run demo scenarios 1-5, then trace scenario 1")
     demo.add_argument("--mode", choices=LLM_MODES, default="mock")
 
     run = commands.add_parser("run", help="run one request")

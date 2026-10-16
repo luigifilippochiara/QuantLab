@@ -131,12 +131,10 @@ data and checks the prediction equals what the capability functions actually pro
 recorded against these ids. Any parameter edit re-validates the plan and clears
 earlier approvals, so an approval always refers to the plan as it will run.
 
-**A `scenarios.py` module (not in the spec's layout)** holds the five demo
-scenarios and their canned plans as plain data. The MockPlanner, CLI demo, app
-sidebar and tests all need them, so they live in one place instead of inside
-planner.py. Scenario C's canned plan is deliberately bad (it names a `forecast`
-capability, which the validator blocks with G02); scenario D's is a planner
-refusal (G13), so the demo shows both lines of defence.
+**A `scenarios.py` module (not in the spec's layout)** holds the demo scenarios
+and their canned plans as plain data. The MockPlanner, CLI demo, app sidebar,
+tests and golden set all need them, so they live in one place instead of inside
+planner.py. See "Six demo scenarios" below for the current set.
 
 ## Execution, lineage and monitoring
 
@@ -258,14 +256,14 @@ commands can be used in CI.
 package without dynamic imports (which the safety rules forbid). `eval/run_eval.py`
 is a three-line wrapper around the same code.
 
-**The golden set references demo scenarios by id** (`scenario: A`) instead of
+**The golden set references demo scenarios by id** (`scenario: volatility_flag_success`) instead of
 repeating their request text, so it cannot drift from `scenarios.py`. In mock
 mode only the five canned scenarios can match, so the mock report is a harness
 check (the report says so); `--mode live` measures the real planner. A
 parameter counts as correct only if EVERY step using that capability has the
 expected value (if a plan resamples two series, both must be weekly). Only
 parameter values the request implies are scored, not choices left to the
-planner (such as the volatility window in scenario B). Exact
+planner (such as a window the request does not state). Exact
 sequence match is order-sensitive by definition, so equivalent plans that
 load datasets in a different order lose that metric but keep a Jaccard of 1.
 
@@ -364,7 +362,7 @@ falls back to the template.
 
 **`demo --mode live` checks only the outcome status.** With a real LLM a
 scenario may be blocked for a different reason than the canned plan (e.g. a
-refusal G13 for scenario C instead of G02, which the spec explicitly allows). In
+refusal G13 for scenario 5 instead of G09, which the spec explicitly allows). In
 mock mode the issue codes are still checked exactly. Running the demo in live
 mode also warms the plan cache for a cached-mode presentation.
 
@@ -429,3 +427,54 @@ conventional significance levels are no longer accepted numbers in the
 grounding check. The prompt versions were bumped (`planner-v2`, `narrator-v2`,
 `canned-scenarios-v2`); together with the new registry version this means plans
 cached before the change are never reused.
+
+## Six demo scenarios: one analyst's workflow
+
+**Five canned requests plus a trace (scenario 6).** The demo scenarios now tell
+one story, a market-risk analyst flagging unusual market behaviour: it works
+(1 `volatility_flag_success`), it is smart (2 `volatility_flag_lookahead`), it is
+safe (3 `random_forest_block`, 4 `prompt_injection_block`, 5
+`frequency_mismatch_block`), it is auditable (6, the trace of scenario 1's
+`flag_regime` step). They replace the earlier A-E scenarios everywhere (sidebar,
+`cli demo`, golden set). Tests that need a clean rates plan or a misbehaving
+planner keep their own plans in `tests/conftest.py` (`SPREAD_PLAN`,
+`RANDOM_FOREST_PLAN`) rather than in `scenarios.py`, so the app shows only the
+demo set. Scenarios are matched by exact text, id, number ("1".."5") or keywords.
+
+**`compare_groups` is back, as a descriptive capability.** Scenario 5's plan ends
+in `compare_groups(values, flags)`, which had been removed with the statistical
+tests; without it the validator would report G02 (unknown capability) and never
+reach the frequency check. It returns the mean of the values in flagged and in
+normal periods, the group sizes and the difference, and nothing else: no p-value
+or test statistic, no scipy, consistent with the earlier "no statistical tests"
+decision. Its assumptions say so explicitly, and the narrator template calls the
+result descriptive. Alternative: make scenario 5 use `spread` of two
+differently-sampled series, rejected because the specified story is about
+comparing returns across VIX regimes.
+
+**Scenario 3 is a planner refusal; the G02 wall is tested separately.** The canned
+plan refuses (G13) and lists what the registry can do, as a well-behaved LLM
+should. A test feeds a misbehaving planner's plan with a `random_forest` step
+through the engine (live mode, fake client) and asserts the validator blocks it
+with G02 and nothing runs.
+
+**Scenario 4's "no shell" test allows the run record's git queries.** The engine
+saves even blocked runs, and the manifest records the git commit and dirty flag
+through two fixed, read-only `git` commands (`subprocess.run` with an argument
+list, never a shell). The test therefore asserts that `os.system` and `os.popen`
+are never called and that every process started is one of those `git` commands,
+with nothing from the request in its arguments. Alternative: read `.git` files
+directly to avoid subprocess entirely, rejected because it loses the dirty flag
+and adds parsing code.
+
+**Plain-English G09 and G10.** G10's message now explains that a full-sample
+threshold judges past weeks (or days, months: taken from the input's frequency)
+using information from the future, and suggests `method='expanding'`. G09 names
+which input is too frequent, the dataset it comes from, and the frequency to
+resample to (e.g. "Resample VIXCLS to weekly right after load_series").
+
+**`cli demo` auto-approves only scenarios 1 and 2** (`Scenario.auto_approve`), prints
+scenario id, status, issue codes and run id plus a `check` column used for the
+exit code, then prints scenario 1's trace chain as scenario 6. The trace panel in
+the app moved directly under the results, labelled "Trace a result", with the
+final step selected by default.

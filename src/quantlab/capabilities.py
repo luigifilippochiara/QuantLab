@@ -1,6 +1,6 @@
 """Capability functions: the pre-written, tested quantitative building blocks.
 
-Role in the architecture: these 8 functions are the ONLY code that calls
+Role in the architecture: these 9 functions are the ONLY code that calls
 pandas / numpy for analysis. A plan can only *name* one of them (via the
 registry in registry.py); it can never supply code. Each function:
 
@@ -398,4 +398,54 @@ def summary_stats(series: Artifact) -> Artifact:
         "end": end,
     }
     meta = derive_meta(series.meta, x, kind=None, notes=["std with ddof=1; excess kurtosis"])
+    return Artifact(value=table, data_type=DataType.TABLE, meta=meta)
+
+
+# ---------------------------------------------------------------------------
+# 9. compare_groups
+# ---------------------------------------------------------------------------
+
+
+def compare_groups(values: Artifact, flags: Artifact) -> Artifact:
+    """Average of a series in flagged versus normal periods (descriptive only).
+
+    Args:
+        values: SERIES artifact (e.g. weekly returns).
+        flags: FLAGS artifact with the same frequency (e.g. high-volatility weeks).
+
+    Returns:
+        TABLE artifact: n_flagged, n_normal, mean_flagged, mean_normal,
+        diff_means (flagged minus normal), start, end.
+
+    Raises:
+        ValueError: if either group is empty (a mean of nothing is meaningless).
+    """
+    joined = inner_join(values.value, flags.value, ("value", "flag"))
+    is_flagged = joined["flag"].astype(bool)
+    flagged = joined.loc[is_flagged, "value"]
+    normal = joined.loc[~is_flagged, "value"]
+    if flagged.empty or normal.empty:
+        raise ValueError(
+            f"both groups need observations: {len(flagged)} flagged, {len(normal)} normal."
+        )
+    _, start, end = date_span(joined["value"])
+    table = {
+        "n_flagged": len(flagged),
+        "n_normal": len(normal),
+        "mean_flagged": float(flagged.mean()),
+        "mean_normal": float(normal.mean()),
+        "diff_means": float(flagged.mean() - normal.mean()),
+        "start": start,
+        "end": end,
+    }
+    # A difference in means only DESCRIBES the sample: with autocorrelated returns
+    # and few flagged episodes it says nothing about statistical significance.
+    note = "difference in means on the dates both inputs share; no statistical test"
+    meta = derive_meta(
+        values.meta,
+        joined["value"],
+        kind=None,
+        source_dataset_ids=merged_sources(values, flags),
+        notes=[note],
+    )
     return Artifact(value=table, data_type=DataType.TABLE, meta=meta)

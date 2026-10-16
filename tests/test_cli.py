@@ -21,19 +21,25 @@ def test_demo_behaves_as_expected(cli_env: Settings, capsys: pytest.CaptureFixtu
     assert "All scenarios behaved as expected." in output
     assert "MISMATCH" not in output
     assert len(list_runs(cli_env.runs_dir)) == 5
+    for scenario_id in ["volatility_flag_success", "frequency_mismatch_block"]:
+        assert scenario_id in output
+    # Scenario 6: the trace of scenario 1's flag_regime step, down to the NASDAQ file.
+    trace = output.split("Scenario 6 (traceability)")[1]
+    for line in ["s5 flag_regime", "s4 rolling_volatility", "s3 compute_returns",
+                 "s2 resample", "s1 load_series", "NASDAQCOM (FRED NASDAQCOM) sha256"]:  # fmt: skip
+        assert line in trace
 
 
 def test_run_replay_and_trace(cli_env: Settings, capsys: pytest.CaptureFixture) -> None:
-    assert main(["run", "E", "--datasets", "DGS10", "DGS2", "--mode", "mock"]) == 0
+    assert main(["run", "1", "--datasets", "NASDAQCOM", "--mode", "mock", "--approve-all"]) == 0
     run_id = list_runs(cli_env.runs_dir)[0]["run_id"]
     assert main(["replay", run_id]) == 0
     assert "ALL HASHES MATCH" in capsys.readouterr().out
-    assert main(["trace", run_id, "s4"]) == 0
+    assert main(["trace", run_id, "s5"]) == 0
     output = capsys.readouterr().out
-    assert "s4 summary_stats" in output and "DGS10 (FRED DGS10)" in output
+    assert "s5 flag_regime" in output and "NASDAQCOM (FRED NASDAQCOM)" in output
 
 
 def test_run_without_approval_exits_nonzero(cli_env: Settings, capsys) -> None:
-    assert main(["run", "A", "--datasets", "SP500", "--mode", "mock"]) == 1
+    assert main(["run", "1", "--datasets", "NASDAQCOM", "--mode", "mock"]) == 1
     assert "--approve-all" in capsys.readouterr().out
-    assert main(["run", "A", "--datasets", "SP500", "--mode", "mock", "--approve-all"]) == 0

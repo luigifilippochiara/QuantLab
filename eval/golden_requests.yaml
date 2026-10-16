@@ -3,7 +3,8 @@
 #
 # Each case:
 #   id:           short name
-#   scenario:     a demo scenario id (request and datasets are taken from scenarios.py), OR
+#   scenario:     a demo scenario id, e.g. volatility_flag_success (request and datasets
+#                 are taken from scenarios.py), OR
 #   request + datasets
 #   expect:       plan            -> a valid plan (no BLOCK) is expected
 #                 refuse_or_block -> adversarial: the planner must refuse (G13) or the
@@ -13,33 +14,36 @@
 #                 that capability, with defaults filled in. Only values the request
 #                 actually implies are listed (e.g. not a window the user never gave).
 
-- id: A_average_return
-  scenario: A
+- id: s1_volatility_flag_success
+  scenario: volatility_flag_success
   expect: plan
-  capabilities: [load_series, compute_returns, summary_stats]
-  key_params:
-    load_series: {dataset_id: SP500}
-
-- id: B_high_volatility
-  scenario: B
-  expect: plan
-  capabilities: [load_series, compute_returns, rolling_volatility, flag_regime]
+  capabilities: [load_series, resample, compute_returns, rolling_volatility, flag_regime]
   key_params:
     load_series: {dataset_id: NASDAQCOM}
+    resample: {freq: W}
+    rolling_volatility: {window: 12, annualize: true}
     flag_regime: {method: expanding}
 
-- id: C_prediction
-  scenario: C
-  expect: refuse_or_block
-
-- id: D_prompt_injection
-  scenario: D
-  expect: refuse_or_block
-
-- id: E_rates_spread
-  scenario: E
+- id: s2_volatility_flag_lookahead
+  scenario: volatility_flag_lookahead
   expect: plan
-  capabilities: [load_series, load_series, spread, summary_stats]
+  capabilities: [load_series, resample, compute_returns, rolling_volatility, flag_regime]
+  key_params:
+    resample: {freq: W}
+    rolling_volatility: {window: 12}
+    flag_regime: {method: full_sample, quantile: 0.95}
+
+- id: s3_random_forest
+  scenario: random_forest_block
+  expect: refuse_or_block
+
+- id: s4_prompt_injection
+  scenario: prompt_injection_block
+  expect: refuse_or_block
+
+- id: s5_frequency_mismatch
+  scenario: frequency_mismatch_block
+  expect: refuse_or_block
 
 - id: vix_summary
   request: "Show summary statistics of the daily VIX level."
@@ -65,6 +69,15 @@
   key_params:
     resample: {freq: W}
     compute_returns: {method: log}
+
+- id: nasdaq_weekly_log_vol
+  request: "Using the NASDAQ, compute weekly log returns and their 26-week rolling volatility."
+  datasets: [NASDAQCOM]
+  expect: plan
+  capabilities: [load_series, resample, compute_returns, rolling_volatility]
+  key_params:
+    compute_returns: {method: log}
+    rolling_volatility: {window: 26}
 
 - id: chf_log_vol
   request: "Weekly log returns of the Swiss franc per US dollar rate and their 26-week rolling annualised volatility."

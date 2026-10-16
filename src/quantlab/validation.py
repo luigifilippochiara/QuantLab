@@ -64,6 +64,11 @@ class Guardrail:
 
 BLOCK, APPROVAL, WARN = Severity.BLOCK, Severity.APPROVAL, Severity.WARN
 
+# Plain-English names used in messages, and an order (higher = less frequent).
+FREQUENCY_NAMES = {Frequency.D: "daily", Frequency.W: "weekly", Frequency.M: "monthly"}
+PERIOD_NAMES = {Frequency.D: "day", Frequency.W: "week", Frequency.M: "month"}
+FREQUENCY_RANK = {Frequency.D: 0, Frequency.W: 1, Frequency.M: 2}
+
 GUARDRAILS: dict[str, Guardrail] = {
     g.code: g
     for g in [
@@ -742,21 +747,33 @@ def check_frequency_mismatch(
     """
     if len(spec.inputs) < 2:
         return []
-    frequencies = {name: meta.frequency for name, meta in input_metas.items() if meta is not None}
-    if len(set(frequencies.values())) <= 1:
+    # Inputs whose frequency is unknown are already reported elsewhere (G03/G04).
+    metas = {name: m for name, m in input_metas.items() if m is not None and m.frequency}
+    if len({meta.frequency for meta in metas.values()}) <= 1:
         return []
-    described = ", ".join(f"{name}={freq}" for name, freq in frequencies.items())
-    return [
-        make_issue(
-            "G09",
-            step.id,
-            f"{spec.name} inputs have different frequencies ({described}).",
-            "Resample the higher-frequency input (e.g. resample(freq='W')) before this step.",
-        )
-    ]
+    described = ", ".join(
+        f"'{name}' is {FREQUENCY_NAMES[meta.frequency]}" for name, meta in metas.items()
+    )
+    # Name the fix concretely: which input is too frequent, where it comes from,
+    # and the frequency it should be resampled to (the least frequent one).
+    target = max((meta.frequency for meta in metas.values()), key=FREQUENCY_RANK.get)
+    finer = [name for name, meta in metas.items() if meta.frequency != target]
+    sources = sorted({d for name in finer for d in metas[name].dataset_ids})
+    suggestion = (
+        f"Resample {', '.join(sources) or 'the source series'} to {FREQUENCY_NAMES[target]} "
+        f"right after load_series (resample(freq='{target}')), before computing the "
+        f"{', '.join(repr(name) for name in finer)} input."
+    )
+    message = f"{spec.name} inputs have different frequencies: {described}."
+    return [make_issue("G09", step.id, message, suggestion)]
 
 
-def check_look_ahead(step: Step, spec: CapabilitySpec, params: dict[str, Any]) -> list[Issue]:
+def check_look_ahead(
+    step: Step,
+    spec: CapabilitySpec,
+    params: dict[str, Any],
+    input_metas: dict[str, StaticMeta | None],
+) -> list[Issue]:
     """G10 LOOK_AHEAD: flag_regime with a full-sample threshold (needs approval).
 
     Without it, a threshold computed from the whole sample (including the future)
@@ -765,15 +782,21 @@ def check_look_ahead(step: Step, spec: CapabilitySpec, params: dict[str, Any]) -
     """
     if spec.name != "flag_regime" or params.get("method") != "full_sample":
         return []
-    return [
-        make_issue(
-            "G10",
-            step.id,
-            "The full-sample threshold uses future data: a flag at date t depends on "
-            "values after t (look-ahead bias).",
-            "Use method='expanding' unless look-ahead is intended (e.g. descriptive labelling).",
-        )
-    ]
+    meta = input_metas.get("series")
+    period = PERIOD_NAMES.get(meta.frequency, "period") if meta else "period"
+    quantile = params.get("quantile")
+    message = (
+        f"A full-sample threshold judges past {period}s using information from the future: "
+        f"the threshold (the {quantile:.0%} quantile) is computed from every {period}, "
+        "including those that "
+        f"came later, so a {period} flagged here could not have been flagged at the time "
+        "(look-ahead bias). Results will look better than anything achievable in real time."
+    )
+    suggestion = (
+        "Use method='expanding': each threshold then uses only the data before that "
+        f"{period}. Keep full_sample only for purely descriptive labelling."
+    )
+    return [make_issue("G10", step.id, message, suggestion)]
 
 
 def check_material_assumptions(
@@ -911,7 +934,7 @@ def validate_plan(
         issues += check_returns_on_rates(step, spec, input_metas)
         issues += check_input_types(step, spec, input_metas)
         issues += check_frequency_mismatch(step, spec, input_metas)
-        issues += check_look_ahead(step, spec, params)
+        issues += check_look_ahead(step, spec, params, input_metas)
         issues += check_material_assumptions(step, spec, params)
         metas[step.id] = infer_output_meta(spec, params, input_metas, catalog)
 

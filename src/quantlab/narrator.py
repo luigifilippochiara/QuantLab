@@ -318,6 +318,13 @@ def template_narrative(
                 f"{d['n_flagged']} of {d['n_obs']} observations (a share of "
                 f"{d['share_flagged']}) were flagged, in {d['n_episodes']} distinct episodes."
             )
+        elif cap == "compare_groups":
+            sentences.append(
+                f"Comparing flagged with normal periods ({sid}), the mean is "
+                f"{d['mean_flagged']} versus {d['mean_normal']} (difference {d['diff_means']}), "
+                f"over {d['n_flagged']} flagged and {d['n_normal']} normal observations; this "
+                "is descriptive, not a statistical test."
+            )
         elif cap == "summary_stats":
             # Name what was summarised, e.g. "the returns series (s2)".
             source = step.inputs.get("series", "")

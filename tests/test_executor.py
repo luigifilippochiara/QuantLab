@@ -11,21 +11,28 @@ from quantlab.data import Catalog, file_sha256, load_catalog
 from quantlab.executor import CapabilityRefusedError, check_alignment_loss, dispatch, execute_plan
 from quantlab.plan import Plan, Step
 from quantlab.registry import REGISTRY
-from quantlab.scenarios import SCENARIOS_BY_ID
 from quantlab.types import Artifact, ArtifactMeta, DataType, Frequency, SeriesKind
 from quantlab.validation import fill_defaults, validate_plan
 
-from conftest import build_synthetic_data_dir
+from conftest import (
+    RANDOM_FOREST_PLAN,
+    RETURN_METHOD_APPROVAL,
+    SPREAD_PLAN,
+    as_plan,
+    build_synthetic_data_dir,
+    raw_plan,
+)
 
-# The return-method approval of scenarios A and B (G10 would only appear with a
-# full-sample threshold).
-ALL_APPROVALS = {"G12:s2:return_method", "G10:s4"}
+SUCCESS = "volatility_flag_success"  # scenario 1
 
 
-def scenario(scenario_id: str) -> Plan:
-    """A scenario's canned plan as a Plan, with defaults filled in."""
-    s = SCENARIOS_BY_ID[scenario_id]
-    return fill_defaults(Plan(plan_id="p", request=s.request, **s.plan))
+def with_comparison() -> dict:
+    """Scenario 1 plus a correctly aligned compare_groups step (weekly returns vs weekly flags)."""
+    raw = raw_plan(SUCCESS)
+    raw["steps"].append(
+        {"id": "s6", "capability": "compare_groups", "inputs": {"values": "s3", "flags": "s5"}}
+    )
+    return raw
 
 
 def runtime_codes(result) -> set[str]:
@@ -42,56 +49,61 @@ def test_dispatch_refuses_unregistered_names(catalog: Catalog) -> None:
 
 
 def test_blocked_plan_runs_nothing(catalog: Catalog) -> None:
-    result = execute_plan(scenario("C"), catalog, ALL_APPROVALS)
+    result = execute_plan(as_plan(RANDOM_FOREST_PLAN), catalog)
     assert result.status == "blocked"
     assert result.artifacts == {} and result.step_records == []
     assert runtime_codes(result) == {"G02"}
 
 
 def test_unapproved_plan_runs_nothing(catalog: Catalog) -> None:
-    result = execute_plan(scenario("A"), catalog, approved_issue_ids=set())
+    result = execute_plan(as_plan(raw_plan(SUCCESS)), catalog, approved_issue_ids=set())
     assert result.status == "blocked"
     assert result.step_records == []
-    assert "G12:s2:return_method" in result.error
+    assert RETURN_METHOD_APPROVAL in result.error
 
 
-def test_scenario_a_computes_the_average_return(catalog: Catalog) -> None:
-    result = execute_plan(scenario("A"), catalog, ALL_APPROVALS)
+def test_scenario_1_flags_high_volatility_weeks(catalog: Catalog) -> None:
+    result = execute_plan(as_plan(raw_plan(SUCCESS)), catalog, {RETURN_METHOD_APPROVAL})
     assert result.status == "completed", result.error
-    assert [r.step_id for r in result.step_records] == ["s1", "s2", "s3"]
+    assert [r.step_id for r in result.step_records] == ["s1", "s2", "s3", "s4", "s5"]
     assert all(r.output_hash and len(r.output_hash) == 64 for r in result.step_records)
     assert not any(c.startswith("R") for c in runtime_codes(result))
-    returns = result.artifacts["s2"].value
-    assert result.artifacts["s3"].value["mean"] == pytest.approx(returns.mean())
-    load = result.step_records[0]
-    assert load.input_hashes == {"dataset:SP500": catalog.entries["SP500"].sha256}
-
-
-def test_scenario_b_finds_high_volatility_periods(catalog: Catalog) -> None:
-    result = execute_plan(scenario("B"), catalog, ALL_APPROVALS)
-    assert result.status == "completed", result.error
-    flags = result.artifacts["s4"].value
-    # The synthetic index has calm and stressed regimes, so some days are flagged,
-    # but far from all of them; flagging starts after 252 days of volatility history.
+    flags = result.artifacts["s5"].value
+    # The synthetic index has calm and stressed regimes: some weeks are flagged, not most.
     assert 0.02 < flags.mean() < 0.5
-    volatility = result.artifacts["s3"].value
-    assert len(flags) == len(volatility) - 252
+    # Flagging starts after 52 weeks of volatility history (min_periods).
+    assert len(flags) == len(result.artifacts["s4"].value) - 52
+    load = result.step_records[0]
+    assert load.input_hashes == {"dataset:NASDAQCOM": catalog.entries["NASDAQCOM"].sha256}
+
+
+def test_compare_groups_on_aligned_inputs(catalog: Catalog) -> None:
+    result = execute_plan(as_plan(with_comparison()), catalog, {RETURN_METHOD_APPROVAL})
+    assert result.status == "completed", result.error
+    table = result.artifacts["s6"].value
+    returns, flags = result.artifacts["s3"].value, result.artifacts["s5"].value
+    common = returns.loc[flags.index]  # flags cover a sub-period of the returns
+    assert table["n_flagged"] == int(flags.sum())
+    assert table["n_flagged"] + table["n_normal"] == len(flags)
+    assert table["mean_flagged"] == pytest.approx(common[flags].mean())
+    assert table["diff_means"] == pytest.approx(table["mean_flagged"] - table["mean_normal"])
 
 
 def test_execution_is_deterministic(catalog: Catalog) -> None:
-    first = execute_plan(scenario("E"), catalog)
-    second = execute_plan(scenario("E"), catalog)
+    first = execute_plan(as_plan(SPREAD_PLAN), catalog)
+    second = execute_plan(as_plan(SPREAD_PLAN), catalog)
     assert [r.output_hash for r in first.step_records] == [
         r.output_hash for r in second.step_records
     ]
 
 
-@pytest.mark.parametrize("scenario_id", ["A", "B", "E"])
-def test_dry_run_metadata_matches_runtime_metadata(scenario_id: str, catalog: Catalog) -> None:
+@pytest.mark.parametrize("name", ["scenario_1", "spread", "comparison"])
+def test_dry_run_metadata_matches_runtime_metadata(name: str, catalog: Catalog) -> None:
     """The validator's predictions must equal what the capability functions produce."""
-    plan = scenario(scenario_id)
+    raw = {"scenario_1": raw_plan(SUCCESS), "spread": SPREAD_PLAN, "comparison": with_comparison()}
+    plan = as_plan(raw[name])
     dry_run = validate_plan(plan, catalog).dry_run
-    result = execute_plan(plan, catalog, ALL_APPROVALS)
+    result = execute_plan(plan, catalog, {RETURN_METHOD_APPROVAL})
     assert result.status == "completed", result.error
     for step_id, artifact in result.artifacts.items():
         predicted, meta = dry_run[step_id], artifact.meta
@@ -107,9 +119,9 @@ def test_dry_run_metadata_matches_runtime_metadata(scenario_id: str, catalog: Ca
 
 
 def test_r01_tampered_snapshot_blocks_cleanly(catalog: Catalog) -> None:
-    path = catalog.path_for("SP500")
+    path = catalog.path_for("NASDAQCOM")
     path.write_text(path.read_text() + "2099-01-01,1.0\n")
-    result = execute_plan(scenario("A"), catalog, ALL_APPROVALS)
+    result = execute_plan(as_plan(raw_plan(SUCCESS)), catalog, {RETURN_METHOD_APPROVAL})
     assert result.status == "blocked"
     assert "R01" in runtime_codes(result)
     assert result.step_records[0].status == "blocked"
@@ -146,13 +158,13 @@ def test_r02_window_too_long_for_the_history(catalog: Catalog) -> None:
 def test_r03_gappy_series_warns(tmp_path: Path) -> None:
     build_synthetic_data_dir(tmp_path / "gappy", missing_every=10)  # 10% missing
     gappy = load_catalog(tmp_path / "gappy" / "catalog.json")
-    result = execute_plan(scenario("E"), gappy)
+    result = execute_plan(as_plan(SPREAD_PLAN), gappy)
     assert result.status == "completed"
     assert "R03" in runtime_codes(result)
 
 
 def test_r03_silent_on_normal_series(catalog: Catalog) -> None:
-    assert "R03" not in runtime_codes(execute_plan(scenario("E"), catalog))
+    assert "R03" not in runtime_codes(execute_plan(as_plan(SPREAD_PLAN), catalog))
 
 
 # --- R04 ALIGNMENT_LOSS -----------------------------------------------------------
@@ -185,7 +197,7 @@ def test_r04_real_case_different_start_dates(tmp_path: Path, catalog: Catalog) -
     cut = load_catalog(data / "catalog.json")
     # Record the edited file's hash in the catalog, so R01 does not fire first.
     cut.entries["DGS2"] = cut.entries["DGS2"].model_copy(update={"sha256": file_sha256(dgs2)})
-    result = execute_plan(scenario("E"), cut)
+    result = execute_plan(as_plan(SPREAD_PLAN), cut)
     assert result.status == "completed"
     assert "R04" in runtime_codes(result)
 

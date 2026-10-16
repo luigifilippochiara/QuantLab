@@ -15,10 +15,11 @@ EXPECTED = [
     "rolling_volatility",
     "flag_regime",
     "summary_stats",
+    "compare_groups",
 ]
 
 
-def test_exactly_the_eight_capabilities() -> None:
+def test_exactly_the_nine_capabilities() -> None:
     assert list(REGISTRY) == EXPECTED
     for name, spec in REGISTRY.items():
         assert spec.name == name

@@ -6,9 +6,11 @@ hashes) under pytest's tmp_path, using the same dataset ids as the real catalog
 so the canned demo plans run unchanged.
 """
 
+import copy
 import json
 import shutil
 from pathlib import Path
+from typing import Any
 
 import numpy as np
 import pandas as pd
@@ -16,6 +18,9 @@ import pytest
 
 from quantlab.config import Settings
 from quantlab.data import Catalog, file_sha256, load_catalog, read_fred_csv
+from quantlab.plan import Plan
+from quantlab.scenarios import SCENARIOS_BY_ID
+from quantlab.validation import fill_defaults
 
 # 30 years of business days: long enough for every scenario and for weekly and
 # monthly variations of them (e.g. a 52-week window needs 3 x 52 weeks of returns).
@@ -153,3 +158,50 @@ def settings(tmp_path: Path, synthetic_data_template: Path) -> Settings:
 def catalog(settings: Settings) -> Catalog:
     """The synthetic catalog, loaded."""
     return load_catalog(settings.catalog_path)
+
+
+# ---------------------------------------------------------------------------
+# Plans used by tests, written exactly as the planner LLM would write them
+# ---------------------------------------------------------------------------
+
+# A clean rates analysis (no approvals needed): the 10y-2y spread and its summary
+# statistics. Useful for R03/R04, determinism and replay tests.
+SPREAD_PLAN: dict[str, Any] = {
+    "dataset_ids": ["DGS10", "DGS2"],
+    "steps": [
+        {"id": "s1", "capability": "load_series", "params": {"dataset_id": "DGS10"}},
+        {"id": "s2", "capability": "load_series", "params": {"dataset_id": "DGS2"}},
+        {"id": "s3", "capability": "spread", "inputs": {"a": "s1", "b": "s2"}},
+        {"id": "s4", "capability": "summary_stats", "inputs": {"series": "s3"}},
+    ],
+    "cannot_fulfill": False,
+}
+
+# Test-only variant of scenario 3: what a MISBEHAVING planner might emit instead
+# of refusing. The validator must block it on its own (G02).
+RANDOM_FOREST_PLAN: dict[str, Any] = {
+    "dataset_ids": ["NASDAQCOM"],
+    "steps": [
+        {"id": "s1", "capability": "load_series", "params": {"dataset_id": "NASDAQCOM"}},
+        {
+            "id": "s2",
+            "capability": "random_forest",
+            "inputs": {"series": "s1"},
+            "params": {"n_estimators": 100, "target": "next_week_return"},
+        },
+    ],  # fmt: skip
+    "cannot_fulfill": False,
+}
+
+# The approval scenario 1 needs: the return-method assumption of step s3.
+RETURN_METHOD_APPROVAL = "G12:s3:return_method"
+
+
+def raw_plan(scenario_id: str) -> dict[str, Any]:
+    """A deep copy of a demo scenario's canned plan, as a dict a test may mutate."""
+    return copy.deepcopy(SCENARIOS_BY_ID[scenario_id].plan)
+
+
+def as_plan(raw: dict[str, Any], request: str = "test request") -> Plan:
+    """Turn a plan dict into a Plan with defaults filled in, as the engine does."""
+    return fill_defaults(Plan(plan_id="p-test", request=request, **copy.deepcopy(raw)))

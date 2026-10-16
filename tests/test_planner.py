@@ -31,7 +31,7 @@ from fakes import (
     tool_response,
 )
 
-PLAN_A = SCENARIOS_BY_ID["A"].plan
+PLAN_A = SCENARIOS_BY_ID["volatility_flag_success"].plan  # scenario 1
 
 
 @pytest.mark.parametrize("scenario", SCENARIOS, ids=lambda s: s.id)
@@ -42,6 +42,16 @@ def test_mock_planner_returns_each_canned_plan(scenario) -> None:
     assert [s.capability for s in result.plan.steps] == [
         s["capability"] for s in scenario.plan["steps"]
     ]
+    # Also matched by id and by number, e.g. "volatility_flag_success" or "1".
+    for alias in (scenario.id, str(scenario.number)):
+        assert MockPlanner().generate_plan(alias, []).plan.steps == result.plan.steps
+
+
+def test_mock_planner_matches_by_keyword() -> None:
+    result = MockPlanner().generate_plan("please PREDICT the nasdaq with a neural net", [])
+    assert result.plan.cannot_fulfill  # scenario 3's refusal, not a NASDAQ plan
+    result = MockPlanner().generate_plan("NASDAQ volatility flags, full-sample threshold", [])
+    assert result.plan.steps[-1].params["method"] == "full_sample"  # scenario 2
 
 
 def test_mock_planner_refuses_unknown_requests() -> None:

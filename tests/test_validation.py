@@ -1,6 +1,5 @@
 """Static guardrails G01-G13: each triggers on a crafted plan and stays silent on a clean one."""
 
-import copy
 import json
 from typing import Any
 
@@ -8,7 +7,6 @@ import pytest
 
 from quantlab.data import Catalog
 from quantlab.plan import Plan, plan_tool_schema
-from quantlab.scenarios import SCENARIOS_BY_ID
 from quantlab.validation import (
     GUARDRAILS,
     Severity,
@@ -19,16 +17,15 @@ from quantlab.validation import (
     validate_plan,
 )
 
+from conftest import RANDOM_FOREST_PLAN, RETURN_METHOD_APPROVAL, SPREAD_PLAN, raw_plan
 
-def scenario_plan(scenario_id: str) -> dict[str, Any]:
-    """A deep copy of a canned scenario plan, as a dict we can mutate."""
-    scenario = SCENARIOS_BY_ID[scenario_id]
-    return {"plan_id": "p-test", "request": scenario.request, **copy.deepcopy(scenario.plan)}
+SUCCESS = "volatility_flag_success"  # scenario 1, the anchor case
 
 
 def validate(raw: dict[str, Any], catalog: Catalog, **budgets: int) -> ValidationReport:
     """Parse and validate a plan dict (defaults filled, as the engine does)."""
-    return validate_plan(fill_defaults(Plan.model_validate(raw)), catalog, **budgets)
+    plan = Plan.model_validate({"plan_id": "p-test", "request": "test request", **raw})
+    return validate_plan(fill_defaults(plan), catalog, **budgets)
 
 
 def step(raw: dict[str, Any], step_id: str) -> dict[str, Any]:
@@ -41,25 +38,23 @@ def step(raw: dict[str, Any], step_id: str) -> dict[str, Any]:
 
 @pytest.mark.parametrize("code", [c for c in GUARDRAILS if c.startswith("G")])
 def test_clean_plan_triggers_nothing(code: str, catalog: Catalog) -> None:
-    # Scenario E is a fully clean plan; A and B only need the return-method approval.
-    assert code not in validate(scenario_plan("E"), catalog).codes()
+    # The spread plan is fully clean; scenario 1 only needs the return-method approval.
+    assert code not in validate(SPREAD_PLAN, catalog).codes()
     if code != "G12":
-        assert code not in validate(scenario_plan("A"), catalog).codes()
-        assert code not in validate(scenario_plan("B"), catalog).codes()
+        assert code not in validate(raw_plan(SUCCESS), catalog).codes()
 
 
-def test_scenario_a_only_needs_the_return_method_approval(catalog: Catalog) -> None:
-    report = validate(scenario_plan("A"), catalog)
-    assert not report.is_blocked
-    assert [i.issue_id for i in report.approvals_required] == ["G12:s2:return_method"]
-    assert report.warnings == []
+def test_scenario_1_needs_exactly_one_approval(catalog: Catalog) -> None:
+    report = validate(raw_plan(SUCCESS), catalog)
+    assert not report.is_blocked and report.warnings == []
+    assert [i.issue_id for i in report.approvals_required] == [RETURN_METHOD_APPROVAL]
 
 
 # --- G01 SCHEMA_INVALID ---------------------------------------------------------
 
 
 def test_g01_extra_fields_are_rejected() -> None:
-    raw = scenario_plan("A")
+    raw = {"plan_id": "p", "request": "r", **raw_plan(SUCCESS)}
     raw["steps"][0]["code"] = "import os"
     plan, issues = check_schema(raw)
     assert plan is None
@@ -71,11 +66,11 @@ def test_g01_wrong_structure_and_planner_failure() -> None:
     plan, issues = check_schema({"plan_id": "p", "request": "r", "steps": "not a list"})
     assert plan is None and issues[0].code == "G01"
     assert planner_failure_issue("timeout").code == "G01"
-    assert check_schema(scenario_plan("A"))[1] == []
+    assert check_schema({"plan_id": "p", "request": "r", **raw_plan(SUCCESS)})[1] == []
 
 
 def test_g01_empty_plan(catalog: Catalog) -> None:
-    raw = scenario_plan("A")
+    raw = raw_plan(SUCCESS)
     raw["steps"] = []
     assert "G01" in validate(raw, catalog).codes()
 
@@ -83,17 +78,10 @@ def test_g01_empty_plan(catalog: Catalog) -> None:
 # --- G02 UNKNOWN_CAPABILITY -----------------------------------------------------
 
 
-def test_g02_prediction_has_no_capability(catalog: Catalog) -> None:
-    report = validate(scenario_plan("C"), catalog)
+def test_g02_a_planner_that_invents_a_model_is_still_blocked(catalog: Catalog) -> None:
+    report = validate(RANDOM_FOREST_PLAN, catalog)
     assert report.codes() == ["G02"] and report.is_blocked
-    assert "forecast" in report.blocks[0].message
-
-
-def test_g02_unknown_capability(catalog: Catalog) -> None:
-    raw = scenario_plan("E")
-    step(raw, "s4")["capability"] = "run_python"
-    report = validate(raw, catalog)
-    assert "G02" in report.codes() and report.is_blocked
+    assert "random_forest" in report.blocks[0].message
 
 
 # --- G03 INVALID_PARAM ----------------------------------------------------------
@@ -102,31 +90,30 @@ def test_g02_unknown_capability(catalog: Catalog) -> None:
 @pytest.mark.parametrize(
     ("step_id", "params"),
     [
-        ("s3", {"window": 21, "annualize": True, "colour": "red"}),  # unknown param
-        ("s3", {"annualize": True}),  # missing required
-        ("s3", {"window": "21"}),  # wrong type
-        ("s3", {"window": True}),  # bool is not an int
-        ("s3", {"window": None}),  # null
-        ("s3", {"window": 2}),  # below range
-        ("s4", {"quantile": 1.5}),  # above range
-        ("s4", {"quantile": float("nan")}),  # NaN
-        ("s2", {"method": "arithmetic"}),  # not in choices
-        ("s3", {"window": 21, "annualize": "yes"}),  # wrong type for bool
+        ("s4", {"window": 12, "annualize": True, "colour": "red"}),  # unknown param
+        ("s4", {"annualize": True}),  # missing required
+        ("s4", {"window": "12"}),  # wrong type
+        ("s4", {"window": True}),  # bool is not an int
+        ("s4", {"window": 2}),  # below range
+        ("s5", {"quantile": 1.5}),  # above range
+        ("s5", {"quantile": float("nan")}),  # NaN
+        ("s3", {"method": "arithmetic"}),  # not in choices
+        ("s4", {"window": 12, "annualize": "yes"}),  # wrong type for bool
     ],
 )
 def test_g03_invalid_params(step_id: str, params: dict[str, Any], catalog: Catalog) -> None:
-    raw = scenario_plan("B")
+    raw = raw_plan(SUCCESS)
     step(raw, step_id)["params"] = params
     report = validate(raw, catalog)
     assert "G03" in report.codes() and report.is_blocked
 
 
 def test_defaults_are_filled_in() -> None:
-    filled = fill_defaults(Plan.model_validate(scenario_plan("B")))
-    assert filled.steps[1].params == {"method": "simple", "periods": 1}  # default added
-    assert filled.steps[2].params == {"window": 21, "annualize": True}
-    unknown = fill_defaults(Plan.model_validate(scenario_plan("C")))
-    assert unknown.steps[1].params == {"steps_ahead": 5}  # unknown capability untouched
+    raw = raw_plan("frequency_mismatch_block")  # its compute_returns omits `periods`
+    filled = fill_defaults(Plan(plan_id="p", request="r", **raw))
+    assert filled.steps[4].params == {"method": "simple", "periods": 1}  # default added
+    unknown = fill_defaults(Plan(plan_id="p", request="r", **RANDOM_FOREST_PLAN))
+    assert unknown.steps[1].params == {"n_estimators": 100, "target": "next_week_return"}
 
 
 # --- G04 BAD_REFERENCE ----------------------------------------------------------
@@ -137,20 +124,20 @@ def test_defaults_are_filled_in() -> None:
     [
         {},  # missing input
         {"series": "s99"},  # unknown step
-        {"series": "s4"},  # later step
-        {"series": "s3"},  # itself
-        {"series": "s2", "other": "s1"},  # unknown input name
+        {"series": "s5"},  # later step
+        {"series": "s4"},  # itself
+        {"series": "s3", "other": "s2"},  # unknown input name
     ],
 )
 def test_g04_bad_references(inputs: dict[str, str], catalog: Catalog) -> None:
-    raw = scenario_plan("B")
-    step(raw, "s3")["inputs"] = inputs
+    raw = raw_plan(SUCCESS)
+    step(raw, "s4")["inputs"] = inputs
     assert "G04" in validate(raw, catalog).codes()
 
 
 def test_g04_duplicate_step_ids(catalog: Catalog) -> None:
-    raw = scenario_plan("E")
-    step(raw, "s4")["id"] = "s3"
+    raw = raw_plan(SUCCESS)
+    step(raw, "s5")["id"] = "s4"
     assert "G04" in validate(raw, catalog).codes()
 
 
@@ -158,18 +145,24 @@ def test_g04_duplicate_step_ids(catalog: Catalog) -> None:
 
 
 def test_g05_volatility_of_a_price_level(catalog: Catalog) -> None:
-    raw = scenario_plan("B")
-    step(raw, "s3")["inputs"] = {"series": "s1"}
+    raw = raw_plan(SUCCESS)
+    step(raw, "s4")["inputs"] = {"series": "s2"}  # weekly prices, not returns
     report = validate(raw, catalog)
     assert "G05" in report.codes()
     assert "Compute returns" in report.blocks[0].suggestion
 
 
 def test_g05_summary_statistics_of_flags(catalog: Catalog) -> None:
-    raw = scenario_plan("B")
+    raw = raw_plan(SUCCESS)
+    raw["steps"].append({"id": "s6", "capability": "summary_stats", "inputs": {"series": "s5"}})
+    assert "G05" in validate(raw, catalog).codes()
+
+
+def test_g05_compare_groups_needs_flags(catalog: Catalog) -> None:
+    raw = raw_plan(SUCCESS)
     raw["steps"].append(
-        {"id": "s5", "capability": "summary_stats", "inputs": {"series": "s4"}, "params": {}}
-    )
+        {"id": "s6", "capability": "compare_groups", "inputs": {"values": "s3", "flags": "s4"}}
+    )  # s4 is a volatility series, not flags
     assert "G05" in validate(raw, catalog).codes()
 
 
@@ -177,8 +170,8 @@ def test_g05_summary_statistics_of_flags(catalog: Catalog) -> None:
 
 
 def test_g06_too_many_steps(catalog: Catalog) -> None:
-    raw = scenario_plan("E")
-    for i in range(5, 17):
+    raw = raw_plan(SUCCESS)
+    for i in range(6, 17):
         raw["steps"].append(
             {"id": f"s{i}", "capability": "summary_stats", "inputs": {"series": "s3"}}
         )
@@ -188,20 +181,19 @@ def test_g06_too_many_steps(catalog: Catalog) -> None:
 
 
 def test_g06_too_many_datasets_and_long_request(catalog: Catalog) -> None:
-    raw = scenario_plan("E")
-    assert "G06" in validate(raw, catalog, max_datasets=1).codes()
-    raw["request"] = "x" * 3000
-    assert "G06" in validate(raw, catalog).codes()
+    assert "G06" in validate(SPREAD_PLAN, catalog, max_datasets=1).codes()
+    plan = Plan(plan_id="p", request="x" * 3000, **SPREAD_PLAN)
+    assert "G06" in validate_plan(fill_defaults(plan), catalog).codes()
 
 
 # --- G07 UNKNOWN_DATASET --------------------------------------------------------
 
 
 def test_g07_unknown_dataset(catalog: Catalog) -> None:
-    raw = scenario_plan("E")
-    step(raw, "s2")["params"] = {"dataset_id": "BITCOIN"}
+    raw = raw_plan(SUCCESS)
+    step(raw, "s1")["params"] = {"dataset_id": "BITCOIN"}
     assert "G07" in validate(raw, catalog).codes()
-    raw = scenario_plan("E")
+    raw = raw_plan(SUCCESS)
     raw["dataset_ids"].append("BITCOIN")
     assert "G07" in validate(raw, catalog).codes()
 
@@ -210,12 +202,18 @@ def test_g07_unknown_dataset(catalog: Catalog) -> None:
 
 
 def test_g08_returns_on_rates_replaces_generic_type_error(catalog: Catalog) -> None:
-    raw = scenario_plan("E")
-    raw["steps"] = [
-        step(raw, "s1"),  # the 10-year yield
-        {"id": "s2", "capability": "compute_returns", "inputs": {"series": "s1"},
-         "params": {"method": "simple"}},
-    ]  # fmt: skip
+    raw = {
+        "dataset_ids": ["DGS10"],
+        "steps": [
+            {"id": "s1", "capability": "load_series", "params": {"dataset_id": "DGS10"}},
+            {
+                "id": "s2",
+                "capability": "compute_returns",
+                "inputs": {"series": "s1"},
+                "params": {"method": "simple"},
+            },
+        ],  # fmt: skip
+    }
     report = validate(raw, catalog)
     assert "G08" in report.codes() and report.is_blocked
     assert "G05" not in report.codes()  # the specific guardrail wins
@@ -226,35 +224,38 @@ def test_g08_returns_on_rates_replaces_generic_type_error(catalog: Catalog) -> N
 # --- G09 FREQUENCY_MISMATCH -----------------------------------------------------
 
 
+def test_g09_daily_vix_flags_against_weekly_returns(catalog: Catalog) -> None:
+    report = validate(raw_plan("frequency_mismatch_block"), catalog)
+    assert report.is_blocked and report.codes() == ["G09", "G12"]
+    g09 = next(i for i in report.issues if i.code == "G09")
+    assert g09.step_id == "s6"  # the compare_groups step
+    assert "'flags' is daily" in g09.message
+    assert "Resample VIXCLS to weekly" in g09.suggestion
+
+
 def test_g09_spread_of_weekly_and_daily_series(catalog: Catalog) -> None:
-    raw = scenario_plan("E")
-    raw["steps"].insert(
-        2, {"id": "s1w", "capability": "resample", "inputs": {"series": "s1"},
-            "params": {"freq": "W"}},
-    )  # fmt: skip
+    raw = {"dataset_ids": ["DGS10", "DGS2"], "steps": [dict(s) for s in SPREAD_PLAN["steps"]]}
+    raw["steps"].insert(2, {"id": "s1w", "capability": "resample", "inputs": {"series": "s1"},
+                            "params": {"freq": "W"}})  # fmt: skip
     step(raw, "s3")["inputs"] = {"a": "s1w", "b": "s2"}  # weekly 10y minus daily 2y
-    report = validate(raw, catalog)
-    assert "G09" in report.codes() and report.is_blocked
-    assert "resample" in next(i for i in report.issues if i.code == "G09").suggestion
+    assert "G09" in validate(raw, catalog).codes()
 
 
-# --- G10 LOOK_AHEAD, G12 MATERIAL_ASSUMPTION -----------------------------------
+# --- G10 LOOK_AHEAD, G12 MATERIAL_ASSUMPTION ------------------------------------
 
 
-def test_g10_full_sample_threshold_needs_approval(catalog: Catalog) -> None:
-    raw = scenario_plan("B")
-    step(raw, "s4")["params"]["method"] = "full_sample"
-    report = validate(raw, catalog)
+def test_g10_full_sample_threshold_needs_approval_and_explains_why(catalog: Catalog) -> None:
+    report = validate(raw_plan("volatility_flag_lookahead"), catalog)
     assert not report.is_blocked
-    assert [i.issue_id for i in report.approvals_required] == [
-        "G12:s2:return_method",
-        "G10:s4",
-    ]
+    assert [i.issue_id for i in report.approvals_required] == [RETURN_METHOD_APPROVAL, "G10:s5"]
+    g10 = report.approvals_required[1]
+    assert "judges past weeks using information from the future" in g10.message
+    assert "expanding" in g10.suggestion
 
 
-def test_g11_message_names_the_chosen_value(catalog: Catalog) -> None:
-    raw = scenario_plan("A")
-    step(raw, "s2")["params"]["method"] = "log"
+def test_g12_message_names_the_chosen_value(catalog: Catalog) -> None:
+    raw = raw_plan(SUCCESS)
+    step(raw, "s3")["params"]["method"] = "log"
     issue = validate(raw, catalog).approvals_required[0]
     assert issue.code == "G12" and "method='log'" in issue.message
 
@@ -262,8 +263,9 @@ def test_g11_message_names_the_chosen_value(catalog: Catalog) -> None:
 # --- G13 PLANNER_REFUSED --------------------------------------------------------
 
 
-def test_g12_refusal(catalog: Catalog) -> None:
-    report = validate(scenario_plan("D"), catalog)
+@pytest.mark.parametrize("scenario_id", ["random_forest_block", "prompt_injection_block"])
+def test_g13_refusal(scenario_id: str, catalog: Catalog) -> None:
+    report = validate(raw_plan(scenario_id), catalog)
     assert report.codes() == ["G13"] and report.is_blocked
 
 
@@ -271,12 +273,13 @@ def test_g12_refusal(catalog: Catalog) -> None:
 
 
 def test_dry_run_propagates_metadata(catalog: Catalog) -> None:
-    dry = validate(scenario_plan("B"), catalog).dry_run
-    assert dry["s1"]["kind"] == "price_level" and dry["s1"]["frequency"] == "D"
-    assert dry["s2"]["kind"] == "returns" and dry["s2"]["return_method"] == "simple"
-    assert dry["s3"]["kind"] == "volatility" and dry["s3"]["dataset_ids"] == ["NASDAQCOM"]
-    assert dry["s4"]["data_type"] == "flags"
-    assert validate(scenario_plan("A"), catalog).dry_run["s3"]["data_type"] == "table"
+    dry = validate(raw_plan(SUCCESS), catalog).dry_run
+    assert dry["s1"]["frequency"] == "D" and dry["s2"]["frequency"] == "W"
+    assert dry["s3"]["kind"] == "returns" and dry["s3"]["return_method"] == "simple"
+    assert dry["s4"]["kind"] == "volatility" and dry["s5"]["data_type"] == "flags"
+    mismatch = validate(raw_plan("frequency_mismatch_block"), catalog).dry_run
+    assert mismatch["s6"]["data_type"] == "table"
+    assert mismatch["s6"]["dataset_ids"] == ["NASDAQCOM", "VIXCLS"]
 
 
 def test_tool_schema_excludes_system_fields_and_has_no_refs() -> None:

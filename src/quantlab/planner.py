@@ -43,7 +43,7 @@ from quantlab.validation import Issue, check_schema, planner_failure_issue
 # Bump whenever SYSTEM_PROMPT changes: it is part of the plan-cache key and of
 # every run record, so old cached plans are not reused with a new prompt.
 PROMPT_VERSION = "planner-v2"
-MOCK_PROMPT_VERSION = "canned-scenarios-v2"
+MOCK_PROMPT_VERSION = "canned-scenarios-v3"
 TOOL_NAME = "submit_plan"
 
 # Server-side refusal fallback (Anthropic API beta): if the model declines a
@@ -154,7 +154,11 @@ def plan_from_output(raw: Any, request: str) -> tuple[Plan | None, list[Issue]]:
 
 
 class MockPlanner:
-    """Returns the hand-written plan of the matching demo scenario; never calls an LLM."""
+    """Returns the hand-written plan of the matching demo scenario; never calls an LLM.
+
+    A request matches a scenario by its exact text, its id or number, or its keywords
+    (see scenarios.match_scenario).
+    """
 
     def generate_plan(self, request: str, dataset_ids: list[str]) -> PlanResult:
         """Look the request up among the demo scenarios.
@@ -175,8 +179,8 @@ class MockPlanner:
                 "steps": [],
                 "cannot_fulfill": True,
                 "refusal_reason": (
-                    "Mock mode only knows the five demo scenarios (A-E). Switch the LLM mode "
-                    "to live to plan free-form requests."
+                    "Mock mode only knows the five demo requests (scenarios 1-5). Switch "
+                    "the LLM mode to live to plan free-form requests."
                 ),
                 "planner_notes": None,
             }

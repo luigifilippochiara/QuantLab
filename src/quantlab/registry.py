@@ -433,6 +433,32 @@ SUMMARY_STATS = CapabilitySpec(
     library_calls="pandas.Series.mean / .std(ddof=1) / .min / .max / .skew / .kurt",
 )
 
+COMPARE_GROUPS = CapabilitySpec(
+    name="compare_groups",
+    description=(
+        "Average of a series in flagged versus normal periods (e.g. returns in "
+        "high-volatility weeks vs other weeks). Descriptive: no statistical test. "
+        "Values and flags must have the same frequency."
+    ),
+    func=capabilities.compare_groups,
+    inputs=(
+        InputSpec("values", (DataType.SERIES,), "Series to average, e.g. returns."),
+        InputSpec("flags", (DataType.FLAGS,), "Regime flags with the same frequency."),
+    ),
+    params=(),
+    output_type=DataType.TABLE,
+    output_kind=None,
+    min_obs=MinObsRule("at least 10 common observations", min_obs=10),
+    assumptions=(
+        Assumption("inner_join", "Only dates present in both inputs are kept."),
+        Assumption(
+            "descriptive",
+            "The difference in means describes the sample; it is not a test of significance.",
+        ),
+    ),
+    library_calls="pandas.concat([values, flags], join='inner'); .mean() per group",
+)
+
 
 # The registry itself: capability name -> spec. Built from a list so each key is
 # guaranteed to equal the spec's own name. This dict IS the whitelist.
@@ -447,6 +473,7 @@ REGISTRY: dict[str, CapabilitySpec] = {
         ROLLING_VOLATILITY,
         FLAG_REGIME,
         SUMMARY_STATS,
+        COMPARE_GROUPS,
     ]
 }
 

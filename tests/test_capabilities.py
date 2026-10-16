@@ -244,3 +244,29 @@ def test_load_series_sets_metadata(catalog: Catalog) -> None:
     assert out.meta.n_dropped_missing == entry.n_missing
     assert out.meta.n_obs == entry.n_rows - entry.n_missing
     assert out.meta.source_dataset_ids == ["DGS10"]
+
+
+# --- group comparison -------------------------------------------------------------
+
+
+def test_compare_groups_averages_each_group_on_common_dates() -> None:
+    values = make_artifact([0.01, 0.03, -0.02, 0.04, 0.00], kind=SeriesKind.RETURNS)
+    # Flags start one week later, so the first value has no flag and is dropped.
+    flags = make_artifact(
+        [True, False, True, False], kind=SeriesKind.FLAGS, start="2024-01-12",
+        data_type=DataType.FLAGS,
+    )  # fmt: skip
+    table = cap.compare_groups(values, flags).value
+    # Common weeks: 0.03 (flagged), -0.02 (normal), 0.04 (flagged), 0.00 (normal).
+    assert (table["n_flagged"], table["n_normal"]) == (2, 2)
+    assert table["mean_flagged"] == pytest.approx(0.035)
+    assert table["mean_normal"] == pytest.approx(-0.01)
+    assert table["diff_means"] == pytest.approx(0.045)
+    assert (table["start"], table["end"]) == ("2024-01-12", "2024-02-02")
+
+
+def test_compare_groups_refuses_an_empty_group() -> None:
+    values = make_artifact([0.01, 0.02], kind=SeriesKind.RETURNS)
+    flags = make_artifact([False, False], kind=SeriesKind.FLAGS, data_type=DataType.FLAGS)
+    with pytest.raises(ValueError, match="both groups"):
+        cap.compare_groups(values, flags)

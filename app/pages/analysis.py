@@ -63,14 +63,19 @@ with st.sidebar:
         )
 
     st.header("Demo scenarios")
+    st.caption("One analyst's workflow: it works (1), it is smart (2), it is safe (3-5).")
     for scenario in SCENARIOS:
         st.button(
-            scenario.title,
+            scenario.label,
             key=f"scenario-{scenario.id}",
             on_click=ui.load_scenario,
             args=(scenario.id,),
             width="stretch",
         )
+    st.caption(
+        "6 · Traceability: after running 1, use **Trace a result** under the results "
+        "to follow the flags back to the NASDAQ file."
+    )
 
 # ---------------------------------------------------------------- request
 
@@ -276,6 +281,23 @@ for step in plan.steps:
         if artifact is not None:
             ui.render_artifact(step.id, step.capability, artifact, shading.get(step.id))
 
+# ---------------------------------------------------------------- trace
+
+executed = [step.id for step in plan.steps if step.id in artifacts]
+if executed:
+    st.subheader("Trace a result")
+    st.caption(
+        "Pick a step to see every step it depends on, down to the source file: "
+        "capability, library call, parameters and output hash."
+    )
+    chosen_step = st.selectbox(
+        "Step to trace",
+        executed,
+        index=len(executed) - 1,  # the final result by default (e.g. flag_regime)
+        format_func=lambda s: f"{s} · {records[s].capability}",
+    )
+    ui.render_trace(session.trace(chosen_step))
+
 # ---------------------------------------------------------------- narrative
 
 narrative = session.narrative
@@ -308,18 +330,7 @@ if narrative is not None:
             alt="Facts sheet",
         )
 
-# ---------------------------------------------------------------- trace and record
-
-if records:
-    st.subheader("Trace: where does this number come from?")
-    executed = [step.id for step in plan.steps if step.id in artifacts]
-    chosen_step = st.selectbox(
-        "Step to trace",
-        executed,
-        index=len(executed) - 1,
-        format_func=lambda s: f"{s} · {records[s].capability}",
-    )
-    ui.render_trace(session.trace(chosen_step))
+# ---------------------------------------------------------------- run record
 
 if session.manifest_path is not None:
     st.subheader("Run record")

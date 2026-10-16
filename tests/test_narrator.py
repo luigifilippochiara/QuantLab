@@ -15,16 +15,23 @@ from quantlab.narrator import (
     narrate,
 )
 from quantlab.plan import Plan
-from quantlab.scenarios import SCENARIOS_BY_ID
-from quantlab.validation import fill_defaults, validate_plan
+from quantlab.validation import validate_plan
 
+from conftest import SPREAD_PLAN, as_plan, raw_plan
 from fakes import FakeAnthropicClient, FakeOpenAIClient, openai_text_response, text_response
 
+SCENARIO_1 = raw_plan("volatility_flag_success")
+WITH_COMPARISON = {
+    **SCENARIO_1,
+    "steps": SCENARIO_1["steps"]
+    + [{"id": "s6", "capability": "compare_groups", "inputs": {"values": "s3", "flags": "s5"}}],
+}
+PLANS = {"scenario_1": SCENARIO_1, "spread": SPREAD_PLAN, "comparison": WITH_COMPARISON}
 
-def run_scenario(scenario_id: str, catalog: Catalog):
-    """Execute a canned scenario on synthetic data; return plan, result and narrator issues."""
-    s = SCENARIOS_BY_ID[scenario_id]
-    plan = fill_defaults(Plan(plan_id="p", request=s.request, **s.plan))
+
+def run_scenario(name: str, catalog: Catalog):
+    """Execute a test plan on synthetic data; return plan, result and narrator issues."""
+    plan = as_plan(PLANS[name])
     report = validate_plan(plan, catalog)
     result = execute_plan(plan, catalog, {i.issue_id for i in report.approvals_required})
     issues = report.warnings + report.approvals_required + result.issues
@@ -49,17 +56,18 @@ def test_format_number(value: float | int | str, expected: str) -> None:
 
 
 def test_facts_sheet_covers_tables_flags_and_series(catalog: Catalog) -> None:
-    plan, result, _ = run_scenario("A", catalog)
+    plan, result, _ = run_scenario("spread", catalog)
     facts = {f.fact_id: f for f in build_facts_sheet(plan, result.artifacts)}
-    for fact_id in ["s1.start", "s1.end", "s2.last_value", "s3.mean", "s3.std", "s3.count"]:
+    for fact_id in ["s1.start", "s1.end", "s3.last_value", "s4.mean", "s4.std", "s4.count"]:
         assert fact_id in facts
-    assert facts["s3.mean"].value == result.artifacts["s3"].value["mean"]
+    assert facts["s4.mean"].value == result.artifacts["s4"].value["mean"]
 
-    plan, result, _ = run_scenario("B", catalog)
+    plan, result, _ = run_scenario("comparison", catalog)
     facts = {f.fact_id: f for f in build_facts_sheet(plan, result.artifacts)}
-    for fact_id in ["s3.last_value", "s4.n_flagged", "s4.share_flagged", "s4.n_episodes"]:
+    for fact_id in ["s4.last_value", "s5.n_flagged", "s5.share_flagged", "s5.n_episodes",
+                    "s6.mean_flagged", "s6.diff_means"]:  # fmt: skip
         assert fact_id in facts
-    assert facts["s4.n_flagged"].value == int(result.artifacts["s4"].value.sum())
+    assert facts["s5.n_flagged"].value == int(result.artifacts["s5"].value.sum())
 
 
 # --- grounding ---------------------------------------------------------------------
@@ -125,7 +133,7 @@ def test_extra_texts_allow_numbers_from_warnings() -> None:
 # --- narrate -----------------------------------------------------------------------
 
 
-@pytest.mark.parametrize("scenario_id", ["A", "B", "E"])
+@pytest.mark.parametrize("scenario_id", list(PLANS))
 def test_template_narrative_is_fully_grounded(
     scenario_id: str, settings: Settings, catalog: Catalog
 ) -> None:
@@ -139,7 +147,7 @@ def test_template_narrative_is_fully_grounded(
 def test_llm_narrative_with_invented_number_is_flagged(
     settings: Settings, catalog: Catalog
 ) -> None:
-    plan, result, issues = run_scenario("E", catalog)
+    plan, result, issues = run_scenario("spread", catalog)
     facts = build_facts_sheet(plan, result.artifacts)
     mean = next(f.display for f in facts if f.fact_id == "s4.mean")
     client = FakeAnthropicClient(
@@ -155,7 +163,7 @@ def test_llm_narrative_with_invented_number_is_flagged(
 
 
 def test_llm_failure_falls_back_to_the_template(settings: Settings, catalog: Catalog) -> None:
-    plan, result, issues = run_scenario("E", catalog)
+    plan, result, issues = run_scenario("spread", catalog)
     client = FakeAnthropicClient(error=RuntimeError("connection reset"))
     narrative = narrate(plan.request, plan, result.artifacts, issues, "live", settings,
                         client=client)  # fmt: skip
@@ -165,7 +173,7 @@ def test_llm_failure_falls_back_to_the_template(settings: Settings, catalog: Cat
 
 
 def test_openai_narrative_path(settings: Settings, catalog: Catalog) -> None:
-    plan, result, issues = run_scenario("E", catalog)
+    plan, result, issues = run_scenario("spread", catalog)
     facts = build_facts_sheet(plan, result.artifacts)
     mean = next(f.display for f in facts if f.fact_id == "s4.mean")
     client = FakeOpenAIClient(openai_text_response(f"The average spread is {mean}."))
@@ -181,7 +189,7 @@ def test_openai_narrative_path(settings: Settings, catalog: Catalog) -> None:
 
 
 def test_incomplete_openai_narrative_falls_back(settings: Settings, catalog: Catalog) -> None:
-    plan, result, issues = run_scenario("E", catalog)
+    plan, result, issues = run_scenario("spread", catalog)
     client = FakeOpenAIClient(openai_text_response("", "incomplete", "max_output_tokens"))
     openai_settings = dataclasses.replace(settings, llm_provider="openai")
     narrative = narrate(plan.request, plan, result.artifacts, issues, "live", openai_settings,
