@@ -69,7 +69,7 @@ Refreshing the data (needs network; creates a new data version):
 ## Running the live demo
 
 Live mode calls a real LLM for the planner and the narrator. The provider is
-set in `.env`: **OpenAI** by default (model `gpt-6.1-sol`, Responses API), or
+set in `.env`: **OpenAI** by default (model `gpt-6-luna`, Responses API), or
 Anthropic (`QUANTLAB_LLM_PROVIDER=anthropic`, model `claude-sonnet-5-5`).
 
 **1. Configure (once).**
@@ -77,7 +77,7 @@ Anthropic (`QUANTLAB_LLM_PROVIDER=anthropic`, model `claude-sonnet-5-5`).
 ```bash
 cp .env.example .env
 # edit .env:  QUANTLAB_LLM_PROVIDER=openai   OPENAI_API_KEY=sk-...
-#             optionally QUANTLAB_PLANNER_MODEL=gpt-6-luna (cheaper) or gpt-6-astra (strongest)
+#             optionally QUANTLAB_PLANNER_MODEL=gpt-6.1-sol (balanced) or gpt-6-astra (strongest)
 ```
 
 **2. Smoke-test the key and model** (one planner call and one narrator call):
@@ -278,7 +278,7 @@ the checks. Approvals are recorded with a timestamp and the exact issue text.
 ## The LLM calls
 
 **Providers.** `QUANTLAB_LLM_PROVIDER` selects OpenAI (default; Responses API,
-`gpt-6.1-sol`) or Anthropic (Messages API, `claude-sonnet-5-5`). Both receive the
+`gpt-6-luna`) or Anthropic (Messages API, `claude-sonnet-5-5`). Both receive the
 same prompts and plan schema, and their output goes through the same parsing
 and validation; only `planner.py` imports the provider SDKs, and only
 `planner.py` and `narrator.py` call them. The run record stores the provider,

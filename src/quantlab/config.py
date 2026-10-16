@@ -9,7 +9,7 @@ Environment variables (all optional):
     QUANTLAB_LLM_PROVIDER      openai | anthropic: which LLM API to call (default: openai)
     OPENAI_API_KEY             key used when the provider is openai
     ANTHROPIC_API_KEY          key used when the provider is anthropic
-    QUANTLAB_PLANNER_MODEL     planner model id (default: gpt-6.1-sol / claude-sonnet-5-5)
+    QUANTLAB_PLANNER_MODEL     planner model id (default: gpt-6-luna / claude-sonnet-5-5)
     QUANTLAB_NARRATOR_MODEL    model id for the narrator (default: same as planner)
     QUANTLAB_PLANNER_EFFORT    planner reasoning effort: low|medium|high (default: medium)
     QUANTLAB_NARRATOR_EFFORT   narrator reasoning effort: low|medium|high (default: low)
@@ -38,8 +38,10 @@ LLM_MODES = ("live", "cached", "mock")
 # get the same prompts, the same plan schema and the same validation.
 LLM_PROVIDERS = ("openai", "anthropic")
 
-# Default models: each provider's balanced tier (good planning quality, moderate cost).
-DEFAULT_MODELS = {"openai": "gpt-6.1-sol", "anthropic": "claude-sonnet-5-5"}
+# Default models (the narrator uses the planner's model unless set separately).
+# OpenAI: gpt-6-luna, the cheapest GPT-6 model, which the owner has used live for
+# both calls; gpt-6.1-sol (balanced) or gpt-6-astra (strongest) via the env vars.
+DEFAULT_MODELS = {"openai": "gpt-6-luna", "anthropic": "claude-sonnet-5-5"}
 
 
 @dataclass(frozen=True)

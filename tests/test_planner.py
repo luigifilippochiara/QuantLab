@@ -160,7 +160,7 @@ def test_openai_call_shape_and_success(openai_settings: Settings, catalog: Catal
     assert result.plan is not None and result.error is None
     assert (result.provider, result.served_model, result.input_tokens) == (
         "openai",
-        "gpt-6.1-sol",
+        "gpt-6-luna",
         1500,
     )
     call = client.calls[0]

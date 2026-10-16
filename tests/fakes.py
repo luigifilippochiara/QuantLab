@@ -64,7 +64,7 @@ class FakeOpenAIResponse:
     output_text: str = ""
     status: str = "completed"
     incomplete_details: FakeIncompleteDetails | None = None
-    model: str = "gpt-6.1-sol"
+    model: str = "gpt-6-luna"
     usage: FakeOpenAIUsage = field(default_factory=FakeOpenAIUsage)
 
 

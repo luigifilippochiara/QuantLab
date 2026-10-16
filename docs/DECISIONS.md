@@ -336,10 +336,14 @@ tools in Responses are flat (`{"type": "function", "name", "parameters",
 which is parsed and then validated like any other plan. An invalid JSON string
 is a G01.
 
-**Default OpenAI model `gpt-6.1-sol`**, OpenAI's "balanced intelligence and
-cost" model (per its models page in October 2026), the counterpart of the
-Anthropic default `claude-sonnet-5-5`. `gpt-6-luna` (cheapest) and
-`gpt-6-astra` (most capable) work by setting `QUANTLAB_PLANNER_MODEL`.
+**Default OpenAI model `gpt-6-luna`, for both the planner and the narrator.**
+The first default was `gpt-6.1-sol`, OpenAI's "balanced intelligence and cost"
+model (per its models page in October 2026). The owner switched to `gpt-6-luna`,
+the cheapest GPT-6 model, which they had already run live for both calls without
+problems; the narrator follows the planner's model unless
+`QUANTLAB_NARRATOR_MODEL` is set. `gpt-6.1-sol` (balanced) and `gpt-6-astra`
+(most capable) remain one environment variable away if planning quality on
+free-form requests turns out to need them.
 
 **Same request design as on Anthropic: `tool_choice="auto"` plus an explicit
 instruction, `strict: False`, no `temperature`.** OpenAI's docs do not confirm

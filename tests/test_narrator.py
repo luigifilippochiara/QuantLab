@@ -180,7 +180,7 @@ def test_openai_narrative_path(settings: Settings, catalog: Catalog) -> None:
     openai_settings = dataclasses.replace(settings, llm_provider="openai")
     narrative = narrate(plan.request, plan, result.artifacts, issues, "live", openai_settings,
                         client=client)  # fmt: skip
-    assert narrative.source == "llm" and narrative.model == "gpt-6.1-sol"
+    assert narrative.source == "llm" and narrative.model == "gpt-6-luna"
     assert narrative.grounding.grounded
     call = client.calls[0]
     assert "FACTS SHEET" in call["input"][0]["content"]
