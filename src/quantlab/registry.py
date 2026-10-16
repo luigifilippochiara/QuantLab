@@ -97,15 +97,12 @@ class MinObsRule:
         min_obs: absolute minimum number of usable (aligned) observations.
         window_param: if set, also require window_multiple x params[window_param].
         window_multiple: multiplier for window_param.
-        min_per_group: if set, minimum observations in EACH of the flagged and
-            normal groups (flag-split tests only).
     """
 
     description: str
     min_obs: int = 1
     window_param: str | None = None
     window_multiple: int = 1
-    min_per_group: int | None = None
 
 
 @dataclass(frozen=True)
@@ -119,7 +116,7 @@ class CapabilitySpec:
         inputs: named inputs (references to earlier steps).
         params: parameters.
         output_type: DataType of the output.
-        output_kind: a SeriesKind, SAME_AS_INPUT, FROM_CATALOG, or None (tables/tests).
+        output_kind: a SeriesKind, SAME_AS_INPUT, FROM_CATALOG, or None (tables).
         min_obs: observation-count rule.
         assumptions: modelling assumptions (some need approval).
         library_calls: the underlying library calls, for traceability.
@@ -159,11 +156,6 @@ LEVEL_KINDS = (
     SeriesKind.SPREAD,
     SeriesKind.VOLATILITY,
     SeriesKind.OTHER,
-)
-ANY_SERIES_KIND_EXCEPT_FORWARD = (
-    *LEVEL_KINDS,
-    SeriesKind.RETURNS,
-    SeriesKind.CHANGES,
 )
 
 
@@ -266,8 +258,8 @@ COMPUTE_RETURNS = CapabilitySpec(
         Assumption(
             "return_method",
             "The return method is a material modelling choice: simple returns compound "
-            "multiplicatively, log returns add up over time; it changes forward returns "
-            "and test results.",
+            "multiplicatively, log returns add up over time, and the two give different "
+            "averages.",
             requires_approval=True,
             param="method",
         ),
@@ -366,7 +358,7 @@ ROLLING_VOLATILITY = CapabilitySpec(
 FLAG_REGIME = CapabilitySpec(
     name="flag_regime",
     description=(
-        "Flag observations above a quantile threshold (e.g. high-volatility weeks). "
+        "Flag observations above a quantile threshold, e.g. periods of high volatility. "
         "Prefer method=expanding: it only uses past data."
     ),
     func=capabilities.flag_regime,
@@ -374,8 +366,7 @@ FLAG_REGIME = CapabilitySpec(
         InputSpec(
             "series",
             (DataType.SERIES,),
-            "Series to threshold, e.g. a volatility or the VIX level. Never forward returns.",
-            ANY_SERIES_KIND_EXCEPT_FORWARD,
+            "Series to threshold, e.g. a rolling volatility or the VIX level.",
         ),
     ),
     params=(
@@ -427,40 +418,6 @@ FLAG_REGIME = CapabilitySpec(
     ),
 )
 
-FORWARD_RETURN = CapabilitySpec(
-    name="forward_return",
-    description=(
-        "Return over the next h periods (t+1 to t+h), placed on date t: compounded for "
-        "simple returns, summed for log returns."
-    ),
-    func=capabilities.forward_return,
-    inputs=(
-        InputSpec(
-            "returns",
-            (DataType.SERIES,),
-            "One-period returns series.",
-            (SeriesKind.RETURNS,),
-        ),
-    ),
-    params=(ParamSpec("horizon", "int", "h, number of future periods.", min=1, max=26),),
-    output_type=DataType.SERIES,
-    output_kind=SeriesKind.FORWARD_RETURN,
-    min_obs=MinObsRule(
-        "at least 2 x horizon observations", min_obs=2, window_param="horizon", window_multiple=2
-    ),
-    assumptions=(
-        Assumption(
-            "window",
-            "Forward return at t covers the next h observations (t+1..t+h); the last h "
-            "dates have no forward return and are dropped.",
-        ),
-    ),
-    library_calls=(
-        "((1 + r).rolling(h).apply(numpy.prod) - 1).shift(-h) | r.rolling(h).sum().shift(-h)"
-    ),
-    meta_from_params={"horizon": "horizon"},
-)
-
 SUMMARY_STATS = CapabilitySpec(
     name="summary_stats",
     description="Descriptive statistics: count, mean, std, min, max, skew, excess kurtosis.",
@@ -476,118 +433,6 @@ SUMMARY_STATS = CapabilitySpec(
     library_calls="pandas.Series.mean / .std(ddof=1) / .min / .max / .skew / .kurt",
 )
 
-COMPARE_GROUPS = CapabilitySpec(
-    name="compare_groups",
-    description=(
-        "Test whether a series (e.g. forward returns) differs between flagged and normal "
-        "periods. Set nonoverlapping=true for multi-period forward returns."
-    ),
-    func=capabilities.compare_groups,
-    inputs=(
-        InputSpec("values", (DataType.SERIES,), "Values to compare, e.g. forward returns."),
-        InputSpec("flags", (DataType.FLAGS,), "Regime flags with the same frequency."),
-    ),
-    params=(
-        ParamSpec(
-            "test",
-            "str",
-            "welch_t = difference in means (unequal variances); mann_whitney = rank test.",
-            required=False,
-            default="welch_t",
-            choices=("welch_t", "mann_whitney"),
-        ),
-        ParamSpec(
-            "nonoverlapping",
-            "bool",
-            "Keep every horizon-th observation so forward returns do not overlap.",
-            required=False,
-            default=False,
-        ),
-    ),
-    output_type=DataType.TEST_RESULT,
-    output_kind=None,
-    min_obs=MinObsRule(
-        "at least 20 observations in each group (flagged and normal)",
-        min_obs=40,
-        min_per_group=20,
-    ),
-    assumptions=(
-        Assumption(
-            "independence",
-            "Observations are treated as independent; overlapping forward returns break "
-            "this unless nonoverlapping=true (or use ols_hac).",
-        ),
-    ),
-    library_calls=(
-        "scipy.stats.ttest_ind(equal_var=False) | scipy.stats.mannwhitneyu(alternative='two-sided')"
-    ),
-)
-
-OLS_HAC = CapabilitySpec(
-    name="ols_hac",
-    description=(
-        "Regress y on a constant and a flag dummy with Newey-West (HAC) standard errors; "
-        "robust to the overlap of multi-period forward returns."
-    ),
-    func=capabilities.ols_hac,
-    inputs=(
-        InputSpec("y", (DataType.SERIES,), "Dependent series, e.g. forward returns."),
-        InputSpec("flags", (DataType.FLAGS,), "Regime flags with the same frequency."),
-    ),
-    params=(
-        ParamSpec(
-            "maxlags",
-            "int",
-            "Newey-West lags; omit to use horizon - 1 from the forward returns.",
-            required=False,
-            default=None,
-            min=0,
-            max=52,
-        ),
-    ),
-    output_type=DataType.TEST_RESULT,
-    output_kind=None,
-    min_obs=MinObsRule(
-        "at least 20 observations in each group (flagged and normal)",
-        min_obs=40,
-        min_per_group=20,
-    ),
-    assumptions=(
-        Assumption(
-            "hac_lags",
-            "Newey-West (Bartlett kernel) standard errors; default maxlags = horizon - 1 "
-            "covers the overlap of h-period forward returns.",
-        ),
-    ),
-    library_calls=(
-        "statsmodels.api.OLS(y, add_constant(flag)).fit(cov_type='HAC', cov_kwds={'maxlags': L})"
-    ),
-)
-
-ADF_TEST = CapabilitySpec(
-    name="adf_test",
-    description="Augmented Dickey-Fuller unit-root (stationarity) test.",
-    func=capabilities.adf_test,
-    inputs=(InputSpec("series", (DataType.SERIES,), "Series to test."),),
-    params=(
-        ParamSpec(
-            "regression",
-            "str",
-            "c = constant only; ct = constant and linear trend.",
-            required=False,
-            default="c",
-            choices=("c", "ct"),
-        ),
-    ),
-    output_type=DataType.TEST_RESULT,
-    output_kind=None,
-    min_obs=MinObsRule("at least 50 observations", min_obs=50),
-    assumptions=(
-        Assumption("null", "Null hypothesis: unit root (non-stationary); lags chosen by AIC."),
-    ),
-    library_calls="statsmodels.tsa.stattools.adfuller(x, regression, autolag='AIC')",
-)
-
 
 # The registry itself: capability name -> spec. Built from a list so each key is
 # guaranteed to equal the spec's own name. This dict IS the whitelist.
@@ -601,11 +446,7 @@ REGISTRY: dict[str, CapabilitySpec] = {
         SPREAD,
         ROLLING_VOLATILITY,
         FLAG_REGIME,
-        FORWARD_RETURN,
         SUMMARY_STATS,
-        COMPARE_GROUPS,
-        OLS_HAC,
-        ADF_TEST,
     ]
 }
 

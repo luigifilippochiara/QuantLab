@@ -88,6 +88,6 @@ def test_committed_catalog_matches_committed_snapshot() -> None:
     from quantlab.data import load_catalog
 
     real = load_catalog(PROJECT_ROOT / "data" / "catalog.json")
-    assert set(real.ids()) == {"NASDAQCOM", "VIXCLS", "DGS10", "DGS2", "DEXSZUS"}
+    assert set(real.ids()) == {"SP500", "NASDAQCOM", "VIXCLS", "DGS10", "DGS2", "DEXSZUS"}
     for dataset_id in real.ids():
         assert verify_dataset_hash(real, dataset_id)[0], dataset_id

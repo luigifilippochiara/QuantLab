@@ -20,20 +20,20 @@ def test_demo_behaves_as_expected(cli_env: Settings, capsys: pytest.CaptureFixtu
     output = capsys.readouterr().out
     assert "All scenarios behaved as expected." in output
     assert "MISMATCH" not in output
-    assert len(list_runs(cli_env.runs_dir)) == 6
+    assert len(list_runs(cli_env.runs_dir)) == 5
 
 
 def test_run_replay_and_trace(cli_env: Settings, capsys: pytest.CaptureFixture) -> None:
-    assert main(["run", "F", "--datasets", "DGS10", "DGS2", "--mode", "mock"]) == 0
+    assert main(["run", "E", "--datasets", "DGS10", "DGS2", "--mode", "mock"]) == 0
     run_id = list_runs(cli_env.runs_dir)[0]["run_id"]
     assert main(["replay", run_id]) == 0
     assert "ALL HASHES MATCH" in capsys.readouterr().out
-    assert main(["trace", run_id, "s8"]) == 0
+    assert main(["trace", run_id, "s4"]) == 0
     output = capsys.readouterr().out
-    assert "s8 adf_test" in output and "DGS10 (FRED DGS10)" in output
+    assert "s4 summary_stats" in output and "DGS10 (FRED DGS10)" in output
 
 
 def test_run_without_approval_exits_nonzero(cli_env: Settings, capsys) -> None:
-    assert main(["run", "A", "--datasets", "NASDAQCOM", "--mode", "mock"]) == 1
+    assert main(["run", "A", "--datasets", "SP500", "--mode", "mock"]) == 1
     assert "--approve-all" in capsys.readouterr().out
-    assert main(["run", "A", "--datasets", "NASDAQCOM", "--mode", "mock", "--approve-all"]) == 0
+    assert main(["run", "A", "--datasets", "SP500", "--mode", "mock", "--approve-all"]) == 0

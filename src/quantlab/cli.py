@@ -97,7 +97,7 @@ def cmd_demo(args: argparse.Namespace, settings: Settings) -> int:
     In mock mode the plans are the canned ones, so both the status and the issue
     codes must match. With a real LLM (live/cached) only the status is checked:
     the LLM may legitimately block for a different reason, e.g. refuse scenario C
-    outright (G13) instead of proposing a plan that the validator blocks (G02, G08).
+    outright (G13) instead of proposing a plan that the validator blocks (G02).
     Running it in live mode also fills the plan cache for a cached-mode demo.
     """
     rows = []
@@ -107,7 +107,7 @@ def cmd_demo(args: argparse.Namespace, settings: Settings) -> int:
             scenario.request,
             list(scenario.dataset_ids),
             mode=args.mode,
-            approve=scenario.auto_approve,  # only A and B are auto-approved
+            approve=scenario.auto_approve,  # only A and B need (and get) approval
             settings=settings,
         )
         codes = all_issue_codes(session)
@@ -220,7 +220,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     commands = parser.add_subparsers(dest="command", required=True)
 
-    demo = commands.add_parser("demo", help="run demo scenarios A-F headlessly")
+    demo = commands.add_parser("demo", help="run demo scenarios A-E headlessly")
     demo.add_argument("--mode", choices=LLM_MODES, default="mock")
 
     run = commands.add_parser("run", help="run one request")

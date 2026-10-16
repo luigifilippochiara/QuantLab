@@ -17,8 +17,8 @@ import pytest
 from quantlab.config import Settings
 from quantlab.data import Catalog, file_sha256, load_catalog, read_fred_csv
 
-# 30 years of business days: enough weekly history for scenario A's tests to
-# have >= 20 observations per group even after keeping every 4th week.
+# 30 years of business days: long enough for every scenario and for weekly and
+# monthly variations of them (e.g. a 52-week window needs 3 x 52 weeks of returns).
 N_DAYS = 7800
 START = "1990-01-01"
 
@@ -32,8 +32,8 @@ def synthetic_price(n: int, seed: int, start_level: float = 100.0) -> np.ndarray
     """Simulate a price with volatility clusters (calm 15% vs stressed 45% a year).
 
     The regime switches with a small daily probability, so high-volatility
-    episodes come in contiguous runs, like real markets. That gives the
-    flag_regime / compare_groups pipeline something to find.
+    episodes come in contiguous runs, like real markets. That gives
+    flag_regime real high-volatility periods to find.
     """
     rng = np.random.default_rng(seed)
     stressed = np.zeros(n, dtype=bool)
@@ -70,6 +70,7 @@ def write_fred_csv(path: Path, series_id: str, values: np.ndarray, missing_every
 
 SYNTHETIC_SERIES = [
     # (id, kind, title, generator)
+    ("SP500", "price_level", "Synthetic S&P 500", lambda: synthetic_price(N_DAYS, 6, 2000.0)),
     ("NASDAQCOM", "price_level", "Synthetic equity index", lambda: synthetic_price(N_DAYS, 1)),
     ("VIXCLS", "index_level", "Synthetic VIX", lambda: 12 + synthetic_price(N_DAYS, 2, 8) / 10),
     ("DGS10", "rate_level", "Synthetic 10-Year yield", lambda: synthetic_rate(N_DAYS, 3, 5.0)),

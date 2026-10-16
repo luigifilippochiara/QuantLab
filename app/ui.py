@@ -261,7 +261,7 @@ def flags_by_input(plan_steps: list[Any], artifacts: dict[str, Artifact]) -> dic
 
 
 def render_artifact(step_id: str, capability: str, artifact: Artifact, flags: pd.Series | None):
-    """Show one step's output: a chart (series), a table (TABLE) or a result card (TEST_RESULT).
+    """Show one step's output: a chart (series), a short count (flags) or a table (TABLE).
 
     Args:
         step_id: plan step id.
@@ -285,20 +285,8 @@ def render_artifact(step_id: str, capability: str, artifact: Artifact, flags: pd
             "shaded on the chart of the series they were computed from."
         )
     elif artifact.data_type == DataType.TABLE:
-        rows = [{"statistic": k, "value": format_number(k, v)} for k, v in artifact.value.items()]
+        rows = [{"statistic": k, "value": format_number(v)} for k, v in artifact.value.items()]
         st.dataframe(pd.DataFrame(rows), hide_index=True, alt=f"{capability} table")
-    else:
-        value = artifact.value
-        with st.container(border=True):
-            left, right = st.columns(2)
-            left.metric(
-                f"Statistic ({value['test']})", format_number("statistic", value["statistic"])
-            )
-            right.metric("p-value", format_number("p_value", value["p_value"]))
-            rows = [
-                {"detail": k, "value": format_number(k, v)} for k, v in value["details"].items()
-            ]
-            st.dataframe(pd.DataFrame(rows), hide_index=True, alt=f"{capability} details")
     if meta.notes:
         st.caption("Recorded assumptions: " + escape_md("; ".join(meta.notes)))
 
@@ -394,8 +382,7 @@ def param_widget(spec_param: ParamSpec, current: Any, key: str, dataset_ids: lis
     """Render an input widget for one parameter, limited to what the registry allows.
 
     Choices become select boxes, numbers become number inputs with the registry's
-    min/max, booleans become checkboxes, dataset ids a select box of catalog ids,
-    and an optional integer with no default (ols_hac maxlags) offers "auto".
+    min/max, booleans become checkboxes, and dataset ids a select box of catalog ids.
 
     Args:
         spec_param: the parameter's registry spec.
@@ -419,11 +406,6 @@ def param_widget(spec_param: ParamSpec, current: Any, key: str, dataset_ids: lis
         start = current if isinstance(current, bool) else bool(spec_param.default)
         return st.checkbox(label, value=start, key=key, help=help_text)
     low, high = spec_param.min, spec_param.max
-    if spec_param.type == "int" and spec_param.default is None and not spec_param.required:
-        options: list[Any] = ["auto", *range(int(low), int(high) + 1)]
-        index = options.index(current) if current in options else 0
-        choice = st.selectbox(label, options, index=index, key=key, help=help_text)
-        return None if choice == "auto" else choice
     if spec_param.type == "int":
         start = int(_clamp(current, low, high, low))
         return st.number_input(

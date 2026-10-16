@@ -14,15 +14,11 @@ EXPECTED = [
     "spread",
     "rolling_volatility",
     "flag_regime",
-    "forward_return",
     "summary_stats",
-    "compare_groups",
-    "ols_hac",
-    "adf_test",
 ]
 
 
-def test_exactly_the_twelve_v1_capabilities() -> None:
+def test_exactly_the_eight_capabilities() -> None:
     assert list(REGISTRY) == EXPECTED
     for name, spec in REGISTRY.items():
         assert spec.name == name
@@ -47,11 +43,6 @@ def test_defaults_respect_their_own_constraints() -> None:
                 assert p.default in p.choices, (spec.name, p.name)
             if p.min is not None:
                 assert p.min <= p.default <= p.max, (spec.name, p.name)
-
-
-def test_only_flag_split_capabilities_have_group_rules() -> None:
-    with_groups = {n for n, s in REGISTRY.items() if s.min_obs.min_per_group}
-    assert with_groups == {"compare_groups", "ols_hac"}
 
 
 def test_llm_summary_is_complete_and_hides_internals() -> None:

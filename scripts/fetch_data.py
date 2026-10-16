@@ -2,13 +2,16 @@
 
 Run once (needs network access):
 
-    uv run python scripts/fetch_data.py
+    uv run python scripts/fetch_data.py          # every series
+    uv run python scripts/fetch_data.py SP500    # only the listed series
+
 
 Each series is saved byte-for-byte as served by FRED's keyless CSV endpoint to
 data/snapshots/<ID>.csv, and the catalog records its SHA-256 hash, row counts and
 date range. The snapshot is committed to git so every run is reproducible
 without network access; re-running this script creates a NEW data version
 (new hashes), which old run records will then report as a mismatch on replay.
+Fetching only some series leaves the other catalog entries (and files) untouched.
 """
 
 import json
@@ -25,6 +28,13 @@ FRED_CSV_URL = "https://fred.stlouisfed.org/graph/fredgraph.csv?id={series_id}"
 # The series QuantLab ships with. `kind` drives the validator's guardrails, e.g.
 # rate_level series must be differenced, never turned into returns.
 SERIES_TO_FETCH: list[dict[str, str]] = [
+    {
+        "fred_id": "SP500",
+        "title": "S&P 500",
+        "description": "S&P 500 equity index, daily close (index level); FRED keeps 10 years.",
+        "units": "Index",
+        "kind": "price_level",
+    },
     {
         "fred_id": "NASDAQCOM",
         "title": "NASDAQ Composite Index",
@@ -75,50 +85,77 @@ def download(url: str, destination: Path) -> None:
         destination.write_bytes(response.read())
 
 
-def main() -> int:
-    """Fetch every series, write the snapshot files and the catalog.
+def fetch_series(item: dict[str, str], snapshots_dir: Path) -> dict[str, object]:
+    """Download one series and describe it as a catalog entry.
+
+    Args:
+        item: one element of SERIES_TO_FETCH.
+        snapshots_dir: folder for the CSV files.
 
     Returns:
-        Process exit code (0 on success).
+        The catalog entry (hash, counts and date range of the downloaded file).
     """
+    series_id = item["fred_id"]
+    url = FRED_CSV_URL.format(series_id=series_id)
+    path = snapshots_dir / f"{series_id}.csv"
+    print(f"Downloading {series_id} ...", flush=True)
+    download(url, path)
+
+    # Parse with the same reader the engine uses, so the catalog's counts and
+    # date range describe exactly what a load will see.
+    series, n_rows_raw, n_missing = read_fred_csv(path)
+    entry: dict[str, object] = {
+        "dataset_id": series_id,
+        "fred_id": series_id,
+        "title": item["title"],
+        "description": item["description"],
+        "units": item["units"],
+        "frequency": "D",
+        "kind": item["kind"],
+        "source_url": url,
+        "file": f"snapshots/{series_id}.csv",
+        "retrieved_at": datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ"),
+        "sha256": file_sha256(path),
+        "n_rows": n_rows_raw,
+        "n_missing": n_missing,
+        "start_date": series.index[0].strftime("%Y-%m-%d"),
+        "end_date": series.index[-1].strftime("%Y-%m-%d"),
+    }
+    print(f"  {n_rows_raw} rows, {n_missing} missing, {entry['start_date']} to {entry['end_date']}")
+    return entry
+
+
+def main(only: list[str]) -> int:
+    """Fetch the series (all, or only those named), write the snapshot files and the catalog.
+
+    Args:
+        only: FRED ids to fetch; empty means every series in SERIES_TO_FETCH.
+
+    Returns:
+        Process exit code (0 on success, 1 for an unknown id).
+    """
+    known = [item["fred_id"] for item in SERIES_TO_FETCH]
+    unknown = sorted(set(only) - set(known))
+    if unknown:
+        print(f"Unknown series {unknown}; known: {known}")
+        return 1
+
     settings = load_settings()
     snapshots_dir = settings.data_dir / "snapshots"
     snapshots_dir.mkdir(parents=True, exist_ok=True)
 
+    # Start from the current catalog so a partial fetch keeps the other entries.
+    existing: dict[str, dict[str, object]] = {}
+    if settings.catalog_path.exists():
+        current = json.loads(settings.catalog_path.read_text(encoding="utf-8"))
+        existing = {entry["dataset_id"]: entry for entry in current["datasets"]}
+
     entries = []
     for item in SERIES_TO_FETCH:
-        series_id = item["fred_id"]
-        url = FRED_CSV_URL.format(series_id=series_id)
-        path = snapshots_dir / f"{series_id}.csv"
-        print(f"Downloading {series_id} ...", flush=True)
-        download(url, path)
-
-        # Parse with the same reader the engine uses, so the catalog's counts and
-        # date range describe exactly what a load will see.
-        series, n_rows_raw, n_missing = read_fred_csv(path)
-        entries.append(
-            {
-                "dataset_id": series_id,
-                "fred_id": series_id,
-                "title": item["title"],
-                "description": item["description"],
-                "units": item["units"],
-                "frequency": "D",
-                "kind": item["kind"],
-                "source_url": url,
-                "file": f"snapshots/{series_id}.csv",
-                "retrieved_at": datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ"),
-                "sha256": file_sha256(path),
-                "n_rows": n_rows_raw,
-                "n_missing": n_missing,
-                "start_date": series.index[0].strftime("%Y-%m-%d"),
-                "end_date": series.index[-1].strftime("%Y-%m-%d"),
-            }
-        )
-        print(
-            f"  {n_rows_raw} rows, {n_missing} missing, "
-            f"{entries[-1]['start_date']} to {entries[-1]['end_date']}"
-        )
+        if not only or item["fred_id"] in only:
+            entries.append(fetch_series(item, snapshots_dir))
+        elif item["fred_id"] in existing:
+            entries.append(existing[item["fred_id"]])
 
     catalog = {
         "description": "QuantLab dataset catalog: FRED snapshots with file hashes.",
@@ -130,4 +167,4 @@ def main() -> int:
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    sys.exit(main(sys.argv[1:]))

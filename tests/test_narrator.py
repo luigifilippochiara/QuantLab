@@ -32,61 +32,66 @@ def run_scenario(scenario_id: str, catalog: Catalog):
 
 
 @pytest.mark.parametrize(
-    ("key", "value", "expected"),
+    ("value", "expected"),
     [
-        ("p_value", 0.123456, "0.1235"),
-        ("p_value", 0.00001, "<0.0001"),
-        ("mean", 0.001234567, "0.001235"),
-        ("last_value", 27204.38, "27,204"),
-        ("std", 0.9145813, "0.9146"),
-        ("min", -2.34, "-2.340"),
-        ("n_obs", 2832, "2,832"),
-        ("mean", 0.0, "0"),
+        (0.001234567, "0.001235"),
+        (0.000563124, "0.0005631"),
+        (27204.38, "27,204"),
+        (0.9145813, "0.9146"),
+        (-2.34, "-2.340"),
+        (2832, "2,832"),
+        (0.0, "0"),
+        ("2026-10-13", "2026-10-13"),
     ],
 )
-def test_format_number(key: str, value: float, expected: str) -> None:
-    assert format_number(key, value) == expected
+def test_format_number(value: float | int | str, expected: str) -> None:
+    assert format_number(value) == expected
 
 
-def test_facts_sheet_covers_tests_and_series(catalog: Catalog) -> None:
+def test_facts_sheet_covers_tables_flags_and_series(catalog: Catalog) -> None:
     plan, result, _ = run_scenario("A", catalog)
     facts = {f.fact_id: f for f in build_facts_sheet(plan, result.artifacts)}
-    for fact_id in ["s4.last_value", "s5.n_episodes", "s7.p_value", "s7.diff_means",
-                    "s8.coef_flag", "s8.maxlags"]:  # fmt: skip
+    for fact_id in ["s1.start", "s1.end", "s2.last_value", "s3.mean", "s3.std", "s3.count"]:
         assert fact_id in facts
-    assert facts["s7.p_value"].value == result.artifacts["s7"].value["p_value"]
-    assert "nonoverlapping" not in " ".join(facts)  # booleans are not facts
+    assert facts["s3.mean"].value == result.artifacts["s3"].value["mean"]
+
+    plan, result, _ = run_scenario("B", catalog)
+    facts = {f.fact_id: f for f in build_facts_sheet(plan, result.artifacts)}
+    for fact_id in ["s3.last_value", "s4.n_flagged", "s4.share_flagged", "s4.n_episodes"]:
+        assert fact_id in facts
+    assert facts["s4.n_flagged"].value == int(result.artifacts["s4"].value.sum())
 
 
 # --- grounding ---------------------------------------------------------------------
 
 FACTS = [
-    Fact(fact_id="s4.last_value", label="vol", value=0.138642, display="0.1386"),
-    Fact(fact_id="s7.p_value", label="p", value=0.50093, display="0.5009"),
-    Fact(fact_id="s7.n_flagged", label="n", value=2832, display="2,832"),
-    Fact(fact_id="s7.tiny_p", label="p", value=3e-9, display="<0.0001"),
+    Fact(fact_id="s3.last_value", label="vol", value=0.138642, display="0.1386"),
+    Fact(fact_id="s3.mean", label="mean", value=0.000563124, display="0.0005631"),
+    Fact(fact_id="s4.n_flagged", label="n", value=2832, display="2,832"),
     Fact(fact_id="s1.start", label="start", value="1971-02-05", display="1971-02-05"),
     Fact(fact_id="s1.end", label="end", value="2026-10-13", display="2026-10-13"),
 ]
 PLAN = Plan(
     plan_id="p",
     request="r",
-    steps=[{"id": "s5", "capability": "flag_regime", "params": {"quantile": 0.9, "window": 12}}],
+    steps=[
+        {"id": "s4", "capability": "flag_regime", "params": {"quantile": 0.9, "min_periods": 252}}
+    ],
 )
 
 
 @pytest.mark.parametrize(
     "sentence",
     [
-        "Volatility is 0.1386 and the p-value is 0.5009.",  # exactly as displayed
+        "Volatility is 0.1386 and the mean return is 0.0005631.",  # exactly as displayed
         "Volatility is 13.86% today.",  # percent form
         "Volatility is about 14% and 0.14.",  # coarser but correct rounding
-        "There were 2,832 flagged weeks, and 2832 is a lot.",  # thousands separator
-        "The p-value is below 0.0001.",  # displayed threshold
-        "Weeks above the 90th percentile with a 12-week window.",  # plan parameters
+        "The average daily return is 0.056%.",  # percent form of a small number
+        "There were 2,832 flagged days, and 2832 is a lot.",  # thousands separator
+        "Days above the 90th percentile after 252 days of history.",  # plan parameters
         "Data from 1971-02-05 to 2026-10-13, i.e. since 1971.",  # dates and years in range
-        "Not significant at the 5% level.",  # conventional level
-        "Steps s7 and R04 and DGS10 are named, not numbers.",  # ids are skipped
+        "Annualised with 52 weeks per year.",  # annualisation factor
+        "Steps s3 and R04 and DGS10 are named, not numbers.",  # ids are skipped
     ],
 )
 def test_grounding_accepts_correct_numbers(sentence: str) -> None:
@@ -102,6 +107,7 @@ def test_grounding_accepts_correct_numbers(sentence: str) -> None:
         ("Volatility is 15%.", "15"),  # wrong percentage
         ("This also happened in 1955.", "1955"),  # year outside the data
         ("On 2030-01-01 it rose.", "2030-01-01"),  # date outside the data
+        ("This is significant at the 5% level.", "5"),  # no tests, so no significance level
     ],
 )
 def test_grounding_rejects_invented_numbers(sentence: str, bad: str) -> None:
@@ -119,7 +125,7 @@ def test_extra_texts_allow_numbers_from_warnings() -> None:
 # --- narrate -----------------------------------------------------------------------
 
 
-@pytest.mark.parametrize("scenario_id", ["A", "B", "F"])
+@pytest.mark.parametrize("scenario_id", ["A", "B", "E"])
 def test_template_narrative_is_fully_grounded(
     scenario_id: str, settings: Settings, catalog: Catalog
 ) -> None:
@@ -133,23 +139,23 @@ def test_template_narrative_is_fully_grounded(
 def test_llm_narrative_with_invented_number_is_flagged(
     settings: Settings, catalog: Catalog
 ) -> None:
-    plan, result, issues = run_scenario("F", catalog)
+    plan, result, issues = run_scenario("E", catalog)
     facts = build_facts_sheet(plan, result.artifacts)
-    p_value = next(f.display for f in facts if f.fact_id == "s8.p_value")
+    mean = next(f.display for f in facts if f.fact_id == "s4.mean")
     client = FakeAnthropicClient(
-        text_response(f"The ADF p-value is {p_value}; the half-life is 7.77.")
+        text_response(f"The average spread is {mean}; the half-life is 7.77.")
     )
     narrative = narrate(plan.request, plan, result.artifacts, issues, "live", settings,
                         client=client)  # fmt: skip
     assert narrative.source == "llm" and narrative.model == "claude-sonnet-5-5"
     assert narrative.grounding.ungrounded == ["7.77"]
     prompt = client.calls[0]["messages"][0]["content"]
-    assert "FACTS SHEET" in prompt and p_value in prompt
+    assert "FACTS SHEET" in prompt and mean in prompt
     assert "temperature" not in client.calls[0]
 
 
 def test_llm_failure_falls_back_to_the_template(settings: Settings, catalog: Catalog) -> None:
-    plan, result, issues = run_scenario("F", catalog)
+    plan, result, issues = run_scenario("E", catalog)
     client = FakeAnthropicClient(error=RuntimeError("connection reset"))
     narrative = narrate(plan.request, plan, result.artifacts, issues, "live", settings,
                         client=client)  # fmt: skip
@@ -159,10 +165,10 @@ def test_llm_failure_falls_back_to_the_template(settings: Settings, catalog: Cat
 
 
 def test_openai_narrative_path(settings: Settings, catalog: Catalog) -> None:
-    plan, result, issues = run_scenario("F", catalog)
+    plan, result, issues = run_scenario("E", catalog)
     facts = build_facts_sheet(plan, result.artifacts)
-    p_value = next(f.display for f in facts if f.fact_id == "s8.p_value")
-    client = FakeOpenAIClient(openai_text_response(f"The ADF p-value is {p_value}."))
+    mean = next(f.display for f in facts if f.fact_id == "s4.mean")
+    client = FakeOpenAIClient(openai_text_response(f"The average spread is {mean}."))
     openai_settings = dataclasses.replace(settings, llm_provider="openai")
     narrative = narrate(plan.request, plan, result.artifacts, issues, "live", openai_settings,
                         client=client)  # fmt: skip
@@ -175,7 +181,7 @@ def test_openai_narrative_path(settings: Settings, catalog: Catalog) -> None:
 
 
 def test_incomplete_openai_narrative_falls_back(settings: Settings, catalog: Catalog) -> None:
-    plan, result, issues = run_scenario("F", catalog)
+    plan, result, issues = run_scenario("E", catalog)
     client = FakeOpenAIClient(openai_text_response("", "incomplete", "max_output_tokens"))
     openai_settings = dataclasses.replace(settings, llm_provider="openai")
     narrative = narrate(plan.request, plan, result.artifacts, issues, "live", openai_settings,

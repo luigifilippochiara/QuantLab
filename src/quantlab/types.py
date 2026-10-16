@@ -2,10 +2,10 @@
 
 Role in the architecture: every step of a plan produces one `Artifact`, a value
 plus explicit metadata. The metadata (data type, series kind, frequency, return
-method, horizon...) is what lets the validator reject nonsense *before* running
-(e.g. "returns of a yield", "daily flags against weekly returns") and lets the
-capability functions do the right thing at run time (e.g. compound simple
-returns but sum log returns). Metadata travels in the Artifact, never in
+method...) is what lets the validator reject nonsense *before* running
+(e.g. "returns of a yield", "a spread of daily and weekly series") and lets the
+capability functions do the right thing at run time (e.g. annualise volatility
+with the right number of periods per year). Metadata travels in the Artifact, never in
 pandas `.attrs`, so it is always visible and never silently dropped.
 """
 
@@ -25,7 +25,6 @@ class DataType(StrEnum):
     SERIES = "series"  # float time series: pd.Series with a DatetimeIndex
     FLAGS = "flags"  # boolean time series: pd.Series of bool with a DatetimeIndex
     TABLE = "table"  # dict of named scalars, e.g. summary statistics
-    TEST_RESULT = "test_result"  # dict with "statistic", "p_value" and "details"
 
 
 class SeriesKind(StrEnum):
@@ -38,7 +37,6 @@ class SeriesKind(StrEnum):
     CHANGES = "changes"  # period-on-period differences (the right transform for rates)
     VOLATILITY = "volatility"  # a rolling volatility estimate
     SPREAD = "spread"  # the difference between two series
-    FORWARD_RETURN = "forward_return"  # the return over the NEXT h periods (future information)
     FLAGS = "flags"  # boolean regime flags
     OTHER = "other"
 
@@ -60,14 +58,13 @@ class ArtifactMeta:
     """Metadata carried by every artifact, set explicitly by the capability that made it.
 
     Fields:
-        kind: what the series means (None for tables and test results).
-        frequency: observation frequency (inherited by tables/test results for reference).
+        kind: what the series means (None for tables).
+        frequency: observation frequency (inherited by tables for reference).
         source_dataset_ids: catalog datasets this artifact was ultimately computed from.
-        n_obs: number of observations (rows for series/flags, the sample size for tests).
+        n_obs: number of observations (rows for series/flags, the sample size for tables).
         start: first date as ISO string (None if not a time series).
         end: last date as ISO string.
         return_method: "simple" or "log" for returns and anything derived from them.
-        horizon: forward-return horizon in periods (forward returns and derived results).
         periods: the lag used by compute_returns / difference (1 = one-period changes).
         n_dropped_missing: load_series only, missing values dropped from the raw file.
         notes: human-readable assumptions recorded at run time (e.g. annualisation factor).
@@ -80,7 +77,6 @@ class ArtifactMeta:
     start: str | None
     end: str | None
     return_method: str | None = None
-    horizon: int | None = None
     periods: int | None = None
     n_dropped_missing: int | None = None
     notes: list[str] = field(default_factory=list)
@@ -91,8 +87,8 @@ class Artifact:
     """The output of one plan step: a value plus its metadata.
 
     Fields:
-        value: a pd.Series (SERIES, FLAGS) or a dict (TABLE, TEST_RESULT).
-        data_type: which of the four DataTypes the value is.
+        value: a pd.Series (SERIES, FLAGS) or a dict (TABLE).
+        data_type: which of the three DataTypes the value is.
         meta: explicit metadata (see ArtifactMeta).
     """
 
@@ -117,8 +113,9 @@ def date_span(series: pd.Series) -> tuple[int, str | None, str | None]:
 
 # Floats are written with 12 significant digits in the canonical form. That is far
 # beyond any meaningful precision of these statistics, yet it absorbs last-bit
-# differences between BLAS/CPU builds (e.g. in OLS), so a replay on another
-# machine still matches while any real change in a result does not.
+# differences between CPU builds and library versions (e.g. in a rolling standard
+# deviation), so a replay on another machine still matches while any real change
+# in a result does not.
 CANONICAL_SIGNIFICANT_DIGITS = 12
 
 
@@ -143,8 +140,8 @@ def _canonical_json(value: Any) -> Any:
 def canonical_text(artifact: Artifact) -> str:
     """Deterministic text form of an artifact's value: the basis of its hash.
 
-    Series and flags become CSV ("date,value" lines); tables and test results
-    become JSON with sorted keys. The same value always gives the same text, on
+    Series and flags become CSV ("date,value" lines); tables become JSON with
+    sorted keys. The same value always gives the same text, on
     any machine, so the same inputs always give the same hash. This text is
     also what lineage saves as the step's output file.
 

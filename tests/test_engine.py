@@ -24,12 +24,12 @@ def start(settings: Settings, scenario_id: str = "A") -> Session:
 def test_end_to_end_scenario_a_with_manifest_and_replay(settings: Settings) -> None:
     session = start(settings)
     assert session.status == "ready"
-    assert [i.issue_id for i in session.unresolved_approvals()] == ["G12:s3:return_method"]
+    assert [i.issue_id for i in session.unresolved_approvals()] == ["G12:s2:return_method"]
 
     with pytest.raises(ExecutionRefusedError, match="Approval required"):
         session.execute()
 
-    session.approve(["G12:s3:return_method"])
+    session.approve(["G12:s2:return_method"])
     assert session.execute().status == "completed"
     narrative = session.narrate()
     assert narrative.grounding.grounded
@@ -37,10 +37,10 @@ def test_end_to_end_scenario_a_with_manifest_and_replay(settings: Settings) -> N
 
     record = load_run(session.run_id, settings.runs_dir)
     assert manifest.exists() and record.status == "completed"
-    assert record.approvals[0].issue_id == "G12:s3:return_method"
+    assert record.approvals[0].issue_id == "G12:s2:return_method"
     assert record.llm.provider == "mock" and record.registry_version
-    assert record.plan_original["steps"][7]["params"] == {}  # as proposed
-    assert record.plan_final["steps"][7]["params"] == {"maxlags": None}  # defaults shown
+    assert record.plan_original["steps"][1]["params"] == {"method": "simple"}  # as proposed
+    assert record.plan_final["steps"][1]["params"] == {"method": "simple", "periods": 1}
     assert set(record.stage_timings_ms) == {"planning", "validation", "execution", "narration"}
 
     report = replay(session.run_id, settings)
@@ -48,37 +48,37 @@ def test_end_to_end_scenario_a_with_manifest_and_replay(settings: Settings) -> N
 
 
 def test_param_edit_revalidates_and_clears_approvals(settings: Settings) -> None:
-    session = start(settings)
-    session.approve(["G12:s3:return_method"])
-    report = session.apply_param_edits({"s3": {"method": "log"}, "s4": {"window": 26}})
+    session = start(settings, "B")
+    session.approve(["G12:s2:return_method"])
+    report = session.apply_param_edits({"s2": {"method": "log"}, "s3": {"window": 63}})
     assert not report.is_blocked
     assert session.approvals == []  # the approved plan changed: approve again
     assert "method='log'" in session.unresolved_approvals()[0].message
     assert [(e.step_id, e.param, e.old, e.new) for e in session.edits] == [
-        ("s3", "method", "simple", "log"),
-        ("s4", "window", 12, 26),
+        ("s2", "method", "simple", "log"),
+        ("s3", "window", 21, 63),
     ]
-    session.approve(["G12:s3:return_method"])
+    session.approve(["G12:s2:return_method"])
     session.execute()
-    assert session.execution.artifacts["s3"].meta.return_method == "log"
+    assert session.execution.artifacts["s2"].meta.return_method == "log"
 
 
 def test_invalid_edit_blocks_execution(settings: Settings) -> None:
-    session = start(settings)
-    report = session.apply_param_edits({"s4": {"window": 1}})
+    session = start(settings, "B")
+    report = session.apply_param_edits({"s3": {"window": 1}})
     assert report.is_blocked and "G03" in report.codes()
     allowed, reason = session.can_execute()
     assert not allowed and "G03" in reason
     with pytest.raises(ExecutionRefusedError):
         session.execute()
     # Fixing the edit unblocks it again.
-    assert not session.apply_param_edits({"s4": {"window": 12}}).is_blocked
+    assert not session.apply_param_edits({"s3": {"window": 21}}).is_blocked
 
 
 def test_only_open_approval_issues_can_be_approved(settings: Settings) -> None:
     session = start(settings)
     with pytest.raises(ValueError):
-        session.approve(["G10:s5"])  # not raised for scenario A
+        session.approve(["G10:s4"])  # not raised for scenario A
     with pytest.raises(ValueError):
         session.apply_param_edits({"s99": {"window": 3}})
 

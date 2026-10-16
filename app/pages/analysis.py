@@ -263,9 +263,7 @@ for step in plan.steps:
         continue
     artifact = artifacts.get(step.id)
     key_output = artifact is not None and (
-        artifact.data_type.value in ("table", "test_result")
-        or step.id in shading
-        or step.capability == "spread"
+        artifact.data_type.value == "table" or step.id in shading or step.capability == "spread"
     )
     label = f"{step.id} · {step.capability} · {record.status}"
     if record.n_obs is not None:

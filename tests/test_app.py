@@ -53,10 +53,10 @@ def test_scenario_a_full_flow(app_env: Settings) -> None:
         "Trace: where does this number come from?",
         "Run record",
     ]
-    assert len(app.get("plotly_chart")) >= 4
+    assert len(app.get("plotly_chart")) >= 2  # the prices and the returns
 
     button(app, "Replay this run").click().run()
-    assert any("8 of 8 step outputs match" in s.value for s in app.success)
+    assert any("3 of 3 step outputs match" in s.value for s in app.success)
 
 
 def test_blocked_scenario_cannot_execute(app_env: Settings) -> None:

@@ -11,9 +11,9 @@ paragraph: what, why, alternatives).
 The LLM proposes, the system disposes.
 
 1. The planner LLM writes a plan: inert JSON naming registered capabilities.
-2. `validation.py` checks it (G01-G13: BLOCK / APPROVAL / WARN).
+2. `validation.py` checks it (G01-G13, G11 retired: BLOCK / APPROVAL / WARN).
 3. A human reviews, edits parameters (re-validated by the same validator) and approves.
-4. `executor.py` runs it by dict lookup in `REGISTRY`, with runtime guardrails R01-R05.
+4. `executor.py` runs it by dict lookup in `REGISTRY`, with runtime guardrails R01-R04.
 5. The narrator LLM summarises using only the facts sheet; `check_grounding` verifies every number.
 6. Every run is saved (`lineage.py`) and can be replayed without the LLM with matching hashes.
 
@@ -31,8 +31,8 @@ Hard rules:
 ## Architecture (src/quantlab/)
 
 `config` (settings) -> `types` (enums, Artifact, hashing) -> `data` (catalog,
-hash-verified snapshots) -> `capabilities` (the 12 quant functions; the ONLY
-code calling pandas/scipy/statsmodels for analysis) -> `registry` (specs,
+hash-verified snapshots) -> `capabilities` (the 8 quant functions, descriptive
+only; the ONLY code calling pandas/numpy for analysis) -> `registry` (specs,
 REGISTRY, LLM summary, version) -> `plan` (Pydantic Plan/Step) -> `validation`
 (static guardrails, dry run, GUARDRAILS table) -> `scenarios` (demo plans) ->
 `executor` (dispatch, runtime guardrails, step records) -> `planner` /
@@ -42,6 +42,9 @@ and notebooks) -> `evaluation`, `cli`. The Streamlit app is in `app/`
 (presentation only).
 
 ## Adding a capability
+
+Keep the menu small and simple: the capabilities are descriptive on purpose
+(no statistical tests or forecasts yet; see `docs/DECISIONS.md`).
 
 1. Write the function in `capabilities.py`: Artifacts in, a new Artifact out,
    metadata set explicitly, comments explaining every quantitative choice.
@@ -57,14 +60,15 @@ and notebooks) -> `evaluation`, `cli`. The Streamlit app is in `app/`
 
 - Python 3.12+, managed with uv. Direct dependencies pinned exactly in
   `pyproject.toml`; do not add libraries without a recorded decision
-  (deliberately excluded: scikit-learn, arch, LangChain and other frameworks).
+  (deliberately excluded: scipy, statsmodels, scikit-learn, arch, LangChain and
+  other frameworks).
 - Clear, explicit code: plain functions, Pydantic models (for untrusted input
   and records) and dataclasses (for specs). No metaprogramming, no
   registration decorators, no deep class hierarchies.
 - Every module starts with a docstring explaining its role in the architecture;
   every function has a docstring (what it does, inputs, outputs).
 - Comment non-obvious lines, and every quantitative decision with WHY (ddof=1,
-  shifted expanding quantile, t+1 forward window, horizon-1 HAC lags...).
+  shifted expanding quantile, square-root-of-time annualisation...).
   Do not comment trivial lines.
 - Type hints everywhere. Keep `uv run ruff check .` and `uv run ruff format --check .` clean.
 - Tests need no network and no API key: synthetic data from `tests/conftest.py`,

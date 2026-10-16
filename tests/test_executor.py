@@ -1,4 +1,4 @@
-"""Executor: dispatch whitelist, approval gate, runtime guardrails R01-R05, dry-run agreement."""
+"""Executor: dispatch whitelist, approval gate, runtime guardrails R01-R04, dry-run agreement."""
 
 import shutil
 from pathlib import Path
@@ -8,13 +8,7 @@ import pandas as pd
 import pytest
 
 from quantlab.data import Catalog, file_sha256, load_catalog
-from quantlab.executor import (
-    CapabilityRefusedError,
-    check_alignment_loss,
-    check_low_effective_sample,
-    dispatch,
-    execute_plan,
-)
+from quantlab.executor import CapabilityRefusedError, check_alignment_loss, dispatch, execute_plan
 from quantlab.plan import Plan, Step
 from quantlab.registry import REGISTRY
 from quantlab.scenarios import SCENARIOS_BY_ID
@@ -23,16 +17,15 @@ from quantlab.validation import fill_defaults, validate_plan
 
 from conftest import build_synthetic_data_dir
 
-ALL_APPROVALS = {"G12:s3:return_method", "G10:s5"}
+# The return-method approval of scenarios A and B (G10 would only appear with a
+# full-sample threshold).
+ALL_APPROVALS = {"G12:s2:return_method", "G10:s4"}
 
 
-def scenario(scenario_id: str, **step_params: dict) -> Plan:
-    """A scenario's canned plan as a Plan, optionally overriding params of some steps."""
+def scenario(scenario_id: str) -> Plan:
+    """A scenario's canned plan as a Plan, with defaults filled in."""
     s = SCENARIOS_BY_ID[scenario_id]
-    plan = fill_defaults(Plan(plan_id="p", request=s.request, **s.plan))
-    for step in plan.steps:
-        step.params.update(step_params.get(step.id, {}))
-    return plan
+    return fill_defaults(Plan(plan_id="p", request=s.request, **s.plan))
 
 
 def runtime_codes(result) -> set[str]:
@@ -52,37 +45,48 @@ def test_blocked_plan_runs_nothing(catalog: Catalog) -> None:
     result = execute_plan(scenario("C"), catalog, ALL_APPROVALS)
     assert result.status == "blocked"
     assert result.artifacts == {} and result.step_records == []
-    assert {"G02", "G08"} <= runtime_codes(result)
+    assert runtime_codes(result) == {"G02"}
 
 
 def test_unapproved_plan_runs_nothing(catalog: Catalog) -> None:
     result = execute_plan(scenario("A"), catalog, approved_issue_ids=set())
     assert result.status == "blocked"
     assert result.step_records == []
-    assert "G12:s3:return_method" in result.error
+    assert "G12:s2:return_method" in result.error
 
 
-def test_scenario_a_runs_cleanly_on_synthetic_data(catalog: Catalog) -> None:
+def test_scenario_a_computes_the_average_return(catalog: Catalog) -> None:
     result = execute_plan(scenario("A"), catalog, ALL_APPROVALS)
     assert result.status == "completed", result.error
-    assert [r.step_id for r in result.step_records] == [f"s{i}" for i in range(1, 9)]
+    assert [r.step_id for r in result.step_records] == ["s1", "s2", "s3"]
     assert all(r.output_hash and len(r.output_hash) == 64 for r in result.step_records)
     assert not any(c.startswith("R") for c in runtime_codes(result))
-    s7 = result.artifacts["s7"].value
-    assert s7["details"]["n_flagged"] >= 20 and s7["details"]["n_normal"] >= 20
+    returns = result.artifacts["s2"].value
+    assert result.artifacts["s3"].value["mean"] == pytest.approx(returns.mean())
     load = result.step_records[0]
-    assert load.input_hashes == {"dataset:NASDAQCOM": catalog.entries["NASDAQCOM"].sha256}
+    assert load.input_hashes == {"dataset:SP500": catalog.entries["SP500"].sha256}
+
+
+def test_scenario_b_finds_high_volatility_periods(catalog: Catalog) -> None:
+    result = execute_plan(scenario("B"), catalog, ALL_APPROVALS)
+    assert result.status == "completed", result.error
+    flags = result.artifacts["s4"].value
+    # The synthetic index has calm and stressed regimes, so some days are flagged,
+    # but far from all of them; flagging starts after 252 days of volatility history.
+    assert 0.02 < flags.mean() < 0.5
+    volatility = result.artifacts["s3"].value
+    assert len(flags) == len(volatility) - 252
 
 
 def test_execution_is_deterministic(catalog: Catalog) -> None:
-    first = execute_plan(scenario("F"), catalog)
-    second = execute_plan(scenario("F"), catalog)
+    first = execute_plan(scenario("E"), catalog)
+    second = execute_plan(scenario("E"), catalog)
     assert [r.output_hash for r in first.step_records] == [
         r.output_hash for r in second.step_records
     ]
 
 
-@pytest.mark.parametrize("scenario_id", ["A", "B", "F"])
+@pytest.mark.parametrize("scenario_id", ["A", "B", "E"])
 def test_dry_run_metadata_matches_runtime_metadata(scenario_id: str, catalog: Catalog) -> None:
     """The validator's predictions must equal what the capability functions produce."""
     plan = scenario(scenario_id)
@@ -95,7 +99,6 @@ def test_dry_run_metadata_matches_runtime_metadata(scenario_id: str, catalog: Ca
         assert predicted["kind"] == meta.kind, step_id
         assert predicted["frequency"] == meta.frequency, step_id
         assert predicted["return_method"] == meta.return_method, step_id
-        assert predicted["horizon"] == meta.horizon, step_id
         assert predicted["periods"] == meta.periods, step_id
         assert predicted["dataset_ids"] == meta.source_dataset_ids, step_id
 
@@ -104,7 +107,7 @@ def test_dry_run_metadata_matches_runtime_metadata(scenario_id: str, catalog: Ca
 
 
 def test_r01_tampered_snapshot_blocks_cleanly(catalog: Catalog) -> None:
-    path = catalog.path_for("NASDAQCOM")
+    path = catalog.path_for("SP500")
     path.write_text(path.read_text() + "2099-01-01,1.0\n")
     result = execute_plan(scenario("A"), catalog, ALL_APPROVALS)
     assert result.status == "blocked"
@@ -117,19 +120,24 @@ def test_r01_tampered_snapshot_blocks_cleanly(catalog: Catalog) -> None:
 
 
 def test_r02_window_too_long_for_the_history(catalog: Catalog) -> None:
-    plan = scenario("A", s2={"freq": "M"}, s4={"window": 200})  # 360 months < 3 x 200
-    result = execute_plan(plan, catalog, ALL_APPROVALS)
+    # 30 years of monthly closes give 359 monthly returns, fewer than 3 x 200.
+    plan = Plan(
+        plan_id="p",
+        request="r",
+        dataset_ids=["NASDAQCOM"],
+        steps=[
+            Step(id="s1", capability="load_series", params={"dataset_id": "NASDAQCOM"}),
+            Step(id="s2", capability="resample", inputs={"series": "s1"}, params={"freq": "M"}),
+            Step(id="s3", capability="compute_returns", inputs={"series": "s2"},
+                 params={"method": "simple"}),
+            Step(id="s4", capability="rolling_volatility", inputs={"series": "s3"},
+                 params={"window": 200}),
+        ],
+    )  # fmt: skip
+    result = execute_plan(fill_defaults(plan), catalog, {"G12:s3:return_method"})
     assert result.status == "blocked"
     assert "R02" in runtime_codes(result)
     assert result.step_records[-1].step_id == "s4"
-
-
-def test_r02_too_few_flagged_observations(catalog: Catalog) -> None:
-    plan = scenario("A", s5={"quantile": 0.99})
-    result = execute_plan(plan, catalog, ALL_APPROVALS)
-    assert result.status == "blocked"
-    r02 = [i for i in result.issues if i.code == "R02"]
-    assert r02 and "groups" in r02[0].issue_id
 
 
 # --- R03 MISSING_DATA -------------------------------------------------------------
@@ -138,13 +146,13 @@ def test_r02_too_few_flagged_observations(catalog: Catalog) -> None:
 def test_r03_gappy_series_warns(tmp_path: Path) -> None:
     build_synthetic_data_dir(tmp_path / "gappy", missing_every=10)  # 10% missing
     gappy = load_catalog(tmp_path / "gappy" / "catalog.json")
-    result = execute_plan(scenario("F"), gappy)
+    result = execute_plan(scenario("E"), gappy)
     assert result.status == "completed"
     assert "R03" in runtime_codes(result)
 
 
 def test_r03_silent_on_normal_series(catalog: Catalog) -> None:
-    assert "R03" not in runtime_codes(execute_plan(scenario("F"), catalog))
+    assert "R03" not in runtime_codes(execute_plan(scenario("E"), catalog))
 
 
 # --- R04 ALIGNMENT_LOSS -----------------------------------------------------------
@@ -157,7 +165,7 @@ def _weekly(n: int, start: str, kind: SeriesKind = SeriesKind.RATE_LEVEL) -> Art
 
 
 def test_r04_alignment_loss() -> None:
-    step = Step(id="s5", capability="spread")
+    step = Step(id="s3", capability="spread")
     spec = REGISTRY["spread"]
     long, short = _weekly(100, "2020-01-03"), _weekly(50, "2020-12-18")
     issues = check_alignment_loss(step, spec, {"a": long, "b": short})
@@ -177,25 +185,9 @@ def test_r04_real_case_different_start_dates(tmp_path: Path, catalog: Catalog) -
     cut = load_catalog(data / "catalog.json")
     # Record the edited file's hash in the catalog, so R01 does not fire first.
     cut.entries["DGS2"] = cut.entries["DGS2"].model_copy(update={"sha256": file_sha256(dgs2)})
-    result = execute_plan(scenario("F"), cut)
+    result = execute_plan(scenario("E"), cut)
     assert result.status == "completed"
     assert "R04" in runtime_codes(result)
-
-
-# --- R05 LOW_EFFECTIVE_SAMPLE -----------------------------------------------------
-
-
-def _test_result(episodes: int) -> Artifact:
-    meta = ArtifactMeta(None, Frequency.W, ["X"], 100, None, None)
-    value = {"test": "welch_t", "statistic": 1.0, "p_value": 0.3,
-             "details": {"n_flagged_episodes": episodes}}  # fmt: skip
-    return Artifact(value, DataType.TEST_RESULT, meta)
-
-
-def test_r05_few_episodes_warn() -> None:
-    step, spec = Step(id="s7", capability="compare_groups"), REGISTRY["compare_groups"]
-    assert [i.code for i in check_low_effective_sample(step, spec, _test_result(3))] == ["R05"]
-    assert check_low_effective_sample(step, spec, _test_result(12)) == []
 
 
 def test_failing_capability_stops_the_run_cleanly(catalog: Catalog) -> None:

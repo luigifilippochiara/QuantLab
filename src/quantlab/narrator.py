@@ -8,9 +8,9 @@ to use only those numbers, exactly as displayed, and to do no arithmetic.
 Then `check_grounding` verifies that claim deterministically: it extracts every
 number from the narrative and checks that each one is a correct rounding of a
 computed fact (or its x100 percentage form), a plan parameter, a number from the
-request or a warning, a conventional significance level, or a date inside the
-data range. The UI shows "all numbers verified" or lists the ungrounded numbers.
-The deterministic results table is always shown as the source of truth.
+request or a warning, an annualisation factor, or a date inside the data range.
+The UI shows "all numbers verified" or lists the ungrounded numbers. The
+deterministic results table is always shown as the source of truth.
 
 Without an API key (mock mode), or if the LLM call fails, a deterministic
 template narrator writes the summary instead.
@@ -36,7 +36,7 @@ from quantlab.planner import (
 from quantlab.types import ANNUALISATION_FACTORS, Artifact, DataType
 from quantlab.validation import Issue
 
-NARRATOR_PROMPT_VERSION = "narrator-v1"
+NARRATOR_PROMPT_VERSION = "narrator-v2"
 
 SYSTEM_PROMPT = """\
 You write short, plain-English summaries of quantitative analysis results for a bank's \
@@ -48,14 +48,9 @@ write a decimal as a percentage (0.1275 as 12.75%).
 2. Do no arithmetic: no new differences, ratios, sums or rounding of your own.
 3. Do not add numbers from your own knowledge (no dates, levels or thresholds that are not given).
 4. Mention every warning and approved assumption that affects how the results should be read.
-5. Interpret statistical tests cautiously: a p-value above 0.05 means no evidence of a \
-difference, not evidence of no difference; statistical significance is not economic significance.
-6. Write 4 to 8 sentences as one paragraph. No headings, no bullet points.
+5. Describe what was computed; do not claim causes, forecasts or statistical significance.
+6. Write 3 to 6 sentences as one paragraph. No headings, no bullet points.
 """
-
-# Numbers a narrative may use without them being computed facts: conventional
-# significance and confidence levels (as decimals and percentages).
-CONVENTIONAL_NUMBERS = (0.01, 0.05, 0.1, 1.0, 5.0, 10.0, 90.0, 95.0, 99.0)
 
 # A number in text: digits with optional thousands separators and decimals.
 # The look-behind skips digits glued to letters or dots, such as step ids (s7),
@@ -68,10 +63,10 @@ class Fact(BaseModel):
     """One computed number (or date) the narrator may use.
 
     Fields:
-        fact_id: stable id, e.g. "s7.p_value".
-        label: what it is, e.g. "s7 compare_groups p value".
+        fact_id: stable id, e.g. "s3.mean".
+        label: what it is, e.g. "s3 summary_stats mean".
         value: the exact computed value.
-        display: the rounded text the narrator must use, e.g. "0.4973".
+        display: the rounded text the narrator must use, e.g. "0.0005631".
     """
 
     fact_id: str
@@ -127,11 +122,10 @@ class NarrativeResult(BaseModel):
 # ---------------------------------------------------------------------------
 
 
-def format_number(key: str, value: Any) -> str:
-    """Format a value for display: p-values to 4 decimals, other floats to 4 significant figures.
+def format_number(value: Any) -> str:
+    """Format a value for display: integers with separators, floats to 4 significant figures.
 
     Args:
-        key: the fact's name (p-values are recognised by "p_value" in the name).
         value: the value.
 
     Returns:
@@ -143,9 +137,6 @@ def format_number(key: str, value: Any) -> str:
         return f"{value:,}"
     if not math.isfinite(value):
         return str(value)
-    if "p_value" in key:
-        # p-values are reported to 4 decimals; tiny ones as "<0.0001", not as 0.0000.
-        return "<0.0001" if value < 0.0001 else f"{value:.4f}"
     if value == 0:
         return "0"
     # 4 significant figures: the number of decimals depends on the magnitude
@@ -159,8 +150,7 @@ def build_facts_sheet(plan: Plan, artifacts: dict[str, Artifact]) -> list[Fact]:
     """Collect the key computed numbers of a run, rounded consistently.
 
     Series: observations, first/last date, latest value. Flags: counts, share
-    flagged, episodes. Tables: every statistic. Test results: statistic,
-    p-value and every numeric detail.
+    flagged, episodes. Tables: every statistic.
 
     Args:
         plan: the executed plan (for step order and capability names).
@@ -173,7 +163,7 @@ def build_facts_sheet(plan: Plan, artifacts: dict[str, Artifact]) -> list[Fact]:
 
     def add(step_id: str, capability: str, key: str, value: Any) -> None:
         label = f"{step_id} {capability} {key.replace('_', ' ')}"
-        display = format_number(key, value)
+        display = format_number(value)
         facts.append(Fact(fact_id=f"{step_id}.{key}", label=label, value=value, display=display))
 
     for step in plan.steps:
@@ -192,15 +182,9 @@ def build_facts_sheet(plan: Plan, artifacts: dict[str, Artifact]) -> list[Fact]:
             add(step.id, cap, "n_flagged", int(flags.sum()))
             add(step.id, cap, "share_flagged", float(flags.mean()))
             add(step.id, cap, "n_episodes", count_episodes(flags))
-        elif artifact.data_type == DataType.TABLE:
+        else:  # TABLE
             for key, value in artifact.value.items():
                 add(step.id, cap, key, value)
-        else:  # TEST_RESULT
-            add(step.id, cap, "statistic", artifact.value["statistic"])
-            add(step.id, cap, "p_value", artifact.value["p_value"])
-            for key, value in artifact.value["details"].items():
-                if isinstance(value, (int, float)) and not isinstance(value, bool):
-                    add(step.id, cap, key, value)
     return facts
 
 
@@ -229,9 +213,9 @@ def check_grounding(
     its last digit of an allowed value, i.e. it is a correct rounding of it.
     Allowed values: each fact's value and its x100 form (percentages), numbers
     in the facts' display strings, numeric plan parameters (and x100), numbers in
-    `extra_texts` (the request, warning messages, dataset titles), conventional
-    significance levels and annualisation factors. Dates and years are grounded
-    if they lie within the date range of the facts.
+    `extra_texts` (the request, warning messages, dataset titles) and the
+    annualisation factors. Dates and years are grounded if they lie within the
+    date range of the facts.
 
     Limitation: this proves each number is a correct rounding of SOME allowed
     value, not that it is attached to the right concept in the sentence.
@@ -245,8 +229,7 @@ def check_grounding(
     Returns:
         A GroundingResult.
     """
-    allowed: list[float] = list(CONVENTIONAL_NUMBERS)
-    allowed += [float(factor) for factor in ANNUALISATION_FACTORS.values()]
+    allowed: list[float] = [float(factor) for factor in ANNUALISATION_FACTORS.values()]
     dates: list[str] = []
     for fact in facts:
         if isinstance(fact.value, str):
@@ -320,7 +303,7 @@ def template_narrative(
         if step.id not in artifacts:
             continue
         sid, cap = step.id, step.capability
-        # d: this step's facts by short name, e.g. d["p_value"] == "0.4973".
+        # d: this step's facts by short name, e.g. d["mean"] == "0.0005631".
         d = {
             fact.fact_id.removeprefix(f"{sid}."): fact.display
             for fact in facts
@@ -336,33 +319,14 @@ def template_narrative(
                 f"{d['share_flagged']}) were flagged, in {d['n_episodes']} distinct episodes."
             )
         elif cap == "summary_stats":
+            # Name what was summarised, e.g. "the returns series (s2)".
+            source = step.inputs.get("series", "")
+            kind = artifacts[source].meta.kind if source in artifacts else None
+            what = f"the {kind} series ({source})" if kind else f"the series ({source})"
             sentences.append(
-                f"Over {d['count']} observations the series in {sid} has mean {d['mean']}, "
+                f"Over {d['count']} observations, {what} has mean {d['mean']}, "
                 f"standard deviation {d['std']}, minimum {d['min']} and maximum {d['max']} "
                 f"(skew {d['skew']}, excess kurtosis {d['excess_kurtosis']})."
-            )
-        elif cap == "compare_groups":
-            significant = artifacts[sid].value["p_value"] < 0.05
-            sentences.append(
-                f"Comparing flagged with normal periods, the mean is {d['mean_flagged']} "
-                f"versus {d['mean_normal']} (difference {d['diff_means']}), with test "
-                f"statistic {d['statistic']} and p-value {d['p_value']}, from "
-                f"{d['n_flagged']} flagged and {d['n_normal']} normal observations in "
-                f"{d['n_flagged_episodes']} episodes; the difference is "
-                f"{'' if significant else 'not '}statistically significant at the 5% level."
-            )
-        elif cap == "ols_hac":
-            sentences.append(
-                f"The Newey-West regression estimates a flag coefficient of {d['coef_flag']} "
-                f"(standard error {d['se_flag']}, t-statistic {d['t_flag']}, p-value "
-                f"{d['p_value']}, {d['maxlags']} lags, {d['n']} observations)."
-            )
-        elif cap == "adf_test":
-            rejected = artifacts[sid].value["p_value"] < 0.05
-            sentences.append(
-                f"The ADF test statistic is {d['statistic']} with p-value {d['p_value']} "
-                f"(5% critical value {d['critical_value_5pct']}), so the unit-root null is "
-                f"{'' if rejected else 'not '}rejected at the 5% level."
             )
 
     warnings = [i for i in issues if i.severity == "WARN"]

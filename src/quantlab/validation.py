@@ -11,14 +11,16 @@ without touching any data values, decides whether it may run:
 
 It runs a metadata "dry run": walking the steps in order and propagating each
 output's data type, kind and frequency using only the registry and the catalog.
-That is how it can tell, before running, that step 5 would compute returns of
-a yield or join daily flags with weekly returns.
+That is how it can tell, before running, that step 3 would compute returns of
+a yield or take the spread of a daily and a weekly series.
 
 The same `validate_plan` function is used for the planner's plan, for every
 user edit, by the executor (defence in depth) and by replay.
 
-The runtime guardrails R01-R05 (which need data) live in executor.py, but all
-guardrail codes are described in the single GUARDRAILS table below.
+The runtime guardrails R01-R04 (which need data) live in executor.py, but all
+guardrail codes are described in the single GUARDRAILS table below. G11 is not
+used: it was retired with the statistical tests, and codes are never reused, so
+the issue ids recorded in older run records keep their meaning.
 """
 
 from dataclasses import asdict, dataclass, field
@@ -72,8 +74,8 @@ GUARDRAILS: dict[str, Guardrail] = {
         ),
         Guardrail(
             "G02", "UNKNOWN_CAPABILITY", BLOCK, "static",
-            "The LLM could ask for an analysis nobody wrote or tested (e.g. a random "
-            "forest, or 'run Python').",
+            "The LLM could ask for an analysis nobody wrote or tested (e.g. a forecasting "
+            "model, or 'run Python').",
         ),
         Guardrail(
             "G03", "INVALID_PARAM", BLOCK, "static",
@@ -87,8 +89,8 @@ GUARDRAILS: dict[str, Guardrail] = {
         ),
         Guardrail(
             "G05", "TYPE_MISMATCH", BLOCK, "static",
-            "Meaningless chains would run, e.g. volatility of a price level or regime "
-            "flags built on forward returns.",
+            "Meaningless chains would run, e.g. volatility of a price level or summary "
+            "statistics of regime flags.",
         ),
         Guardrail(
             "G06", "BUDGET_EXCEEDED", BLOCK, "static",
@@ -106,19 +108,15 @@ GUARDRAILS: dict[str, Guardrail] = {
         ),
         Guardrail(
             "G09", "FREQUENCY_MISMATCH", BLOCK, "static",
-            "Joining daily with weekly series silently keeps only overlapping dates and "
-            "mixes horizons.",
+            "Combining a daily with a weekly series silently keeps only the dates they "
+            "share and mixes frequencies.",
         ),
         Guardrail(
             "G10", "LOOK_AHEAD", APPROVAL, "static",
             "Full-sample thresholds use future data, so results look better than "
             "anything achievable in real time.",
         ),
-        Guardrail(
-            "G11", "OVERLAPPING_OBSERVATIONS", WARN, "static",
-            "Overlapping multi-period returns are autocorrelated; a plain t-test then "
-            "overstates significance.",
-        ),
+        # G11 (OVERLAPPING_OBSERVATIONS) was retired with the statistical tests.
         Guardrail(
             "G12", "MATERIAL_ASSUMPTION", APPROVAL, "static",
             "Material modelling choices (simple vs log returns) would be made by the "
@@ -147,11 +145,6 @@ GUARDRAILS: dict[str, Guardrail] = {
             "An inner join can silently discard a large part of the sample (e.g. "
             "series with different start dates).",
         ),
-        Guardrail(
-            "R05", "LOW_EFFECTIVE_SAMPLE", WARN, "runtime",
-            "Many flagged weeks from a handful of episodes look like a big sample but "
-            "carry little independent information.",
-        ),
     ]
 }  # fmt: skip
 
@@ -166,7 +159,7 @@ class Issue(BaseModel):
         step_id: the step concerned (None for plan-level issues).
         message: what is wrong.
         suggestion: how to fix it.
-        issue_id: stable id used to record approvals, e.g. "G12:s3:return_method".
+        issue_id: stable id used to record approvals, e.g. "G12:s2:return_method".
     """
 
     code: str
@@ -252,14 +245,13 @@ class StaticMeta:
     """Output metadata predicted by the dry run (no data values involved).
 
     Fields mirror ArtifactMeta: data type, kind, frequency, return method,
-    horizon, return/difference periods and the source dataset ids.
+    return/difference periods and the source dataset ids.
     """
 
     data_type: DataType
     kind: SeriesKind | None
     frequency: Frequency | None
     return_method: str | None = None
-    horizon: int | None = None
     periods: int | None = None
     dataset_ids: list[str] = field(default_factory=list)
 
@@ -344,9 +336,6 @@ def param_problem(spec_param: ParamSpec, value: Any) -> str | None:
     """
     name = spec_param.name
     if value is None:
-        # null is only meaningful for optional parameters whose default is "not set".
-        if not spec_param.required and spec_param.default is None:
-            return None
         return f"'{name}' must not be null."
     if not _has_type(value, spec_param.type):
         return f"'{name}' must be {spec_param.type}, got {value!r} ({type(value).__name__})."
@@ -675,10 +664,6 @@ def _type_hint(spec: CapabilitySpec, kind: SeriesKind | None) -> str:
         return "Resample or difference the LEVEL series first, then compute returns or changes."
     if spec.name == "rolling_volatility":
         return "Compute returns (prices) or differences (rates) first, then the volatility."
-    if spec.name == "flag_regime" and kind == SeriesKind.FORWARD_RETURN:
-        return "Flags must use information known at t (e.g. a volatility), never forward returns."
-    if spec.name == "forward_return":
-        return "Use compute_returns with periods=1 as the input."
     return "Check the capability's allowed input kinds on the Capability registry page."
 
 
@@ -688,8 +673,7 @@ def check_input_types(
     """G05 TYPE_MISMATCH: each input's data type and kind must be allowed by the capability.
 
     Without it, statistically meaningless chains would run without complaint,
-    e.g. the volatility of a price level, or regime flags built on forward
-    returns (which contain future information).
+    e.g. the volatility of a price level, or summary statistics of True/False flags.
     """
     issues = []
     for spec_input in spec.inputs:
@@ -722,18 +706,6 @@ def check_input_types(
                     key=spec_input.name,
                 )
             )
-    returns_meta = input_metas.get("returns")
-    if spec.name == "forward_return" and returns_meta and (returns_meta.periods or 1) != 1:
-        issues.append(
-            make_issue(
-                "G05",
-                step.id,
-                f"forward_return needs one-period returns; the input spans "
-                f"{returns_meta.periods} periods.",
-                _type_hint(spec, returns_meta.kind),
-                key="periods",
-            )
-        )
     return issues
 
 
@@ -765,8 +737,8 @@ def check_frequency_mismatch(
 ) -> list[Issue]:
     """G09 FREQUENCY_MISMATCH: two-input steps whose inputs have different frequencies.
 
-    Without it, joining daily with weekly data silently keeps only the dates
-    they share (Fridays), mixing a daily signal with weekly outcomes.
+    Without it, combining daily with weekly data silently keeps only the dates
+    they share (Fridays), mixing two frequencies in one result.
     """
     if len(spec.inputs) < 2:
         return []
@@ -800,36 +772,6 @@ def check_look_ahead(step: Step, spec: CapabilitySpec, params: dict[str, Any]) -
             "The full-sample threshold uses future data: a flag at date t depends on "
             "values after t (look-ahead bias).",
             "Use method='expanding' unless look-ahead is intended (e.g. descriptive labelling).",
-        )
-    ]
-
-
-def check_overlapping_observations(
-    step: Step,
-    spec: CapabilitySpec,
-    params: dict[str, Any],
-    input_metas: dict[str, StaticMeta | None],
-) -> list[Issue]:
-    """G11 OVERLAPPING_OBSERVATIONS: compare_groups on overlapping multi-period forward returns.
-
-    Without it, the t-test treats h-period forward returns that share h-1
-    periods as independent; their autocorrelation makes p-values far too small.
-    """
-    values = input_metas.get("values")
-    if spec.name != "compare_groups" or values is None:
-        return []
-    horizon = values.horizon or 1
-    overlapping = values.kind == SeriesKind.FORWARD_RETURN and horizon > 1
-    if not overlapping or params.get("nonoverlapping"):
-        return []
-    return [
-        make_issue(
-            "G11",
-            step.id,
-            f"The values are {horizon}-period forward returns observed every period, so "
-            f"consecutive observations overlap by {horizon - 1} periods; the test treats "
-            "them as independent.",
-            "Set nonoverlapping=true, or use ols_hac (Newey-West standard errors).",
         )
     ]
 
@@ -906,7 +848,6 @@ def infer_output_meta(
         kind=first.kind if spec.output_kind == SAME_AS_INPUT else spec.output_kind,
         frequency=first.frequency,
         return_method=first.return_method,
-        horizon=first.horizon,
         periods=first.periods,
         dataset_ids=datasets,
     )
@@ -971,7 +912,6 @@ def validate_plan(
         issues += check_input_types(step, spec, input_metas)
         issues += check_frequency_mismatch(step, spec, input_metas)
         issues += check_look_ahead(step, spec, params)
-        issues += check_overlapping_observations(step, spec, params, input_metas)
         issues += check_material_assumptions(step, spec, params)
         metas[step.id] = infer_output_meta(spec, params, input_metas, catalog)
 

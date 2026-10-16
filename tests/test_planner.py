@@ -72,7 +72,7 @@ def test_system_prompt_has_registry_and_metadata_but_no_values(catalog: Catalog)
 
 def test_live_call_shape_and_success(settings: Settings, catalog: Catalog) -> None:
     client = FakeAnthropicClient(tool_response(copy.deepcopy(PLAN_A)))
-    result = generate_plan("weekly nasdaq volatility", ["NASDAQCOM"], "live", settings, catalog,
+    result = generate_plan("average s&p 500 return", ["SP500"], "live", settings, catalog,
                            client)  # fmt: skip
     assert result.plan is not None and result.error is None
     assert (result.provider, result.mode, result.from_cache) == ("anthropic", "live", False)
@@ -145,7 +145,7 @@ def openai_settings(settings: Settings) -> Settings:
 
 def test_openai_call_shape_and_success(openai_settings: Settings, catalog: Catalog) -> None:
     client = FakeOpenAIClient(openai_tool_response(copy.deepcopy(PLAN_A)))
-    result = generate_plan("weekly nasdaq volatility", ["NASDAQCOM"], "live", openai_settings,
+    result = generate_plan("average s&p 500 return", ["SP500"], "live", openai_settings,
                            catalog, client)  # fmt: skip
     assert result.plan is not None and result.error is None
     assert (result.provider, result.served_model, result.input_tokens) == (

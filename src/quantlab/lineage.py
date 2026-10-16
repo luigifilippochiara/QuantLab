@@ -1,11 +1,11 @@
 """Lineage: run records (manifests), replay and trace.
 
 Role in the architecture: every run is saved as runs/<run_id>/manifest.json
-plus one output file per step (CSV for series and flags, JSON for tables and
-test results). The manifest records everything needed to explain and
-reproduce the result: the request, what the LLM proposed, what the user
-changed and approved, the exact data versions (file hashes), the library
-versions, the registry version, and a hash of every step's output.
+plus one output file per step (CSV for series and flags, JSON for tables).
+The manifest records everything needed to explain and reproduce the result:
+the request, what the LLM proposed, what the user changed and approved, the
+exact data versions (file hashes), the library versions, the registry version,
+and a hash of every step's output.
 
 - `replay(run_id)` re-runs the final plan WITHOUT any LLM, using the recorded
   approvals, after checking the data files still have the recorded hashes, and
@@ -36,8 +36,6 @@ from quantlab.validation import Issue, ValidationReport
 RECORDED_PACKAGES = (
     "pandas",
     "numpy",
-    "scipy",
-    "statsmodels",
     "pydantic",
     "openai",
     "anthropic",
@@ -100,7 +98,7 @@ class Approval(BaseModel):
     """A user's approval of one APPROVAL issue.
 
     Fields:
-        issue_id: the approved issue's id, e.g. "G12:s3:return_method".
+        issue_id: the approved issue's id, e.g. "G12:s2:return_method".
         code: guardrail code.
         step_id: step concerned.
         message: the exact issue text that was approved.
@@ -154,7 +152,7 @@ class RunRecord(BaseModel):
         registry_version: hash of the capability registry summary.
         steps: one StepRecord per executed step.
         warnings: all WARN issues (static and runtime).
-        runtime_issues: issues raised during execution (R01-R05).
+        runtime_issues: issues raised during execution (R01-R04).
         narrative: narrator output and grounding check (see narrator.NarrativeResult).
         stage_timings_ms: latency per stage.
         error: why the run did not complete, if it did not.

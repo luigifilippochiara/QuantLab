@@ -2,6 +2,23 @@
   "description": "QuantLab dataset catalog: FRED snapshots with file hashes.",
   "datasets": [
     {
+      "dataset_id": "SP500",
+      "fred_id": "SP500",
+      "title": "S&P 500",
+      "description": "S&P 500 equity index, daily close (index level); FRED keeps 10 years.",
+      "units": "Index",
+      "frequency": "D",
+      "kind": "price_level",
+      "source_url": "https://fred.stlouisfed.org/graph/fredgraph.csv?id=SP500",
+      "file": "snapshots/SP500.csv",
+      "retrieved_at": "2026-10-16T14:00:42Z",
+      "sha256": "81c5bd84eea8ddcb48606164ca1d3ae5d32e8cc257821c56dfcfb264c969cf93",
+      "n_rows": 2609,
+      "n_missing": 96,
+      "start_date": "2016-10-17",
+      "end_date": "2026-10-15"
+    },
+    {
       "dataset_id": "NASDAQCOM",
       "fred_id": "NASDAQCOM",
       "title": "NASDAQ Composite Index",

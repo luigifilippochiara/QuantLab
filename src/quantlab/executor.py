@@ -16,7 +16,6 @@ While running it applies the runtime guardrails that need data:
     R02 INSUFFICIENT_DATA     (BLOCK)   before any step with inputs
     R03 MISSING_DATA          (WARN)    after load_series
     R04 ALIGNMENT_LOSS        (WARN)    before two-input steps
-    R05 LOW_EFFECTIVE_SAMPLE  (WARN)    after compare_groups / ols_hac
 A BLOCK stops the run cleanly; the step records and issues so far are kept.
 Each step produces a StepRecord: what ran, with which parameters, on which
 inputs (by hash), what came out (by hash), how long it took.
@@ -28,7 +27,7 @@ from typing import Any
 
 from pydantic import BaseModel, Field
 
-from quantlab.capabilities import inner_join, take_nonoverlapping
+from quantlab.capabilities import inner_join
 from quantlab.data import Catalog, verify_dataset_hash
 from quantlab.plan import Plan, Step
 from quantlab.registry import REGISTRY, CapabilitySpec
@@ -38,7 +37,6 @@ from quantlab.validation import Issue, Severity, effective_params, make_issue, v
 # Runtime guardrail thresholds.
 MISSING_DATA_THRESHOLD = 0.05  # R03: warn if more than 5% of a raw series is missing
 ALIGNMENT_LOSS_THRESHOLD = 0.10  # R04: warn if a join drops more than 10% of an input
-MIN_FLAGGED_EPISODES = 5  # R05: fewer distinct episodes than this = low power
 
 
 class CapabilityRefusedError(Exception):
@@ -95,7 +93,7 @@ class ExecutionResult:
             stopped it) or "failed" (a capability raised an error).
         artifacts: step id -> output Artifact, for every step that completed.
         step_records: one StepRecord per step that was attempted.
-        issues: runtime issues (R01-R05), or the static blocks that prevented starting.
+        issues: runtime issues (R01-R04), or the static blocks that prevented starting.
         error: human-readable reason when status is not "completed".
         duration_ms: total wall-clock time.
     """
@@ -180,8 +178,8 @@ def check_insufficient_data(
     """R02 INSUFFICIENT_DATA: enough observations for the capability's min_obs rule.
 
     Without it, statistics computed on a handful of points (a 52-week volatility
-    from 60 weeks, a t-test with 3 flagged weeks) would be shown as findings
-    when they are mostly noise.
+    from 60 weeks, an average of 3 returns) would be shown as findings when they
+    are mostly noise.
     """
     if not spec.inputs:
         return []
@@ -191,38 +189,17 @@ def check_insufficient_data(
     if rule.window_param is not None:
         required = max(required, rule.window_multiple * params[rule.window_param])
 
-    issues = []
-    if n_obs < required:
-        issues.append(
-            make_issue(
-                "R02",
-                step.id,
-                f"{spec.name} has {n_obs} usable observations; it needs {required} "
-                f"({rule.description}).",
-                "Use a longer history, a higher frequency, or a smaller window.",
-                key="total",
-            )
+    if n_obs >= required:
+        return []
+    return [
+        make_issue(
+            "R02",
+            step.id,
+            f"{spec.name} has {n_obs} usable observations; it needs {required} "
+            f"({rule.description}).",
+            "Use a longer history, a higher frequency, or a smaller window.",
         )
-    if rule.min_per_group is not None:
-        values = inputs[spec.inputs[0].name]
-        joined = inner_join(values.value, inputs[spec.inputs[1].name].value, ("v", "flag"))
-        if params.get("nonoverlapping"):
-            joined = take_nonoverlapping(joined, values.meta.horizon or 1)
-        n_flagged = int(joined["flag"].astype(bool).sum())
-        n_normal = len(joined) - n_flagged
-        if min(n_flagged, n_normal) < rule.min_per_group:
-            issues.append(
-                make_issue(
-                    "R02",
-                    step.id,
-                    f"{spec.name} groups have {n_flagged} flagged and {n_normal} normal "
-                    f"observations; each needs at least {rule.min_per_group}.",
-                    "Lower the flag quantile, use a longer history, or set nonoverlapping=false "
-                    "and use ols_hac.",
-                    key="groups",
-                )
-            )
-    return issues
+    ]
 
 
 def check_missing_data(step: Step, output: Artifact) -> list[Issue]:
@@ -275,29 +252,6 @@ def check_alignment_loss(
                 )
             )
     return issues
-
-
-def check_low_effective_sample(step: Step, spec: CapabilitySpec, output: Artifact) -> list[Issue]:
-    """R05 LOW_EFFECTIVE_SAMPLE: warn when flags come from fewer than 5 distinct episodes.
-
-    Without it, 60 flagged weeks that are really 3 long episodes would look like
-    a large sample; the test then has far less independent information (and
-    power) than its n suggests.
-    """
-    if spec.name not in ("compare_groups", "ols_hac"):
-        return []
-    episodes = output.value["details"]["n_flagged_episodes"]
-    if episodes >= MIN_FLAGGED_EPISODES:
-        return []
-    return [
-        make_issue(
-            "R05",
-            step.id,
-            f"The flagged observations come from only {episodes} distinct episode(s); "
-            "the test has low power.",
-            "Treat the result as anecdotal; use a longer history or a lower quantile.",
-        )
-    ]
 
 
 # ---------------------------------------------------------------------------
@@ -401,7 +355,6 @@ def execute_plan(
         # Runtime guardrails that look at the output.
         if spec.reads_catalog:
             record.issues += check_missing_data(step, output)
-        record.issues += check_low_effective_sample(step, spec, output)
 
         hashes[step.id] = artifact_hash(output)
         record.output_hash = hashes[step.id]
@@ -413,7 +366,6 @@ def execute_plan(
             "kind": output.meta.kind,
             "frequency": output.meta.frequency,
             "return_method": output.meta.return_method,
-            "horizon": output.meta.horizon,
             "periods": output.meta.periods,
             "source_dataset_ids": output.meta.source_dataset_ids,
             "notes": output.meta.notes,

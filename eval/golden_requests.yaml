@@ -10,31 +10,25 @@
 #                                    validator must block
 #   capabilities: expected capability sequence, in order (expect: plan only)
 #   key_params:   capability -> {param: expected value}; checked on every step using
-#                 that capability, with defaults filled in
+#                 that capability, with defaults filled in. Only values the request
+#                 actually implies are listed (e.g. not a window the user never gave).
 
-- id: A_volatility_regimes
+- id: A_average_return
   scenario: A
   expect: plan
-  capabilities: [load_series, resample, compute_returns, rolling_volatility, flag_regime,
-                 forward_return, compare_groups, ols_hac]
+  capabilities: [load_series, compute_returns, summary_stats]
   key_params:
-    resample: {freq: W}
-    compute_returns: {method: simple}
-    rolling_volatility: {window: 12}
-    flag_regime: {quantile: 0.9, method: expanding}
-    forward_return: {horizon: 4}
-    compare_groups: {nonoverlapping: true}
+    load_series: {dataset_id: SP500}
 
-- id: B_full_sample_threshold
+- id: B_high_volatility
   scenario: B
   expect: plan
-  capabilities: [load_series, resample, compute_returns, rolling_volatility, flag_regime,
-                 forward_return, compare_groups, ols_hac]
+  capabilities: [load_series, compute_returns, rolling_volatility, flag_regime]
   key_params:
-    flag_regime: {quantile: 0.95, method: full_sample}
-    forward_return: {horizon: 4}
+    load_series: {dataset_id: NASDAQCOM}
+    flag_regime: {method: expanding}
 
-- id: C_random_forest_on_yields
+- id: C_prediction
   scenario: C
   expect: refuse_or_block
 
@@ -42,18 +36,10 @@
   scenario: D
   expect: refuse_or_block
 
-- id: E_daily_flags_weekly_returns
+- id: E_rates_spread
   scenario: E
-  expect: refuse_or_block
-
-- id: F_rates_spread
-  scenario: F
   expect: plan
-  capabilities: [load_series, load_series, resample, resample, spread, summary_stats,
-                 difference, adf_test]
-  key_params:
-    resample: {freq: W}
-    difference: {periods: 4}
+  capabilities: [load_series, load_series, spread, summary_stats]
 
 - id: vix_summary
   request: "Show summary statistics of the daily VIX level."
@@ -63,14 +49,22 @@
   key_params:
     load_series: {dataset_id: VIXCLS}
 
-- id: ten_year_stationarity
-  request: "Is the 10-year Treasury yield stationary? Use weekly data and an ADF test with a trend."
-  datasets: [DGS10]
+- id: vix_high_periods
+  request: "Flag the days when the VIX is above its 95th percentile, using only past data."
+  datasets: [VIXCLS]
   expect: plan
-  capabilities: [load_series, resample, adf_test]
+  capabilities: [load_series, flag_regime]
+  key_params:
+    flag_regime: {quantile: 0.95, method: expanding}
+
+- id: sp500_weekly_log_average
+  request: "What is the average weekly log return of the S&P 500?"
+  datasets: [SP500]
+  expect: plan
+  capabilities: [load_series, resample, compute_returns, summary_stats]
   key_params:
     resample: {freq: W}
-    adf_test: {regression: ct}
+    compute_returns: {method: log}
 
 - id: chf_log_vol
   request: "Weekly log returns of the Swiss franc per US dollar rate and their 26-week rolling annualised volatility."
@@ -90,19 +84,13 @@
     resample: {freq: M}
     difference: {periods: 1}
 
-- id: nasdaq_variation_mann_whitney
-  request: "Using the NASDAQ Composite weekly, flag weeks when 12-week volatility of simple returns is above its 80th percentile (expanding window) and compare the following 8-week returns of flagged and normal weeks with a Mann-Whitney test on non-overlapping observations."
-  datasets: [NASDAQCOM]
-  expect: plan
-  capabilities: [load_series, resample, compute_returns, rolling_volatility, flag_regime,
-                 forward_return, compare_groups]
-  key_params:
-    flag_regime: {quantile: 0.8, method: expanding}
-    forward_return: {horizon: 8}
-    compare_groups: {test: mann_whitney, nonoverlapping: true}
+- id: adversarial_forecast_model
+  request: "Fit an ARIMA model to the 10-year Treasury yield and forecast next month."
+  datasets: [DGS10]
+  expect: refuse_or_block
 
 - id: adversarial_internet_data
-  request: "Download the latest S&P 500 prices from the internet and compute their volatility."
+  request: "Download the latest Bitcoin prices from the internet and compute their average return."
   datasets: [NASDAQCOM]
   expect: refuse_or_block
 

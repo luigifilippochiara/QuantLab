@@ -1,13 +1,13 @@
 """Capability functions: the pre-written, tested quantitative building blocks.
 
-Role in the architecture: these 12 functions are the ONLY code that calls
-pandas / numpy / scipy / statsmodels for analysis. A plan can only *name* one of
-them (via the registry in registry.py); it can never supply code. Each function:
+Role in the architecture: these 8 functions are the ONLY code that calls
+pandas / numpy for analysis. A plan can only *name* one of them (via the
+registry in registry.py); it can never supply code. Each function:
 
 - receives its inputs as Artifacts (value + metadata) and its parameters as
   plain keyword arguments, e.g. `compute_returns(series, method="simple", periods=1)`;
 - returns a NEW Artifact whose metadata is set explicitly (kind, frequency,
-  return method, horizon...), so later steps and the validator know what it is;
+  return method...), so later steps and the validator know what it is;
 - is deterministic: the same inputs always give the same output.
 
 Conventions:
@@ -24,9 +24,6 @@ from typing import Any
 
 import numpy as np
 import pandas as pd
-import statsmodels.api as sm
-from scipy import stats
-from statsmodels.tsa.stattools import adfuller
 
 from quantlab.data import Catalog, load_dataset
 from quantlab.types import (
@@ -87,22 +84,6 @@ def inner_join(left: pd.Series, right: pd.Series, names: tuple[str, str]) -> pd.
     return joined.dropna()
 
 
-def take_nonoverlapping(frame: pd.DataFrame, horizon: int) -> pd.DataFrame:
-    """Keep every `horizon`-th row so that h-period forward returns no longer overlap.
-
-    Two forward returns h periods apart share no underlying periods, so they are
-    not mechanically correlated. Starting from the first row keeps it deterministic.
-
-    Args:
-        frame: aligned data, one row per period.
-        horizon: forward-return horizon h (1 keeps every row).
-
-    Returns:
-        The subsampled frame.
-    """
-    return frame.iloc[::horizon]
-
-
 def count_episodes(flags: pd.Series) -> int:
     """Count distinct episodes: contiguous runs of True in a boolean series.
 
@@ -120,13 +101,6 @@ def count_episodes(flags: pd.Series) -> int:
 def merged_sources(*artifacts: Artifact) -> list[str]:
     """Source dataset ids of several artifacts, each id once, in order of first appearance."""
     return list(dict.fromkeys(d for a in artifacts for d in a.meta.source_dataset_ids))
-
-
-def _flag_split(values: Artifact, flags: Artifact) -> pd.DataFrame:
-    """Inner-join a value series with a flag series into columns "value" and "flag"."""
-    joined = inner_join(values.value, flags.value, ("value", "flag"))
-    joined["flag"] = joined["flag"].astype(bool)
-    return joined
 
 
 # ---------------------------------------------------------------------------
@@ -394,61 +368,7 @@ def flag_regime(
 
 
 # ---------------------------------------------------------------------------
-# 8. forward_return
-# ---------------------------------------------------------------------------
-
-
-def forward_return(returns: Artifact, horizon: int) -> Artifact:
-    """Return over the NEXT `horizon` periods, placed on today's date.
-
-    Value at t = return from t+1 to t+horizon: compounded for simple returns
-    (product of 1 + r, minus 1), summed for log returns.
-
-    Why it starts at t+1: the return dated t (from t-1 to t) is already realised
-    at t, at the same moment as a regime flag dated t. Starting at t+1 makes the
-    forward return strictly the future relative to the information at t, so
-    "flag at t -> what happens next" does not reuse the data behind the flag.
-
-    Args:
-        returns: SERIES artifact of kind returns with return_method set and periods=1.
-        horizon: h, number of future periods (observations).
-
-    Returns:
-        SERIES artifact of kind forward_return, recording the horizon. The last
-        h dates have no complete future window and are dropped.
-
-    Raises:
-        ValueError: if the return method is unknown or the returns span several periods.
-    """
-    method = returns.meta.return_method
-    if method not in ("simple", "log"):
-        raise ValueError("forward_return needs returns with a known method (simple or log).")
-    if (returns.meta.periods or 1) != 1:
-        raise ValueError("forward_return needs one-period returns (periods=1).")
-
-    r = returns.value
-    if method == "simple":
-        # Simple returns compound: (1 + r_1)(1 + r_2)...(1 + r_h) - 1.
-        window_total = (1 + r).rolling(window=horizon).apply(np.prod, raw=True) - 1
-    else:
-        # Log returns add up over time.
-        window_total = r.rolling(window=horizon).sum()
-    # window_total at date t+h covers returns t+1 .. t+h; shifting back by h puts
-    # that total on date t.
-    forward = window_total.shift(-horizon).dropna()
-
-    meta = derive_meta(
-        returns.meta,
-        forward,
-        kind=SeriesKind.FORWARD_RETURN,
-        horizon=horizon,
-        notes=[f"{method} return from t+1 to t+{horizon} (next {horizon} observations)"],
-    )
-    return Artifact(value=forward, data_type=DataType.SERIES, meta=meta)
-
-
-# ---------------------------------------------------------------------------
-# 9. summary_stats
+# 8. summary_stats
 # ---------------------------------------------------------------------------
 
 
@@ -479,174 +399,3 @@ def summary_stats(series: Artifact) -> Artifact:
     }
     meta = derive_meta(series.meta, x, kind=None, notes=["std with ddof=1; excess kurtosis"])
     return Artifact(value=table, data_type=DataType.TABLE, meta=meta)
-
-
-# ---------------------------------------------------------------------------
-# 10. compare_groups
-# ---------------------------------------------------------------------------
-
-
-def compare_groups(
-    values: Artifact, flags: Artifact, test: str = "welch_t", nonoverlapping: bool = False
-) -> Artifact:
-    """Test whether values differ between flagged and normal periods.
-
-    Args:
-        values: SERIES artifact (typically forward returns).
-        flags: FLAGS artifact with the same frequency.
-        test: "welch_t" (difference in means) or "mann_whitney" (rank-based).
-        nonoverlapping: keep every horizon-th observation first (horizon from the
-            values' metadata), so h-period forward returns do not overlap.
-
-    Returns:
-        TEST_RESULT artifact with statistic, p_value and details (group sizes,
-        group means, difference in means, number of flagged episodes).
-    """
-    joined = _flag_split(values, flags)
-    horizon = values.meta.horizon or 1
-    if nonoverlapping:
-        joined = take_nonoverlapping(joined, horizon)
-
-    flagged = joined.loc[joined["flag"], "value"]
-    normal = joined.loc[~joined["flag"], "value"]
-
-    if test == "welch_t":
-        # Welch's t-test does not assume equal variances, which matters here:
-        # high-volatility regimes have, by construction, more dispersed returns.
-        result = stats.ttest_ind(flagged, normal, equal_var=False)
-    else:
-        # Mann-Whitney U compares ranks: robust to fat tails and outliers.
-        result = stats.mannwhitneyu(flagged, normal, alternative="two-sided")
-
-    # Episodes are counted on the sample actually tested: many flagged weeks in a
-    # few long episodes carry much less independent information than their count suggests.
-    details = {
-        "n_flagged": len(flagged),
-        "n_normal": len(normal),
-        "mean_flagged": float(flagged.mean()),
-        "mean_normal": float(normal.mean()),
-        "diff_means": float(flagged.mean() - normal.mean()),
-        "n_flagged_episodes": count_episodes(joined["flag"]),
-        "nonoverlapping": nonoverlapping,
-        "horizon": horizon,
-    }
-    value = {
-        "test": test,
-        "statistic": float(result.statistic),
-        "p_value": float(result.pvalue),
-        "details": details,
-    }
-    meta = derive_meta(
-        values.meta,
-        joined["value"],
-        kind=None,
-        source_dataset_ids=merged_sources(values, flags),
-        notes=[f"{test} on {len(joined)} observations (nonoverlapping={nonoverlapping})"],
-    )
-    return Artifact(value=value, data_type=DataType.TEST_RESULT, meta=meta)
-
-
-# ---------------------------------------------------------------------------
-# 11. ols_hac
-# ---------------------------------------------------------------------------
-
-
-def ols_hac(y: Artifact, flags: Artifact, maxlags: int | None = None) -> Artifact:
-    """Regress y on a constant and a flag dummy with Newey-West (HAC) standard errors.
-
-    The flag coefficient equals mean(y | flagged) - mean(y | normal), the same
-    comparison as compare_groups, but it keeps ALL overlapping observations and
-    fixes the standard errors instead of throwing data away.
-
-    Args:
-        y: SERIES artifact (typically forward returns).
-        flags: FLAGS artifact with the same frequency.
-        maxlags: Newey-West lag truncation; None means horizon - 1.
-
-    Returns:
-        TEST_RESULT artifact: statistic = t-stat of the flag coefficient, p_value,
-        and details (coefficient, standard error, constant, n, maxlags used).
-    """
-    joined = _flag_split(y, flags)
-    horizon = y.meta.horizon or 1
-    if maxlags is None:
-        # Overlapping h-period forward returns share h-1 periods with their
-        # neighbours, so even without any real predictability they are
-        # autocorrelated up to lag h-1 (an MA(h-1) process). Newey-West with h-1
-        # lags covers exactly that overlap. For one-period returns this is 0 lags,
-        # i.e. heteroskedasticity-robust (White) standard errors.
-        maxlags = horizon - 1
-        lag_source = "horizon - 1"
-    else:
-        lag_source = "parameter"
-
-    design = sm.add_constant(joined["flag"].astype(float))
-    # cov_type="HAC" = Newey-West: Bartlett-kernel weights, statsmodels' small-sample correction.
-    fit = sm.OLS(joined["value"], design).fit(cov_type="HAC", cov_kwds={"maxlags": maxlags})
-
-    details = {
-        "coef_flag": float(fit.params["flag"]),
-        "se_flag": float(fit.bse["flag"]),
-        "t_flag": float(fit.tvalues["flag"]),
-        "const": float(fit.params["const"]),
-        "n": int(fit.nobs),
-        "n_flagged": int(joined["flag"].sum()),
-        "n_flagged_episodes": count_episodes(joined["flag"]),
-        "maxlags": maxlags,
-        "maxlags_source": lag_source,
-        "horizon": horizon,
-    }
-    value = {
-        "test": "ols_hac",
-        "statistic": details["t_flag"],
-        "p_value": float(fit.pvalues["flag"]),
-        "details": details,
-    }
-    meta = derive_meta(
-        y.meta,
-        joined["value"],
-        kind=None,
-        source_dataset_ids=merged_sources(y, flags),
-        notes=[f"OLS y ~ const + flag, Newey-West SE with maxlags={maxlags} ({lag_source})"],
-    )
-    return Artifact(value=value, data_type=DataType.TEST_RESULT, meta=meta)
-
-
-# ---------------------------------------------------------------------------
-# 12. adf_test
-# ---------------------------------------------------------------------------
-
-
-def adf_test(series: Artifact, regression: str = "c") -> Artifact:
-    """Augmented Dickey-Fuller unit-root test.
-
-    Null hypothesis: the series has a unit root (is non-stationary). A small
-    p-value is evidence of stationarity (mean reversion).
-
-    Args:
-        series: SERIES artifact.
-        regression: "c" (constant) or "ct" (constant and linear trend).
-
-    Returns:
-        TEST_RESULT artifact: ADF statistic, p_value, lags used, n, critical values.
-    """
-    # autolag="AIC": statsmodels tries 0..maxlag lagged differences (default maxlag
-    # 12*(n/100)^(1/4)) and keeps the count with the lowest AIC.
-    result = adfuller(
-        series.value.to_numpy(), regression=regression, autolag="AIC", result_object=True
-    )
-    value = {
-        "test": "adf",
-        "statistic": float(result.statistic),
-        "p_value": float(result.pvalue),
-        "details": {
-            "used_lags": int(result.lags),
-            "n": int(result.nobs),
-            "regression": regression,
-            "critical_value_1pct": float(result.critical_values["1%"]),
-            "critical_value_5pct": float(result.critical_values["5%"]),
-            "critical_value_10pct": float(result.critical_values["10%"]),
-        },
-    }
-    meta = derive_meta(series.meta, series.value, kind=None, notes=["ADF with AIC lag selection"])
-    return Artifact(value=value, data_type=DataType.TEST_RESULT, meta=meta)

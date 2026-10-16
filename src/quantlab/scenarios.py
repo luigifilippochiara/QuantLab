@@ -1,15 +1,18 @@
-"""Demo scenarios A-F: requests, datasets, hand-written plans and expected outcomes.
+"""Demo scenarios A-E: requests, datasets, hand-written plans and expected outcomes.
 
 Role in the architecture: pure data, shared by
 - the MockPlanner (returns these plans instead of calling an LLM, so the whole
   system works offline and as a fallback during a live demo),
-- the CLI `demo` command (runs all six and checks the expected outcomes),
+- the CLI `demo` command (runs all five and checks the expected outcomes),
 - the Streamlit sidebar (buttons that prefill the request),
 - the tests.
 
-The canned plans are written exactly as the LLM is asked to write them: only
-the fields of `plan.plan_tool_schema()`. Some are deliberately bad (C, E) so
-that the validator, not the planner, has to catch the problem.
+The five scenarios are deliberately simple: two short analyses, one rates
+analysis, and two requests that must not run. The canned plans are written
+exactly as the LLM is asked to write them: only the fields of
+`plan.plan_tool_schema()`. Scenario C's plan is deliberately bad (it names a
+capability that does not exist), so that the validator, not the planner, has to
+catch the problem.
 """
 
 from dataclasses import dataclass, field
@@ -21,7 +24,7 @@ class Scenario:
     """One demo scenario.
 
     Fields:
-        id: "A" .. "F".
+        id: "A" .. "E".
         title: short label for buttons and tables.
         request: the natural-language request.
         dataset_ids: datasets selected for the request.
@@ -61,137 +64,76 @@ def _step(
     }
 
 
-# Steps shared by A and B: weekly NASDAQ returns, volatility, flags, forward returns.
-def _nasdaq_regime_steps(quantile: float, method: str) -> list[dict[str, Any]]:
-    """Steps s1-s6 of scenarios A and B (they differ only in the flag threshold)."""
-    return [
-        _step("s1", "load_series", params={"dataset_id": "NASDAQCOM"},
-              rationale="Load the NASDAQ Composite daily closes."),
-        _step("s2", "resample", {"series": "s1"}, {"freq": "W", "how": "last"},
-              rationale="Weekly Friday closes, as requested."),
-        _step("s3", "compute_returns", {"series": "s2"}, {"method": "simple", "periods": 1},
-              rationale="Simple weekly returns of the index."),
-        _step("s4", "rolling_volatility", {"series": "s3"}, {"window": 12, "annualize": True},
-              rationale="12-week rolling annualised volatility."),
-        _step("s5", "flag_regime", {"series": "s4"},
-              {"quantile": quantile, "method": method, "min_periods": 52},
-              rationale="Flag high-volatility weeks."),
-        _step("s6", "forward_return", {"returns": "s3"}, {"horizon": 4},
-              rationale="Return over the following 4 weeks."),
-    ]  # fmt: skip
-
-
 SCENARIOS: list[Scenario] = [
     Scenario(
         id="A",
-        title="A: full success (volatility regimes)",
-        request=(
-            "Using the NASDAQ Composite, resample to weekly, compute simple weekly returns, "
-            "estimate 12-week rolling annualised volatility, flag weeks above the 90th "
-            "percentile using an expanding window, and test whether the following 4-week "
-            "returns differ between high-volatility and normal weeks, using non-overlapping "
-            "observations and a Newey-West regression."
-        ),
-        dataset_ids=("NASDAQCOM",),
+        title="A: average return of the S&P 500",
+        request="What is the average daily return of the S&P 500?",
+        dataset_ids=("SP500",),
         expected_status="completed",
         expected_codes=("G12",),
         auto_approve=True,
-        keywords=(("nasdaq",), ("volatil",)),
+        keywords=(("s&p", "sp500"), ("average", "mean")),
         plan={
-            "dataset_ids": ["NASDAQCOM"],
+            "dataset_ids": ["SP500"],
             "steps": [
-                *_nasdaq_regime_steps(quantile=0.90, method="expanding"),
-                _step(
-                    "s7",
-                    "compare_groups",
-                    {"values": "s6", "flags": "s5"},
-                    {"test": "welch_t", "nonoverlapping": True},
-                    rationale="Welch t-test on non-overlapping 4-week returns.",
-                ),
-                _step(
-                    "s8",
-                    "ols_hac",
-                    {"y": "s6", "flags": "s5"},
-                    rationale="Newey-West regression on all overlapping observations.",
-                ),
+                _step("s1", "load_series", params={"dataset_id": "SP500"},
+                      rationale="Load the S&P 500 daily closes."),
+                _step("s2", "compute_returns", {"series": "s1"}, {"method": "simple"},
+                      rationale="Simple daily returns of the index."),
+                _step("s3", "summary_stats", {"series": "s2"},
+                      rationale="The mean of the daily returns is the average return."),
             ],
             "cannot_fulfill": False,
             "refusal_reason": None,
-            "planner_notes": "Simple returns chosen as requested; flags use only past data.",
+            "planner_notes": "Simple returns, so the average is an arithmetic mean daily return.",
         },
     ),
     Scenario(
         id="B",
-        title="B: warning + approvals (look-ahead)",
-        request=(
-            "Using the NASDAQ Composite, resample to weekly, compute simple weekly returns, "
-            "estimate 12-week rolling annualised volatility, flag using the full-sample 95th "
-            "percentile, and test whether the following 4-week returns differ between "
-            "high-volatility and normal weeks with a t-test and a Newey-West regression."
-        ),
+        title="B: periods of high volatility (NASDAQ)",
+        request="Find the periods of high volatility in the NASDAQ Composite.",
         dataset_ids=("NASDAQCOM",),
         expected_status="completed",
-        expected_codes=("G10", "G11", "G12"),
+        expected_codes=("G12",),
         auto_approve=True,
-        keywords=(("nasdaq",), ("full-sample", "full sample")),
+        keywords=(("volatil",), ("high",)),
         plan={
             "dataset_ids": ["NASDAQCOM"],
             "steps": [
-                *_nasdaq_regime_steps(quantile=0.95, method="full_sample"),
-                _step(
-                    "s7",
-                    "compare_groups",
-                    {"values": "s6", "flags": "s5"},
-                    {"test": "welch_t", "nonoverlapping": False},
-                    rationale="Welch t-test on all weekly observations.",
-                ),
-                _step(
-                    "s8", "ols_hac", {"y": "s6", "flags": "s5"}, rationale="Newey-West regression."
-                ),
+                _step("s1", "load_series", params={"dataset_id": "NASDAQCOM"},
+                      rationale="Load the NASDAQ Composite daily closes."),
+                _step("s2", "compute_returns", {"series": "s1"}, {"method": "simple"},
+                      rationale="Simple daily returns of the index."),
+                _step("s3", "rolling_volatility", {"series": "s2"}, {"window": 21},
+                      rationale="21-day (about one month) rolling annualised volatility."),
+                _step("s4", "flag_regime", {"series": "s3"},
+                      {"quantile": 0.90, "method": "expanding", "min_periods": 252},
+                      rationale="Flag days above the 90th percentile of past volatility."),
             ],
             "cannot_fulfill": False,
             "refusal_reason": None,
-            "planner_notes": "Full-sample threshold used as explicitly requested.",
+            "planner_notes": "High volatility = above the 90th percentile, using past data only.",
         },
     ),
     Scenario(
         id="C",
-        title="C: block (unregistered capability, returns on rates)",
-        request=(
-            "Compute returns on the 10-year Treasury yield and fit a random forest to "
-            "predict next week's return."
-        ),
-        dataset_ids=("DGS10",),
+        title="C: block (prediction: no such capability)",
+        request="Predict the next 5 values of the VIX.",
+        dataset_ids=("VIXCLS",),
         expected_status="blocked",
-        expected_codes=("G02", "G08"),
+        expected_codes=("G02",),
         auto_approve=False,
-        keywords=(("random forest",),),
-        # A deliberately bad plan, as an over-eager LLM might write it: the
-        # validator must catch both problems.
+        keywords=(("predict", "forecast"),),
+        # A deliberately bad plan, as an over-eager LLM might write it: there is no
+        # forecasting capability, and the validator must catch the invented one.
         plan={
-            "dataset_ids": ["DGS10"],
+            "dataset_ids": ["VIXCLS"],
             "steps": [
-                _step(
-                    "s1",
-                    "load_series",
-                    params={"dataset_id": "DGS10"},
-                    rationale="Load the 10-year yield.",
-                ),
-                _step("s2", "resample", {"series": "s1"}, {"freq": "W"}, rationale="Weekly data."),
-                _step(
-                    "s3",
-                    "compute_returns",
-                    {"series": "s2"},
-                    {"method": "simple"},
-                    rationale="Weekly returns of the yield.",
-                ),
-                _step(
-                    "s4",
-                    "random_forest",
-                    {"series": "s3"},
-                    {"n_estimators": 100},
-                    rationale="Predict next week's return.",
-                ),
+                _step("s1", "load_series", params={"dataset_id": "VIXCLS"},
+                      rationale="Load the daily VIX."),
+                _step("s2", "forecast", {"series": "s1"}, {"steps_ahead": 5},
+                      rationale="Predict the next 5 values."),
             ],
             "cannot_fulfill": False,
             "refusal_reason": None,
@@ -222,154 +164,46 @@ SCENARIOS: list[Scenario] = [
     ),
     Scenario(
         id="E",
-        title="E: block (frequency mismatch)",
+        title="E: rates (10y minus 2y Treasury spread)",
         request=(
-            "Do weekly NASDAQ 4-week forward returns differ when the daily VIX is above its "
-            "90th percentile? Use the daily VIX flags directly, without resampling."
-        ),
-        dataset_ids=("VIXCLS", "NASDAQCOM"),
-        expected_status="blocked",
-        expected_codes=("G09",),
-        auto_approve=False,
-        keywords=(("vix",), ("nasdaq",)),
-        plan={
-            "dataset_ids": ["VIXCLS", "NASDAQCOM"],
-            "steps": [
-                _step(
-                    "s1",
-                    "load_series",
-                    params={"dataset_id": "VIXCLS"},
-                    rationale="Load the daily VIX.",
-                ),
-                _step(
-                    "s2",
-                    "flag_regime",
-                    {"series": "s1"},
-                    {"quantile": 0.90, "method": "expanding", "min_periods": 252},
-                    rationale="Flag days with VIX above its expanding 90th percentile.",
-                ),
-                _step(
-                    "s3",
-                    "load_series",
-                    params={"dataset_id": "NASDAQCOM"},
-                    rationale="Load the NASDAQ Composite.",
-                ),
-                _step(
-                    "s4", "resample", {"series": "s3"}, {"freq": "W"}, rationale="Weekly closes."
-                ),
-                _step(
-                    "s5",
-                    "compute_returns",
-                    {"series": "s4"},
-                    {"method": "simple"},
-                    rationale="Weekly returns.",
-                ),
-                _step(
-                    "s6",
-                    "forward_return",
-                    {"returns": "s5"},
-                    {"horizon": 4},
-                    rationale="Following 4-week returns.",
-                ),
-                _step(
-                    "s7",
-                    "compare_groups",
-                    {"values": "s6", "flags": "s2"},
-                    {"nonoverlapping": True},
-                    rationale="Compare forward returns on flagged vs normal dates.",
-                ),
-            ],
-            "cannot_fulfill": False,
-            "refusal_reason": None,
-            "planner_notes": "VIX flags kept daily as requested.",
-        },
-    ),
-    Scenario(
-        id="F",
-        title="F: rates analysis (10y-2y spread)",
-        request=(
-            "Weekly 10y minus 2y Treasury spread, summary statistics, 4-week changes, and an "
-            "ADF stationarity test on the spread."
+            "Compute the spread between the 10-year and 2-year Treasury yields and show "
+            "its summary statistics."
         ),
         dataset_ids=("DGS10", "DGS2"),
         expected_status="completed",
         expected_codes=(),
         auto_approve=False,
-        keywords=(("spread",), ("adf", "stationar")),
+        keywords=(("spread",),),
         plan={
             "dataset_ids": ["DGS10", "DGS2"],
             "steps": [
-                _step(
-                    "s1",
-                    "load_series",
-                    params={"dataset_id": "DGS10"},
-                    rationale="Load the 10-year yield.",
-                ),
-                _step(
-                    "s2",
-                    "load_series",
-                    params={"dataset_id": "DGS2"},
-                    rationale="Load the 2-year yield.",
-                ),
-                _step(
-                    "s3",
-                    "resample",
-                    {"series": "s1"},
-                    {"freq": "W", "how": "last"},
-                    rationale="Weekly 10-year yield.",
-                ),
-                _step(
-                    "s4",
-                    "resample",
-                    {"series": "s2"},
-                    {"freq": "W", "how": "last"},
-                    rationale="Weekly 2-year yield.",
-                ),
-                _step(
-                    "s5",
-                    "spread",
-                    {"a": "s3", "b": "s4"},
-                    rationale="10y minus 2y spread in percentage points.",
-                ),
-                _step(
-                    "s6",
-                    "summary_stats",
-                    {"series": "s5"},
-                    rationale="Summary statistics of the spread.",
-                ),
-                _step(
-                    "s7",
-                    "difference",
-                    {"series": "s5"},
-                    {"periods": 4},
-                    rationale="4-week changes of the spread.",
-                ),
-                _step(
-                    "s8",
-                    "adf_test",
-                    {"series": "s5"},
-                    {"regression": "c"},
-                    rationale="Is the spread stationary?",
-                ),
+                _step("s1", "load_series", params={"dataset_id": "DGS10"},
+                      rationale="Load the 10-year yield."),
+                _step("s2", "load_series", params={"dataset_id": "DGS2"},
+                      rationale="Load the 2-year yield."),
+                _step("s3", "spread", {"a": "s1", "b": "s2"},
+                      rationale="10y minus 2y spread in percentage points."),
+                _step("s4", "summary_stats", {"series": "s3"},
+                      rationale="Summary statistics of the spread."),
             ],
             "cannot_fulfill": False,
             "refusal_reason": None,
-            "planner_notes": "Rates are differenced, not turned into returns.",
+            "planner_notes": "Yields are subtracted directly; no returns are computed on rates.",
         },
     ),
-]
+]  # fmt: skip
 
 SCENARIOS_BY_ID: dict[str, Scenario] = {s.id: s for s in SCENARIOS}
 
 # Keyword matching order: most specific first, so e.g. the injection (D) wins over
-# anything else and the full-sample variant (B) wins over plain A.
-MATCH_ORDER = ("D", "C", "B", "E", "F", "A")
+# anything else and "predict the volatility" is refused (C) rather than planned (B).
+MATCH_ORDER = ("D", "C", "E", "A", "B")
 
 
 def match_scenario(request: str) -> Scenario | None:
     """Find the demo scenario a request corresponds to.
 
-    Matches an exact request text, a bare scenario id ("A".."F"), or keywords.
+    Matches an exact request text, a bare scenario id ("A".."E"), or keywords.
 
     Args:
         request: the user's request.

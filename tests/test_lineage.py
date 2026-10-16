@@ -23,7 +23,7 @@ from quantlab.registry import registry_version
 from quantlab.scenarios import SCENARIOS_BY_ID
 from quantlab.validation import fill_defaults, validate_plan
 
-APPROVALS = {"G12:s3:return_method"}
+APPROVALS = {"G12:s2:return_method"}
 
 
 def run_and_save(scenario_id: str, settings: Settings, catalog: Catalog) -> RunRecord:
@@ -39,7 +39,7 @@ def run_and_save(scenario_id: str, settings: Settings, catalog: Catalog) -> RunR
         plan_final=plan.model_dump(),
         validation=validate_plan(plan, catalog),
         approvals=[
-            Approval(issue_id=i, code=i[:3], step_id="s3", message="m", approved_at="t")
+            Approval(issue_id=i, code=i[:3], step_id="s2", message="m", approved_at="t")
             for i in APPROVALS
         ],
         datasets=dataset_versions(result.step_records, catalog),
@@ -60,7 +60,7 @@ def test_saved_outputs_hash_to_the_manifest_hashes(settings: Settings, catalog: 
         files = list(outputs.glob(f"{step.step_id}_*"))
         assert len(files) == 1
         assert hashlib.sha256(files[0].read_bytes()).hexdigest() == step.output_hash
-    assert loaded.datasets[0].dataset_id == "NASDAQCOM"
+    assert loaded.datasets[0].dataset_id == "SP500"
     assert loaded.environment["packages"]["pandas"]
 
 
@@ -68,12 +68,12 @@ def test_replay_reproduces_every_hash(settings: Settings, catalog: Catalog) -> N
     record = run_and_save("A", settings, catalog)
     report = replay(record.run_id, settings)
     assert report.all_match, report.message
-    assert len(report.steps) == 8 and all(step.match for step in report.steps)
+    assert len(report.steps) == 3 and all(step.match for step in report.steps)
     assert read_events(settings.events_path)[-1]["event_type"] == "replay_completed"
 
 
 def test_replay_detects_changed_data(settings: Settings, catalog: Catalog) -> None:
-    record = run_and_save("F", settings, catalog)
+    record = run_and_save("E", settings, catalog)
     path = catalog.path_for("DGS2")
     path.write_text(path.read_text().replace(",3.", ",9.", 1))
     report = replay(record.run_id, settings)
@@ -83,18 +83,18 @@ def test_replay_detects_changed_data(settings: Settings, catalog: Catalog) -> No
 
 
 def test_trace_walks_back_to_the_source_file(settings: Settings, catalog: Catalog) -> None:
-    record = run_and_save("F", settings, catalog)
-    result = trace(record, "s8")  # adf_test on the spread
-    # s8 <- s5 (spread) <- s3, s4 (resample) <- s1, s2 (load); s6/s7 are not ancestors.
-    assert [step.step_id for step in result.chain] == ["s8", "s5", "s4", "s3", "s2", "s1"]
+    record = run_and_save("E", settings, catalog)
+    result = trace(record, "s3")  # the spread
+    # s3 <- s1, s2 (load); s4 (summary statistics) comes later, so it is not an ancestor.
+    assert [step.step_id for step in result.chain] == ["s3", "s2", "s1"]
     assert {source.dataset_id for source in result.sources} == {"DGS10", "DGS2"}
     dgs10 = next(source for source in result.sources if source.dataset_id == "DGS10")
     assert dgs10.sha256 == catalog.entries["DGS10"].sha256
-    assert result.chain[0].library_calls.startswith("statsmodels")
+    assert result.chain[0].library_calls.startswith("pandas.concat")
 
 
 def test_list_runs_newest_first(settings: Settings, catalog: Catalog) -> None:
-    first = run_and_save("F", settings, catalog)
+    first = run_and_save("E", settings, catalog)
     second = run_and_save("A", settings, catalog)
     rows = list_runs(settings.runs_dir)
     assert {row["run_id"] for row in rows} == {first.run_id, second.run_id}

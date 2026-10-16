@@ -9,9 +9,6 @@ import math
 import numpy as np
 import pandas as pd
 import pytest
-import statsmodels.api as sm
-from scipy import stats
-from statsmodels.tsa.stattools import adfuller
 
 from quantlab import capabilities as cap
 from quantlab.data import Catalog
@@ -129,40 +126,6 @@ def test_rolling_volatility_of_multi_period_returns_scales_by_periods() -> None:
     )
 
 
-# --- forward returns --------------------------------------------------------------
-
-
-def test_forward_return_simple_compounds_from_t_plus_1() -> None:
-    returns = make_artifact(
-        [0.10, -0.10, 0.20, 0.05], kind=SeriesKind.RETURNS, return_method="simple", periods=1
-    )
-    out = cap.forward_return(returns, horizon=2)
-    # t0: (1 - 0.10)(1 + 0.20) - 1 = 0.08 ; t1: (1 + 0.20)(1 + 0.05) - 1 = 0.26
-    assert out.value.tolist() == pytest.approx([0.08, 0.26])
-    assert out.value.index.tolist() == returns.value.index[:2].tolist()
-    assert out.meta.horizon == 2
-    assert out.meta.kind == SeriesKind.FORWARD_RETURN
-
-
-def test_forward_return_log_sums() -> None:
-    returns = make_artifact(
-        [0.10, -0.10, 0.20, 0.05], kind=SeriesKind.RETURNS, return_method="log", periods=1
-    )
-    out = cap.forward_return(returns, horizon=2)
-    assert out.value.tolist() == pytest.approx([0.10, 0.25])
-
-
-def test_forward_return_needs_known_one_period_returns() -> None:
-    no_method = make_artifact([0.1, 0.2, 0.3], kind=SeriesKind.RETURNS)
-    with pytest.raises(ValueError, match="method"):
-        cap.forward_return(no_method, horizon=1)
-    two_period = make_artifact(
-        [0.1, 0.2, 0.3], kind=SeriesKind.RETURNS, return_method="log", periods=2
-    )
-    with pytest.raises(ValueError, match="one-period"):
-        cap.forward_return(two_period, horizon=1)
-
-
 # --- regime flags -----------------------------------------------------------------
 
 
@@ -209,7 +172,18 @@ def test_count_episodes() -> None:
     assert cap.count_episodes(pd.Series([False, False])) == 0
 
 
-# --- statistics -------------------------------------------------------------------
+# --- summary statistics -----------------------------------------------------------
+
+
+def _adjusted_skew_and_kurtosis(xs: list[float]) -> tuple[float, float]:
+    """Bias-adjusted sample skewness (G1) and excess kurtosis (G2), from their textbook formulas."""
+    n = len(xs)
+    mean = sum(xs) / n
+    m2, m3, m4 = (sum((x - mean) ** k for x in xs) / n for k in (2, 3, 4))
+    g1, g2 = m3 / m2**1.5, m4 / m2**2 - 3
+    skew = g1 * math.sqrt(n * (n - 1)) / (n - 2)
+    excess_kurtosis = ((n + 1) * g2 + 6) * (n - 1) / ((n - 2) * (n - 3))
+    return skew, excess_kurtosis
 
 
 def test_summary_stats() -> None:
@@ -219,75 +193,20 @@ def test_summary_stats() -> None:
     assert table["mean"] == pytest.approx(3.6)
     assert table["std"] == pytest.approx(_sample_std(xs))
     assert (table["min"], table["max"]) == (1.0, 8.0)
-    assert table["skew"] == pytest.approx(stats.skew(xs, bias=False))
-    assert table["excess_kurtosis"] == pytest.approx(stats.kurtosis(xs, fisher=True, bias=False))
+    skew, excess_kurtosis = _adjusted_skew_and_kurtosis(xs)
+    assert table["skew"] == pytest.approx(skew)
+    assert table["excess_kurtosis"] == pytest.approx(excess_kurtosis)
     assert table["start"] == "2024-01-05"
 
 
-def _values_and_flags(n: int = 200, horizon: int = 4) -> tuple[Artifact, Artifact]:
-    """Forward-return-like values and episodic flags on the same weekly dates."""
-    rng = np.random.default_rng(42)
-    flag_values = np.zeros(n, dtype=bool)
-    for start in range(10, n, 25):  # 8 episodes of 6 weeks
-        flag_values[start : start + 6] = True
-    values = rng.normal(0.0, 0.02, n) - 0.01 * flag_values
-    fwd = make_artifact(
-        values, kind=SeriesKind.FORWARD_RETURN, horizon=horizon, return_method="simple"
-    )
-    flags = make_artifact(flag_values, kind=SeriesKind.FLAGS, data_type=DataType.FLAGS)
-    return fwd, flags
-
-
-def test_compare_groups_matches_scipy() -> None:
-    fwd, flags = _values_and_flags()
-    out = cap.compare_groups(fwd, flags, test="welch_t")
-    x, f = fwd.value.to_numpy(), flags.value.to_numpy()
-    direct = stats.ttest_ind(x[f], x[~f], equal_var=False)
-    assert out.value["statistic"] == pytest.approx(direct.statistic)
-    assert out.value["p_value"] == pytest.approx(direct.pvalue)
-    d = out.value["details"]
-    assert (d["n_flagged"], d["n_normal"]) == (f.sum(), (~f).sum())
-    assert d["diff_means"] == pytest.approx(x[f].mean() - x[~f].mean())
-    assert d["n_flagged_episodes"] == 8
-
-
-def test_compare_groups_mann_whitney_and_nonoverlapping() -> None:
-    fwd, flags = _values_and_flags(horizon=4)
-    out = cap.compare_groups(fwd, flags, test="mann_whitney", nonoverlapping=True)
-    x, f = fwd.value.to_numpy()[::4], flags.value.to_numpy()[::4]
-    direct = stats.mannwhitneyu(x[f], x[~f], alternative="two-sided")
-    assert out.value["statistic"] == pytest.approx(direct.statistic)
-    assert out.value["p_value"] == pytest.approx(direct.pvalue)
-    assert out.meta.n_obs == 50
-
-
-def test_ols_hac_matches_statsmodels_and_defaults_to_horizon_minus_1() -> None:
-    fwd, flags = _values_and_flags(horizon=4)
-    out = cap.ols_hac(fwd, flags)
-    design = sm.add_constant(flags.value.astype(float).rename("flag"))
-    direct = sm.OLS(fwd.value, design).fit(cov_type="HAC", cov_kwds={"maxlags": 3})
-    d = out.value["details"]
-    assert d["maxlags"] == 3
-    assert d["coef_flag"] == pytest.approx(direct.params["flag"])
-    assert d["se_flag"] == pytest.approx(direct.bse["flag"])
-    assert out.value["p_value"] == pytest.approx(direct.pvalues["flag"])
-    # The dummy coefficient is exactly the difference in group means.
-    x, f = fwd.value.to_numpy(), flags.value.to_numpy()
-    assert d["coef_flag"] == pytest.approx(x[f].mean() - x[~f].mean())
-    assert cap.ols_hac(fwd, flags, maxlags=0).value["details"]["maxlags"] == 0
-
-
-def test_adf_matches_statsmodels() -> None:
-    rng = np.random.default_rng(3)
-    x = np.cumsum(rng.normal(size=300)) * 0.1 + rng.normal(size=300)
-    out = cap.adf_test(make_artifact(x, kind=SeriesKind.SPREAD), regression="ct")
-    direct = adfuller(x, regression="ct", autolag="AIC", result_object=True)
-    assert out.value["statistic"] == pytest.approx(direct.statistic)
-    assert out.value["p_value"] == pytest.approx(direct.pvalue)
-    assert out.value["details"]["used_lags"] == direct.lags
-    assert out.value["details"]["critical_value_5pct"] == pytest.approx(
-        direct.critical_values["5%"]
-    )
+def test_average_return_of_a_price() -> None:
+    """The scenario A chain on a tiny series: prices -> simple returns -> mean."""
+    returns = cap.compute_returns(make_artifact([100.0, 102.0, 99.96, 101.958]), "simple")
+    # 102/100 - 1 = 0.02, 99.96/102 - 1 = -0.02, 101.958/99.96 - 1 = 0.02 (to rounding)
+    assert returns.value.tolist() == pytest.approx([0.02, -0.02, 0.02], abs=1e-4)
+    table = cap.summary_stats(returns).value
+    assert table["mean"] == pytest.approx(sum(returns.value) / 3)
+    assert table["count"] == 3
 
 
 # --- resample and load ------------------------------------------------------------

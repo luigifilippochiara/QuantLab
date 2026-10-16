@@ -69,11 +69,10 @@ input; plans come from an LLM and must be parsed strictly. Using Pydantic only
 where untrusted data enters keeps that boundary visible.
 
 **SERIES and FLAGS artifacts never contain NaN.** Warm-up rows (the first
-window-1 rolling values, the last h forward returns, the first min_periods
-expanding flags) are dropped instead of kept as NaN, so `n_obs` always counts
-usable values and every join is a plain inner join. Expanding flags are not set
-to False during the warm-up because that would put warm-up weeks into the
-"normal" group.
+window-1 rolling values, the first min_periods expanding flags) are dropped
+instead of kept as NaN, so `n_obs` always counts usable values and every join is
+a plain inner join. Expanding flags are not set to False during the warm-up
+because a day without enough history is unknown, not calm.
 
 **`dataset_id` is a free string checked by G07, not a registry `choices` list.**
 Putting the catalog's ids into the registry would change `registry_version()`
@@ -82,14 +81,13 @@ dataset section of its prompt.
 
 **Allowed input kinds where the spec was silent.** `resample` and `difference`
 take levels only (resampling returns with "last" would silently produce wrong
-weekly returns); `flag_regime` refuses forward returns (flagging on future
-information); `spread` takes rates, returns, changes or volatilities. Anything
-else is a G05 TYPE_MISMATCH with a suggestion.
+weekly returns); `spread` takes rates, returns, changes or volatilities;
+`flag_regime` and `summary_stats` take any series (but not flags). Anything else
+is a G05 TYPE_MISMATCH with a suggestion.
 
 **Multi-period returns.** `compute_returns(periods=k)` records `periods=k` in the
 metadata. `rolling_volatility` then annualises by sqrt(factor / k) (there are
-only 52/k k-week returns per year), and `forward_return` refuses k > 1 because
-compounding overlapping k-period returns is wrong.
+only 52/k k-week returns per year).
 
 **`resample` drops an incomplete final period and refuses upsampling.** pandas
 labels a period by its end date, so data ending on a Tuesday produced a bar
@@ -100,16 +98,7 @@ resampling of weekly data is allowed; weekly from monthly raises an error.
 uses pandas' default linear interpolation (the same as `numpy.quantile`).
 
 **min_obs rules the spec did not give**: returns/differences need 2 x periods,
-`flag_regime` 2 x min_periods, `forward_return` 2 x horizon, `summary_stats` 4,
-`adf_test` 50. `ols_hac` uses the same 20-per-group rule as `compare_groups`,
-since a dummy regression with few flagged observations has the same power problem.
-
-**Flagged episodes are counted on the sample actually tested** (after the
-non-overlapping subsample in `compare_groups`), since that is what determines
-the test's power.
-
-**TEST_RESULT values are `{"test", "statistic", "p_value", "details"}`.** For
-`ols_hac` the statistic is the t-statistic of the flag coefficient.
+`flag_regime` 2 x min_periods, `summary_stats` 4.
 
 ## Plans and validation
 
@@ -135,19 +124,19 @@ reported because its suggestion ("use difference") is the actionable one.
 
 **The dry run's parameter-driven metadata is declared in the registry**
 (`meta_from_params`, e.g. resample sets `frequency` from `freq`). The validator
-predicts output metadata from it; a test runs scenario A on synthetic data and
-checks the prediction equals what the capability functions actually produced.
+predicts output metadata from it; a test runs scenarios A, B and E on synthetic
+data and checks the prediction equals what the capability functions actually produced.
 
-**Issue ids are `code:step[:key]`** (e.g. `G12:s3:return_method`). Approvals are
+**Issue ids are `code:step[:key]`** (e.g. `G12:s2:return_method`). Approvals are
 recorded against these ids. Any parameter edit re-validates the plan and clears
 earlier approvals, so an approval always refers to the plan as it will run.
 
-**A `scenarios.py` module (not in the spec's layout)** holds the six demo
+**A `scenarios.py` module (not in the spec's layout)** holds the five demo
 scenarios and their canned plans as plain data. The MockPlanner, CLI demo, app
 sidebar and tests all need them, so they live in one place instead of inside
-planner.py. Scenario C's canned plan is deliberately bad (the validator catches
-G02 and G08); scenario D's is a planner refusal (G13), so the demo shows both
-lines of defence.
+planner.py. Scenario C's canned plan is deliberately bad (it names a `forecast`
+capability, which the validator blocks with G02); scenario D's is a planner
+refusal (G13), so the demo shows both lines of defence.
 
 ## Execution, lineage and monitoring
 
@@ -158,18 +147,18 @@ the executor does not trust its caller, so notebooks, tests and replay cannot
 skip the checks.
 
 **Output hashes use a canonical text with floats rounded to 12 significant
-digits.** Series become `date,value` CSV lines, tables and test results become
-JSON with sorted keys. The 12-digit rounding absorbs last-bit differences between
-BLAS builds (OLS, ADF), so a replay on another machine still matches, while any
+digits.** Series become `date,value` CSV lines, tables become JSON with sorted
+keys. The 12-digit rounding absorbs last-bit differences between CPU builds and
+library versions, so a replay on another machine still matches, while any
 change that matters does not. The saved output file IS this canonical text, so
 `shasum -a 256 runs/<id>/outputs/<file>` equals the hash in the manifest.
 
 **R03 is checked from what `load_series` actually dropped**
 (`meta.n_dropped_missing`), not from catalog counts. **R04** compares the size of
 the inner join with the size of EACH input and warns if either lost more than
-10%. Scenario F triggers it with the real data: DGS2 starts in 1976 and DGS10 in
+10%. Scenario E triggers it with the real data: DGS2 starts in 1976 and DGS10 in
 1962, so the spread silently loses 22% of the 10-year history. That warning is
-correct, so F completes "with warnings" rather than cleanly.
+correct, so E completes "with warnings" rather than cleanly.
 
 **Two extra event types**, `plan_validated` and `execution_finished`, carry the
 validation and execution stage latencies needed for the per-stage latency
@@ -229,18 +218,17 @@ first, so the injection scenario D wins over everything else.
 is within half a unit of its last digit of an allowed value, i.e. it is a
 correct rounding (so 13.86%, 14% and 0.14 all match a volatility of 0.138642,
 but 0.1390 does not). Allowed values are the facts (and their x100 percentage
-forms), the facts' display strings (e.g. "<0.0001"), numeric plan parameters,
+forms), the numbers in the facts' display strings, numeric plan parameters,
 numbers in the request, in warning/approval messages and in dataset titles
-("10-Year"), the conventional levels 1/5/10% and 90/95/99%, and the
-annualisation factors. Dates and years are allowed only within the facts' date
+("10-Year"), and the annualisation factors. Dates and years are allowed only within the facts' date
 range. Absolute values are compared, so "-2.80" and "2.80" both match: sign
 errors are a semantic problem this numeric check does not claim to catch. Known
 limitation: the check proves every number is a correct rounding of SOME allowed
 value, not that it is attached to the right concept.
 
 **Facts are displayed with at least 4 significant figures and never in
-scientific notation** (27204.38 shows as "27,204"; p-values with 4 decimals or
-"<0.0001"), so the narrator can quote them verbatim.
+scientific notation** (27204.38 shows as "27,204", 0.000563124 as "0.0005631"),
+so the narrator can quote them verbatim.
 
 ## Engine, CLI and evaluation
 
@@ -272,10 +260,12 @@ is a three-line wrapper around the same code.
 
 **The golden set references demo scenarios by id** (`scenario: A`) instead of
 repeating their request text, so it cannot drift from `scenarios.py`. In mock
-mode only the six canned scenarios can match, so the mock report is a harness
+mode only the five canned scenarios can match, so the mock report is a harness
 check (the report says so); `--mode live` measures the real planner. A
 parameter counts as correct only if EVERY step using that capability has the
-expected value (both resample steps of scenario F must be weekly). Exact
+expected value (if a plan resamples two series, both must be weekly). Only
+parameter values the request implies are scored, not choices left to the
+planner (such as the volatility window in scenario B). Exact
 sequence match is order-sensitive by definition, so equivalent plans that
 load datasets in a different order lose that metric but keep a Jaccard of 1.
 
@@ -313,7 +303,7 @@ of the eight notebooks starts with a markdown cell on what its layer does and
 why, imports everything from `quantlab` (no logic is copied) and is executed with
 `jupyter nbconvert --execute --inplace`, so a reader sees outputs without
 running anything. Outputs avoid absolute paths. Notebook 05 switches to live
-mode automatically when `ANTHROPIC_API_KEY` is set. They write their runs to
+mode automatically when the configured provider's API key is set. They write their runs to
 `runs/` like the app and the CLI. No charts are embedded, to keep the files small.
 
 **The README's guardrail table is checked against the code** (`tests/test_docs.py`),
@@ -374,12 +364,68 @@ falls back to the template.
 
 **`demo --mode live` checks only the outcome status.** With a real LLM a
 scenario may be blocked for a different reason than the canned plan (e.g. a
-refusal G13 for scenario C instead of G02 + G08, which the spec explicitly
-allows). In mock mode the issue codes are still checked exactly. Running the
-demo in live mode also warms the plan cache for a cached-mode presentation.
+refusal G13 for scenario C instead of G02, which the spec explicitly allows). In
+mock mode the issue codes are still checked exactly. Running the demo in live
+mode also warms the plan cache for a cached-mode presentation.
 
 **Verification without a key.** Besides fake-client unit tests, the OpenAI path
 was run end to end with the real `openai` SDK against a local stand-in server
 returning Responses-API JSON: the request carried the intended parameters, the
 real response objects parsed, the run completed and the narrative was grounded.
-The real API itself has not been called.
+The real API was then used by the owner with `gpt-6-luna` (planner and narrator
+both worked; an unknown model id gave the expected G01 with "API error 404").
+
+## Simplification: descriptive capabilities, five simple demo scenarios
+
+**Statistical tests removed: `compare_groups` (Welch t / Mann-Whitney),
+`ols_hac` (Newey-West regression) and `adf_test`; and `forward_return` with
+them.** The owner found the capabilities and demos too complex for a 15-minute
+presentation and asked for simple, descriptive analyses. `forward_return` only
+existed to feed the regime-comparison tests; without them it was a half
+workflow, and a "future return" column is easy to confuse with a prediction,
+which is exactly what scenario C must refuse. The menu is now eight descriptive
+capabilities. Alternative: keep the tests but leave them out of the demo,
+rejected because the LLM would still see and use them and the code would still
+need explaining.
+
+**Guardrails that only applied to tests were retired, without renumbering.**
+G11 OVERLAPPING_OBSERVATIONS (t-tests on overlapping forward returns), R05
+LOW_EFFECTIVE_SAMPLE (test power from few flagged episodes) and R02's per-group
+minimum are gone. The other codes keep their numbers, leaving a gap at G11.
+Renumbering was tried first and reverted: approvals are recorded by issue id
+(e.g. `G12:s2:return_method`), so renumbering made the owner's earlier live runs
+fail to replay even though they only used capabilities that still exist. Never
+reusing a code is the usual rule for exactly this reason.
+
+**scipy and statsmodels removed from the dependencies.** Nothing uses them any
+more. The summary-statistics test now checks skew and excess kurtosis against
+their textbook formulas instead of scipy, which is also a more independent check.
+
+**Five demo scenarios (A-E), each a few steps:** A average daily return of the
+S&P 500 (load, returns, summary statistics; the return-method approval G12);
+B periods of high volatility in the NASDAQ (load, returns, 21-day volatility,
+expanding 90th-percentile flags); C "predict the next 5 values of the VIX"
+(blocked, no forecasting capability); D the prompt injection (refused); E the
+10y-2y spread with summary statistics (no approvals; R04 warning on the real
+data). B stays on daily data (21-day window = about one trading month, 252 days
+of history before flagging = one year) so the plan needs no resampling step.
+
+**Scenario C's canned plan names a `forecast` capability**, so in mock mode the
+validator blocks it (G02) rather than the planner refusing it: that shows the
+second line of defence. The live planner prompt now lists forecasts and
+statistical tests among the things to refuse (G13). Either way the request is
+blocked.
+
+**SP500 added to the catalog.** The owner's example was "average return of the
+S&P 500". FRED distributes only its last 10 years and marks it "Copyrighted:
+Pre-Approval Required", like NASDAQCOM (documented in `data/README.md`).
+NASDAQCOM stays for its 55-year history, which gives the high-volatility
+scenario many episodes. `scripts/fetch_data.py SP500` fetched only the new
+series, so the existing snapshot files and hashes did not change.
+
+**Narrator and prompt versions.** The narrator's rule on reading p-values became
+"describe what was computed; no causes, forecasts or significance claims", and
+conventional significance levels are no longer accepted numbers in the
+grounding check. The prompt versions were bumped (`planner-v2`, `narrator-v2`,
+`canned-scenarios-v2`); together with the new registry version this means plans
+cached before the change are never reused.

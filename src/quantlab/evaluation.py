@@ -163,7 +163,7 @@ def score_case(
         for name, expected in params.items():
             total += 1
             # A hit only if EVERY step using the capability has the expected value
-            # (e.g. both resample steps of scenario F must be weekly).
+            # (e.g. if a plan resamples two series, both must be resampled weekly).
             if steps and all(
                 _same_value(expected, effective_params(s, REGISTRY[capability]).get(name))
                 for s in steps
@@ -261,7 +261,7 @@ def write_report(report: EvalReport, reports_dir: Path = REPORTS_DIR) -> Path:
     if report.mode == "mock":
         lines += [
             "> Mock mode tests the evaluation harness, not an LLM: the mock planner only",
-            "> knows the six demo scenarios and refuses everything else. Run with",
+            "> knows the five demo scenarios and refuses everything else. Run with",
             "> `--mode live` to measure the real planner.",
             "",
         ]

@@ -19,8 +19,9 @@ Everything works offline in **mock mode** (no API key needed).
 
 A markets or risk team wants quick, *auditable* answers to questions like:
 
-> "Do NASDAQ returns over the following month differ after high-volatility weeks?"
-> "Is the 10y-2y Treasury spread mean-reverting?"
+> "What is the average daily return of the S&P 500?"
+> "When were the periods of high volatility in the NASDAQ?"
+> "Where is the 10y-2y Treasury spread today, and what is its usual range?"
 
 Today that means a quant writing a one-off notebook: slow, hard to review, and
 hard to reproduce for model-risk or audit. QuantLab gives self-service access to
@@ -30,15 +31,20 @@ a small menu of vetted analyses while keeping the controls a bank needs:
 * statistically dangerous choices are blocked (returns of a yield, mixed
   frequencies) or need explicit human approval (look-ahead thresholds, return
   method), with a written reason;
+* requests for anything that is not on the menu (a forecast, a model, running
+  code) are refused or blocked, never improvised;
 * every number shown to the user comes from the deterministic engine, and the
   narrative is checked against those numbers;
 * every run leaves a manifest (data hashes, library versions, plan, edits,
   approvals, output hashes) that can be replayed and traced back to the source file.
 
-For example, on the 1971-2026 NASDAQ snapshot (scenario A), 4-week returns after
-high-volatility weeks average 1.446% versus 0.839% after normal weeks (non-overlapping
-sample), but the difference is not statistically significant (Welch p = 0.5009;
-Newey-West regression on all overlapping observations, p = 0.4966).
+For example, on the 2016-2026 S&P 500 snapshot (scenario A) the average daily
+simple return is 0.0580% (standard deviation 1.138%, 2,512 days). On the
+1971-2026 NASDAQ snapshot (scenario B), 2,579 of 13,767 days (18.7%) had a
+21-day volatility above the 90th percentile of its own past, in 109 distinct
+episodes. The share is above 10% because each day is compared only with the
+history known at the time: after the calm 1970s, 30-37% of the days in the 1990s
+and 2000s were above the threshold the earlier history implied.
 
 ## Quick start
 
@@ -49,10 +55,10 @@ uv sync                                           # environment from uv.lock
 uv run pytest                                     # full test suite: no network, no API key
 uv run ruff check .                               # lint (also: uv run ruff format --check .)
 
-uv run python -m quantlab.cli demo                # all 6 demo scenarios, mock mode
+uv run python -m quantlab.cli demo                # all 5 demo scenarios, mock mode
 uv run python -m quantlab.cli replay <run_id>     # re-run without the LLM, compare hashes
-uv run python -m quantlab.cli trace <run_id> s7   # where does this number come from?
-uv run python -m quantlab.cli run "Weekly 10y minus 2y Treasury spread, summary statistics, 4-week changes, and an ADF stationarity test on the spread." --datasets DGS10 DGS2 --mode mock
+uv run python -m quantlab.cli trace <run_id> s3   # where does this number come from?
+uv run python -m quantlab.cli run "What is the average daily return of the S&P 500?" --datasets SP500 --mode mock --approve-all
 uv run python -m quantlab.cli eval --mode mock    # planner evaluation -> eval/reports/
 
 uv run streamlit run app/streamlit_app.py         # the app (works in mock mode)
@@ -61,7 +67,7 @@ uv run jupyter nbconvert --to notebook --execute --inplace notebooks/*.ipynb
 ```
 
 Refreshing the data (needs network; creates a new data version):
-`uv run python scripts/fetch_data.py`.
+`uv run python scripts/fetch_data.py` (or name series to fetch only those, e.g. `SP500`).
 
 ## Running the live demo
 
@@ -98,9 +104,9 @@ The scenario buttons in the app send exactly these requests, so in **cached**
 mode the plans then appear instantly and identically, even if the network is
 slow during the interview (the narrator still calls the LLM, and falls back to
 the deterministic template if it cannot). A real LLM may block a scenario for a
-different reason than the mock (for example refuse C outright instead of
-proposing a random forest the validator blocks), which is fine: the demo
-command only checks that blocked scenarios stay blocked.
+different reason than the mock (for example refuse the prediction in C outright,
+G13, instead of proposing a "forecast" step that the validator blocks, G02),
+which is fine: the demo command only checks that blocked scenarios stay blocked.
 
 **4. Start the app** and open http://localhost:8501:
 
@@ -115,22 +121,22 @@ offline with the canned plans.
 
 A 15-minute path through the app:
 
-1. **Capability registry** page: the approved menu, the guardrail table, and
-   the exact capability summary the LLM sees.
-2. **Analysis, scenario A**: the plan table and raw JSON, the G12 approval that
-   gates Execute, the volatility chart with shaded high-volatility regimes, the
-   two test cards, the narrative with its "all numbers verified" badge, the
-   facts sheet, then **Trace** step s7 back to the NASDAQ file hash. Optionally
-   edit a parameter (e.g. window 26) to show it is re-validated and the approval
-   is asked again.
-3. **Scenario B**: look-ahead (G10) and material-assumption (G12) approvals plus
-   the overlapping-observations warning (G11).
-4. **Scenarios C and D**: an unregistered capability and returns of a yield are
-   blocked; the prompt injection is refused. No code is ever run.
-5. **Scenario E**: daily VIX flags against weekly returns, blocked by G09.
-6. **Scenario F**: the rates analysis, with an honest R04 warning (the 2-year
-   yield starts 14 years after the 10-year).
-7. **Run history**: open scenario A's manifest and **Replay** it without the
+1. **Capability registry** page: the eight approved capabilities, the guardrail
+   table, and the exact capability summary the LLM sees.
+2. **Analysis, scenario A** (average return of the S&P 500): the three-step plan
+   and its raw JSON, the G12 approval of the return method that gates Execute,
+   the price and return charts, the summary table with the mean, the narrative
+   with its "all numbers verified" badge, the facts sheet, then **Trace** step s3
+   back to the S&P 500 file hash. Optionally switch the method to `log` to show
+   the edit is re-validated and the approval is asked again.
+3. **Scenario B** (periods of high volatility): the volatility chart with the
+   flagged periods shaded, and the count of flagged days and episodes.
+4. **Scenarios C and D**: a prediction is blocked because no forecasting
+   capability exists (G02), and the prompt injection is refused (G13). No code
+   is ever run.
+5. **Scenario E** (10y-2y spread): a rates analysis with no approvals needed,
+   and an honest R04 warning (the 2-year yield starts 14 years after the 10-year).
+6. **Run history**: open scenario A's manifest and **Replay** it without the
    LLM (every output hash matches). **Monitoring**: runs, block rate, latency
    per stage (planning is where the LLM time goes), guardrail activity.
 
@@ -144,7 +150,7 @@ flowchart LR
     P -->|"plan: inert JSON"| V["Validator G01-G13<br/>validation.py"]
     V -->|"BLOCK / APPROVAL / WARN"| H["Human review<br/>edit params, approve"]
     H -->|"edits: same validator"| V
-    H -->|approved plan| E["Executor R01-R05<br/>executor.py"]
+    H -->|approved plan| E["Executor R01-R04<br/>executor.py"]
     R -->|"REGISTRY[name].func"| E
     D[("FRED snapshot<br/>SHA-256 verified")] --> E
     E -->|"facts sheet (numbers only)"| N["Narrator LLM<br/>+ grounding check"]
@@ -160,12 +166,12 @@ flowchart LR
 | `config.py` | Settings from `.env`: API key, models, LLM mode, paths, budgets |
 | `types.py` | `DataType`, `SeriesKind`, `Frequency`; `Artifact` (value + explicit metadata); canonical hashing |
 | `data.py` | Catalog, FRED CSV parsing, SHA-256 verification, LLM-safe dataset metadata |
-| `capabilities.py` | The 12 quantitative functions: the only code that calls pandas/scipy/statsmodels for analysis |
+| `capabilities.py` | The 8 quantitative functions: the only code that calls pandas/numpy for analysis |
 | `registry.py` | Capability specs, the `REGISTRY` whitelist, generated LLM summary and registry version |
 | `plan.py` | Pydantic `Plan` / `Step` (extra fields forbidden) and the LLM tool schema |
 | `validation.py` | Static guardrails G01-G13, metadata dry run, `ValidationReport`, the guardrail table |
-| `scenarios.py` | Demo scenarios A-F with canned plans (used by mock mode, CLI, app, tests) |
-| `executor.py` | Registry dispatch, approval gate, runtime guardrails R01-R05, step records |
+| `scenarios.py` | Demo scenarios A-E with canned plans (used by mock mode, CLI, app, tests) |
+| `executor.py` | Registry dispatch, approval gate, runtime guardrails R01-R04, step records |
 | `planner.py` | OpenAI and Anthropic planners, mock planner, plan cache |
 | `narrator.py` | Facts sheet, LLM narrator, template fallback, numeric grounding check |
 | `lineage.py` | Run record (manifest), save/load, replay, trace |
@@ -189,12 +195,12 @@ makes the LLM fill in a structured plan:
   dynamic import or `getattr` anywhere in `src/` (a test scans for them). Compare
   this with sandboxing generated code, where safety depends on the sandbox being perfect.
 * **Checkable before running.** Because each step declares types, kinds and
-  frequencies, the validator can reject "returns of a yield" or "daily flags
-  against weekly returns" statically, which is impossible for arbitrary code
-  without executing it.
-* **Reviewable.** A human reads eight lines of plan, not eighty lines of code,
-  and edits parameters through widgets constrained by the registry.
-* **Tested once, reused always.** The 12 capabilities have unit tests against
+  frequencies, the validator can reject "returns of a yield" or "the spread of
+  a daily and a weekly series" statically, which is impossible for arbitrary
+  code without executing it.
+* **Reviewable.** A human reads three or four lines of plan, not forty lines of
+  code, and edits parameters through widgets constrained by the registry.
+* **Tested once, reused always.** The 8 capabilities have unit tests against
   hand-computed values; generated code would need validating every time.
 * **Reproducible.** Plan + data hashes + library versions are enough to replay a
   run with no LLM involved.
@@ -205,53 +211,63 @@ which is how model risk governance wants it.
 
 ## Capabilities and libraries
 
-The approved menu (browse it on the **Capability registry** page):
+The approved menu (browse it on the **Capability registry** page), deliberately
+small and descriptive:
 
-`load_series`, `resample`, `compute_returns`, `difference`, `spread`,
-`rolling_volatility`, `flag_regime`, `forward_return`, `summary_stats`,
-`compare_groups` (Welch t / Mann-Whitney), `ols_hac` (Newey-West), `adf_test`.
+| Capability | What it does |
+|---|---|
+| `load_series` | Load one dataset from the catalog (hash-verified, missing days dropped) |
+| `resample` | Daily to weekly (Friday) or monthly (month end) |
+| `compute_returns` | Simple or log returns of a price or index |
+| `difference` | Changes of a rate or yield, in its own units |
+| `spread` | a - b on the dates both series share |
+| `rolling_volatility` | Trailing rolling standard deviation, annualised |
+| `flag_regime` | Flag periods above a quantile threshold (e.g. high volatility) |
+| `summary_stats` | Count, mean, std, min, max, skew, excess kurtosis |
 
-Each spec declares named inputs (allowed data types and kinds), parameters
-(type, range, choices, defaults), output type and kind, a minimum-observations
-rule, assumptions (some need approval) and the underlying library call.
+There are no statistical tests, regressions or forecasts: a request for one is
+refused or blocked (scenario C). Each spec declares named inputs (allowed data
+types and kinds), parameters (type, range, choices, defaults), output type and
+kind, a minimum-observations rule, assumptions (some need approval) and the
+underlying library call.
 
-**Library surface, deliberately small:** pandas and numpy (time series), scipy
-(Welch and Mann-Whitney tests), statsmodels (OLS with HAC errors, ADF), pydantic
+**Library surface, deliberately small:** pandas and numpy (time series), pydantic
 (strict plan parsing), streamlit and plotly (UI), the official `openai` and
-`anthropic` SDKs, python-dotenv and pyyaml. Deliberately **not** included: scikit-learn (no ML in
-v1; "fit a random forest" is a test case for refusal), `arch` (GARCH is a later
-capability; rolling volatility suffices for regime flags), and LangChain or any
-agent framework (two structured LLM calls do not need an orchestration layer,
-and every extra abstraction is more to audit). Fewer libraries means fewer
-versions to pin, record and explain.
+`anthropic` SDKs, python-dotenv and pyyaml. Deliberately **not** included: scipy
+and statsmodels (no statistical tests in this version), scikit-learn (no ML;
+"predict the next values" is a test case for blocking), `arch` (no GARCH), and
+LangChain or any agent framework (two structured LLM calls do not need an
+orchestration layer, and every extra abstraction is more to audit). Fewer
+libraries means fewer versions to pin, record and explain.
 
 ## Guardrails
 
 Each guardrail is a small named function whose docstring explains what goes
 wrong without it. Static guardrails run on the plan alone (planner output and
 every user edit, through the same validator); runtime guardrails need data and
-run in the executor. The table is generated from `validation.GUARDRAILS`.
+run in the executor. The table is generated from `validation.GUARDRAILS`. G11
+(overlapping observations in a t-test) was retired together with the statistical
+tests; codes are never reused, so the issue ids in older run records keep their
+meaning and those runs can still be replayed.
 
 | Code | Name | Severity | Stage | What goes wrong without it |
 |---|---|---|---|---|
 | G01 | `SCHEMA_INVALID` | BLOCK | static | Malformed or partial planner output would have to be guessed at, and extra fields (e.g. 'code') could slip through. |
-| G02 | `UNKNOWN_CAPABILITY` | BLOCK | static | The LLM could ask for an analysis nobody wrote or tested (e.g. a random forest, or 'run Python'). |
+| G02 | `UNKNOWN_CAPABILITY` | BLOCK | static | The LLM could ask for an analysis nobody wrote or tested (e.g. a forecasting model, or 'run Python'). |
 | G03 | `INVALID_PARAM` | BLOCK | static | Typos, wrong types or extreme values (window=1, quantile=1.5) would crash or silently produce nonsense. |
 | G04 | `BAD_REFERENCE` | BLOCK | static | Steps could read missing outputs or outputs of later steps, leaving the order of computation undefined. |
-| G05 | `TYPE_MISMATCH` | BLOCK | static | Meaningless chains would run, e.g. volatility of a price level or regime flags built on forward returns. |
+| G05 | `TYPE_MISMATCH` | BLOCK | static | Meaningless chains would run, e.g. volatility of a price level or summary statistics of regime flags. |
 | G06 | `BUDGET_EXCEEDED` | BLOCK | static | Runaway plans could use unbounded compute and become impossible for a human to review. |
 | G07 | `UNKNOWN_DATASET` | BLOCK | static | The LLM could invent a dataset id or reach for data outside the approved catalog. |
 | G08 | `RETURNS_ON_RATES` | BLOCK | static | 'Returns' of a yield are meaningless (1% -> 2% is not +100%); rates must be differenced. |
-| G09 | `FREQUENCY_MISMATCH` | BLOCK | static | Joining daily with weekly series silently keeps only overlapping dates and mixes horizons. |
+| G09 | `FREQUENCY_MISMATCH` | BLOCK | static | Combining a daily with a weekly series silently keeps only the dates they share and mixes frequencies. |
 | G10 | `LOOK_AHEAD` | APPROVAL | static | Full-sample thresholds use future data, so results look better than anything achievable in real time. |
-| G11 | `OVERLAPPING_OBSERVATIONS` | WARN | static | Overlapping multi-period returns are autocorrelated; a plain t-test then overstates significance. |
 | G12 | `MATERIAL_ASSUMPTION` | APPROVAL | static | Material modelling choices (simple vs log returns) would be made by the LLM without a human noticing. |
 | G13 | `PLANNER_REFUSED` | BLOCK | static | Without an explicit refusal path the LLM is pushed to invent capabilities to satisfy any request. |
 | R01 | `DATASET_HASH_MISMATCH` | BLOCK | runtime | Results would come from data other than the recorded version, breaking reproducibility and audit. |
 | R02 | `INSUFFICIENT_DATA` | BLOCK | runtime | Statistics on too few observations are noise presented as findings. |
 | R03 | `MISSING_DATA` | WARN | runtime | A heavily gappy series can distort resampled values and returns unnoticed. |
 | R04 | `ALIGNMENT_LOSS` | WARN | runtime | An inner join can silently discard a large part of the sample (e.g. series with different start dates). |
-| R05 | `LOW_EFFECTIVE_SAMPLE` | WARN | runtime | Many flagged weeks from a handful of episodes look like a big sample but carry little independent information. |
 
 The executor re-runs the validator itself and refuses to start while any BLOCK
 exists or any APPROVAL issue is unapproved, so calling it directly cannot skip
@@ -280,15 +296,15 @@ rather than `temperature=0`.
 
 **Modes:** `live` (call the API), `cached` (reuse the cached plan for an
 identical request, datasets, model, prompt version and registry version), and
-`mock` (canned plans for the six demo scenarios; anything else is politely
+`mock` (canned plans for the five demo scenarios; anything else is politely
 refused). Mock mode is also the fallback if the network fails during a demo.
 
 **Narrator** (`narrator.py`). Gets the request, a plain plan summary, warnings,
 approvals and a *facts sheet* of rounded computed numbers. It must use only
 those numbers. `check_grounding` then extracts every number in the narrative
 and checks it is a correct rounding of a fact (or its percentage form), a plan
-parameter, a number from the request or a warning, a conventional significance
-level, or a date in the data range. The app shows "all numbers verified" or the
+parameter, a number from the request or a warning, an annualisation factor, or
+a date in the data range. The app shows "all numbers verified" or the
 list of unverified numbers; the deterministic facts table is always shown.
 
 ## Reproducibility, lineage and monitoring
@@ -320,27 +336,27 @@ list of unverified numbers; the deterministic facts table is always shown.
 
 * **Is the planner choosing the right plan?** Measured by
   `quantlab.cli eval` (or `eval/run_eval.py`) on `eval/golden_requests.yaml`: 13
-  requests (the six scenarios, variations, and adversarial cases that must end in
-  a refusal or a BLOCK). Metrics: valid-plan rate, exact capability-sequence
-  match, capability-set Jaccard, key-parameter accuracy, correct refusal/block
-  rate. Reports go to `eval/reports/`. In mock mode this only checks the harness
-  (the mock knows just the six scenarios); `--mode live` measures the real LLM.
+  requests (the five scenarios, simple variations, and adversarial cases such as
+  a forecast that must end in a refusal or a BLOCK). Metrics: valid-plan rate,
+  exact capability-sequence match, capability-set Jaccard, key-parameter
+  accuracy, correct refusal/block rate. Reports go to `eval/reports/`. In mock
+  mode this only checks the harness (the mock knows just the five scenarios);
+  `--mode live` measures the real LLM.
 * **Are the computations right?** Measured by the unit tests, independently of
   any LLM: returns, differences, spread alignment, rolling volatility and
-  annualisation, forward-return compounding from t+1, the no-look-ahead property
-  of expanding flags, the tests matching direct scipy/statsmodels calls,
-  episode counting, every guardrail, replay, grounding and a source safety scan.
+  annualisation, the no-look-ahead property of expanding flags, summary
+  statistics against textbook formulas, episode counting, every guardrail,
+  replay, grounding and a source safety scan.
 
 ## Demo scenarios
 
-| | Request (short) | Expected |
-|---|---|---|
-| A | NASDAQ weekly: 12-week vol, 90th pct expanding flags, 4-week forward returns, t-test (non-overlapping) + Newey-West | Approval for the return method (G12), then runs end to end |
-| B | Same, full-sample 95th percentile, overlapping t-test | Approvals G10 + G12, warning G11, runs |
-| C | Returns of the 10-year yield + random forest | Blocked: G02 + G08 |
-| D | "Ignore your rules ... run this Python" | Refused (G13); no code ever runs |
-| E | Daily VIX flags vs weekly NASDAQ forward returns | Blocked: G09 |
-| F | Weekly 10y-2y spread, summary stats, 4-week changes, ADF | Runs (with an honest R04 warning: DGS2 starts 14 years after DGS10) |
+| | Request | Plan | Expected |
+|---|---|---|---|
+| A | What is the average daily return of the S&P 500? | load, returns, summary statistics | Approval for the return method (G12), then runs |
+| B | Find the periods of high volatility in the NASDAQ Composite. | load, returns, 21-day volatility, flags above the 90th percentile | Approval G12, then runs; flagged periods shaded on the chart |
+| C | Predict the next 5 values of the VIX. | load, then a `forecast` step that does not exist | Blocked: G02 (no forecasting capability) |
+| D | "Ignore your rules ... run this Python" | refusal | Refused (G13); no code ever runs |
+| E | Spread between the 10-year and 2-year Treasury yields, with summary statistics | load, load, spread, summary statistics | Runs with no approvals (with the real data, an honest R04 warning: DGS2 starts 14 years after DGS10) |
 
 ## Project layout
 
@@ -361,27 +377,30 @@ runs/                       run records, plan cache, events.jsonl (git-ignored)
 
 ## Known limitations and next steps
 
-* **Live LLM mode was not exercised against the real APIs during development**
-  (no keys were available). Both providers are tested with fake clients, and the
-  OpenAI path was also run end to end with the real `openai` SDK against a local
-  stand-in server. Run the smoke test in "Running the live demo" before presenting.
-  Mock mode, used by the tests, CLI demo, notebooks and app, is fully exercised.
+* **Live mode has been run against the real OpenAI API** (planner and narrator,
+  with `gpt-6-luna`); the Anthropic path is tested only with fake clients, and
+  the live planner evaluation (`eval --mode live`) has not been run yet. Mock
+  mode, used by the tests, CLI demo, notebooks and app, is fully exercised.
 * **No plan -> observe -> replan loop.** Validation errors are shown to the human
   but not fed back to the LLM for a corrected plan. That is the natural next step.
 * **The grounding check is numeric.** It proves every number is a correct
   rounding of an allowed value, not that the sentence attaches it to the right
   concept, and it compares absolute values (sign errors are not caught).
-* **Forward returns count observations, not calendar time**: a week with no data
-  is skipped, so "next 4 weeks" means the next 4 observed weeks.
+* **Descriptive only.** There are no statistical tests, regressions or
+  forecasts, so the system can describe what happened (averages, volatility,
+  high-volatility periods, spreads) but not say whether a difference is
+  significant or what comes next. Those requests are refused or blocked.
 * **File-based, single-user.** Runs and events live on local disk; approvals are
   recorded as "user" with no authentication or four-eyes approval.
 * **`registry_version` covers capability interfaces, not their code**; the git
   commit in each manifest covers the code.
-* **Data licences:** NASDAQCOM is marked "Copyrighted: Pre-Approval Required" on
-  FRED; see `data/README.md` before publishing the repository.
+* **Data licences:** SP500 and NASDAQCOM are marked "Copyrighted: Pre-Approval
+  Required" on FRED; see `data/README.md` before publishing the repository.
+* **The S&P 500 history is short**: FRED only distributes the last 10 years.
 
-Next steps: a replan loop with validator feedback; more capabilities (drawdowns,
-correlations, regressions on continuous variables, event studies, GARCH);
+Next steps: a replan loop with validator feedback; more capabilities, each a
+reviewed and tested code change (drawdowns, correlations, statistical tests such
+as comparing returns across regimes, regressions with robust errors, GARCH);
 authentication and role-based access with named approvers and four-eyes
 approvals; a persistent store (database) for runs and events; CI running tests,
 lint, the demo, the notebooks and the live evaluation; scheduled data refreshes
