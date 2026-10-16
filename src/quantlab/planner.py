@@ -42,8 +42,8 @@ from quantlab.registry import llm_summary, registry_version
 
 # Bump whenever SYSTEM_PROMPT changes: it is part of the plan-cache key and of
 # every run record, so old cached plans are not reused with a new prompt.
-PROMPT_VERSION = "planner-v3"
-MOCK_PROMPT_VERSION = "canned-scenarios-v5"
+PROMPT_VERSION = "planner-v4"
+MOCK_PROMPT_VERSION = "canned-scenarios-v6"
 TOOL_NAME = "submit_plan"
 
 # Server-side refusal fallback (Anthropic API beta): if the model declines a
@@ -71,15 +71,16 @@ yields; resample levels before computing returns or changes; give spread two inp
 same frequency.
 5. Prefer method="expanding" in flag_regime, because it uses no future data. Use \
 "full_sample" only if the user explicitly asks for it.
-6. To restrict the period, use filter_period with EITHER lookback_years ("the last 5 years": \
-lookback_years=5, counted back from the last observation) OR start and/or end dates \
-("since 2020": start="2020-01-01"), never both. Put it right after load_series or at the end \
-of the chain; the placement changes the result. Filtering BEFORE a rolling or expanding \
-calculation (rolling_volatility, flag_regime) shortens the history used for the window \
-warm-up and for the expanding threshold's baseline. Filtering AFTER keeps the full history \
-for the calculation and only trims what is reported. When the user asks to show or report a \
-recent period, filter AFTER the calculation, unless they explicitly want the calculation \
-itself restricted to that period.
+6. To restrict the period, use filter_period with start and/or end dates ("since 2020": \
+start="2020-01-01"). For a relative period such as "the last 5 years", set start to the \
+dataset's end_date in DATASETS minus that many years (end_date 2026-10-13: \
+start="2021-10-13"), and say so in planner_notes. Put filter_period right after load_series \
+or at the end of the chain; the placement changes the result. Filtering BEFORE a rolling or \
+expanding calculation (rolling_volatility, flag_regime) shortens the history used for the \
+window warm-up and for the expanding threshold's baseline. Filtering AFTER keeps the full \
+history for the calculation and only trims what is reported. When the user asks to show or \
+report a recent period, filter AFTER the calculation, unless they explicitly want the \
+calculation itself restricted to that period.
 7. To answer when a series peaked or bottomed, apply find_extremes to that series (which=max, \
 min or both).
 8. If the request needs anything that is not in the registry (forecasts or predictions, \

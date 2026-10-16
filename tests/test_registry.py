@@ -59,7 +59,6 @@ def test_llm_summary_is_complete_and_hides_internals() -> None:
     assert returns["inputs"][0]["kinds"] == ["price_level", "index_level"]
     period = summary[EXPECTED.index("filter_period")]
     assert [(p["name"], p["type"], p.get("nullable")) for p in period["params"]] == [
-        ("lookback_years", "int", True),
         ("start", "date", True),
         ("end", "date", True),
     ]

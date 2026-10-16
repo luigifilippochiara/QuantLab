@@ -287,35 +287,6 @@ def test_compare_groups_refuses_an_empty_group() -> None:
 # --- filter_period --------------------------------------------------------------
 
 
-def test_lookback_is_anchored_to_the_last_observation() -> None:
-    # 84 month-ends, 2018-01-31 .. 2024-12-31. The last 2 years end at the last
-    # observation (2024-12-31), not today: the window is (2022-12-31, 2024-12-31].
-    monthly = make_artifact(np.arange(1.0, 85.0), freq=Frequency.M, start="2018-01-31")
-    out = cap.filter_period(monthly, lookback_years=2)
-    assert out.meta.n_obs == 24
-    assert (out.meta.start, out.meta.end) == ("2023-01-31", "2024-12-31")
-    assert out.value.tolist() == list(np.arange(61.0, 85.0))  # months 61..84
-    assert (out.meta.period_start, out.meta.period_end) == ("2023-01-01", "2024-12-31")
-
-
-def test_lookback_excludes_the_anniversary_date() -> None:
-    # Business days 2023-03-01 .. Fri 2024-03-15. One year back is Wed 2023-03-15,
-    # which is excluded, so exactly one year of observations remains.
-    days = pd.bdate_range("2023-03-01", "2024-03-15")
-    daily = make_artifact(np.ones(len(days)), freq=Frequency.D, start="2023-03-01")
-    out = cap.filter_period(daily, lookback_years=1)
-    assert out.meta.start == "2023-03-16" and out.meta.period_start == "2023-03-16"
-    assert out.meta.period_end == "2024-03-15"
-
-
-def test_lookback_from_a_leap_day() -> None:
-    # Thu 2024-02-29 minus one calendar year is 2023-02-28 (excluded).
-    days = pd.bdate_range("2023-02-01", "2024-02-29")
-    daily = make_artifact(np.ones(len(days)), freq=Frequency.D, start="2023-02-01")
-    out = cap.filter_period(daily, lookback_years=1)
-    assert (out.meta.period_start, out.meta.start) == ("2023-03-01", "2023-03-01")
-
-
 def test_explicit_start_and_end_are_inclusive() -> None:
     # Fridays 2024-01-05 .. 2024-03-08 with values 1..10.
     weekly = make_artifact(np.arange(1.0, 11.0), kind=SeriesKind.RETURNS, return_method="log")
@@ -341,8 +312,7 @@ def test_open_ended_periods_resolve_to_the_data_edges() -> None:
 @pytest.mark.parametrize(
     "params",
     [
-        {"lookback_years": 1, "start": "2024-01-12"},  # both ways
-        {},  # neither
+        {},  # neither start nor end
         {"start": "2024-02-02", "end": "2024-01-12"},  # start after end
     ],
 )

@@ -308,7 +308,7 @@ class CannedRequest:
     workflows keep their matching. All of them run to completion.
 
     Fields:
-        id: stable identifier, e.g. "nasdaq_peak_5y".
+        id: stable identifier, e.g. "vix_extremes".
         request: the natural-language request.
         dataset_ids: datasets selected for the request.
         expected_codes: the static issue codes the canned plan raises, exactly.
@@ -323,38 +323,6 @@ class CannedRequest:
 
 
 CANNED_REQUESTS: list[CannedRequest] = [
-    CannedRequest(
-        id="nasdaq_peak_5y",
-        request="When was NASDAQ at its highest over the last 5 years?",
-        dataset_ids=("NASDAQCOM",),
-        expected_codes=(),
-        plan=_plan(
-            ["NASDAQCOM"],
-            [
-                _step(
-                    "s1",
-                    "load_series",
-                    params={"dataset_id": "NASDAQCOM"},
-                    rationale="Load the NASDAQ Composite daily closes.",
-                ),
-                _step(
-                    "s2",
-                    "filter_period",
-                    {"series": "s1"},
-                    {"lookback_years": 5},
-                    rationale="Keep the last 5 years of closes.",
-                ),
-                _step(
-                    "s3",
-                    "find_extremes",
-                    {"series": "s2"},
-                    {"which": "max"},
-                    rationale="Find the date of the highest close in that period.",
-                ),
-            ],
-            "The last 5 years are counted back from the last close in the data, not from today.",
-        ),
-    ),
     CannedRequest(
         id="nasdaq_volatility_peak_since_2020",
         request="Show weekly volatility for NASDAQ since 2020 and tell me when it peaked.",

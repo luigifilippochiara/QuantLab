@@ -15,6 +15,7 @@ from quantlab.registry import REGISTRY
 from quantlab.types import Artifact, ArtifactMeta, DataType, Frequency, SeriesKind
 
 from conftest import (
+    PERIOD_PLAN,
     RETURN_METHOD_APPROVAL,
     SARIMA_PLAN,
     SPREAD_PLAN,
@@ -192,11 +193,12 @@ def test_r02_period_that_leaves_no_observations(catalog: Catalog) -> None:
 
 
 def test_step_record_keeps_the_resolved_period(catalog: Catalog) -> None:
-    result = execute_plan(as_plan(canned_plan("nasdaq_peak_5y")), catalog)
+    result = execute_plan(as_plan(PERIOD_PLAN), catalog)
     assert result.status == "completed", result.error
     record = result.step_records[1]
-    # Synthetic NASDAQ ends 2025-11-20: the last 5 years start the day after 2020-11-20.
-    assert (record.meta["period_start"], record.meta["period_end"]) == ("2020-11-21", "2025-11-20")
+    # start as given; no end, so the period ends at the last observation.
+    last_date = catalog.entries["NASDAQCOM"].end_date
+    assert (record.meta["period_start"], record.meta["period_end"]) == ("2021-01-01", last_date)
     assert result.step_records[0].meta["period_start"] is None
 
 

@@ -585,35 +585,28 @@ case encode that default. Alternatives: always filter first (simplest to explain
 but silently changes every rolling and expanding result), or let the validator
 reorder steps (rejected: the system never rewrites a plan; it only judges it).
 
-**"The last N years" is anchored to the last observation.** The window is
-(last date - N calendar years, last date], the convention of pandas' former
-`Series.last`: exactly N years, the anniversary date not counted twice. Anchoring
-to the data rather than to the system clock means a replay months later selects
-the same rows and reproduces the same hashes. The resolved, inclusive start and
-end dates are recorded in `ArtifactMeta.period_start` / `period_end`, in the step
-record of the manifest, in the step's notes and in the facts sheet. They are not
-inherited by later steps, like notes: each artifact describes its own step.
-Alternative: anchor to today, rejected because results would drift with the date
-of the run.
+**The resolved period is recorded.** The resolved, inclusive start and end dates
+(a missing start or end becomes the first or last observation) are recorded in
+`ArtifactMeta.period_start` / `period_end`, in the step record of the manifest, in
+the step's notes and in the facts sheet. They are not inherited by later steps,
+like notes: each artifact describes its own step.
 
-**Two ways to give the period, one at a time.** `lookback_years`, `start` and `end`
-are optional parameters whose default is null; a new `ParamSpec.nullable` flag lets
-null mean "not set" for these only (every other parameter still rejects null).
-`check_period` (G03) blocks both ways at once, neither, a start not before the end,
-and a period entirely outside the coverage of the input's source datasets (from
-the catalog, so no data is read). These reuse G03 INVALID_PARAM rather than a new
+**Start and end, at least one of them.** `start` and `end` are optional parameters
+whose default is null; a new `ParamSpec.nullable` flag lets null mean "not set" for
+these only (every other parameter still rejects null). `check_period` (G03) blocks
+a filter with neither date, a start not before the end, and a period entirely
+outside the coverage of the input's source datasets (from the catalog, so no data
+is read). These reuse G03 INVALID_PARAM rather than a new
 code: they are invalid parameter values, and the guardrail table stays stable.
 A period that overlaps the data only partly passes; if too few rows remain, the
 next step's R02 stops the run, and a new `MinObsRule.output_min_obs` makes R02 also
 check `filter_period`'s own output (at least 2 rows), since a period after the last
-complete week can be inside the catalog's coverage yet empty. Alternatives: two
-capabilities (`filter_lookback`, `filter_dates`), rejected as a bigger menu for one
-idea; a `mode` parameter, rejected as one more value to keep consistent.
+complete week can be inside the catalog's coverage yet empty.
 
 **A `date` parameter type and widgets for it.** Plans carry dates as "YYYY-MM-DD"
 strings (JSON has no date type); the validator accepts exactly that form and only
 real days (not 2021-02-30). The editor shows a date input bounded by the catalog's
-date range, and a bounded number input for `lookback_years`. A nullable parameter
+date range. A nullable parameter
 gets a "Set" checkbox in front of its widget, unticked meaning null, because a
 Streamlit input created with a value returns that value when emptied and so can
 never be cleared back to null. Edits go through `apply_param_edits` and the same
@@ -686,3 +679,16 @@ is used for every dataset, so series without a market ticker look the same; it
 equals the dataset id plans use, which a test checks. The label is used in the
 dataset picker, the `dataset_id` parameter, the trace and replay tables, a "Source"
 line under each result and a "Datasets" line in Run history.
+
+## Relative periods
+
+**The planner turns "the last N years" into an explicit start date.** `filter_period`
+no longer has a parameter for a period relative to the data's end: a period is only
+ever `start` and/or `end`. For a request such as "the last 5 years", the planner
+sets `start` to the dataset's `end_date` (which it sees in the dataset metadata)
+minus five years and says so in its notes. The plan the analyst reviews, edits,
+approves and replays then holds the exact date, there is one way to express a
+period, and nothing is resolved out of sight. The canned "last 5 years" request and
+its golden case were removed; the remaining canned requests and tests use explicit
+dates. Alternative: decline relative periods and ask for explicit dates (G13),
+rejected as needlessly unhelpful when the dataset's last date is known.

@@ -488,9 +488,8 @@ COMPARE_GROUPS = CapabilitySpec(
 FILTER_PERIOD = CapabilitySpec(
     name="filter_period",
     description=(
-        "Restrict a series to a time interval: EITHER the last N years (lookback_years, "
-        "counted back from the series' last observation) OR start and/or end dates, "
-        "never both. Placement matters: filtering BEFORE a rolling or expanding "
+        "Restrict a series to a time interval given by start and/or end dates (inclusive). "
+        "Placement matters: filtering BEFORE a rolling or expanding "
         "calculation shortens the history it uses; filtering AFTER keeps the full "
         "history for the calculation and only trims what is reported."
     ),
@@ -498,21 +497,9 @@ FILTER_PERIOD = CapabilitySpec(
     inputs=(InputSpec("series", (DataType.SERIES,), "Any series to restrict to a period."),),
     params=(
         ParamSpec(
-            "lookback_years",
-            "int",
-            "Keep the last N years up to the series' last observation. Leave null when "
-            "giving start or end.",
-            required=False,
-            default=None,
-            min=1,
-            max=30,
-            nullable=True,
-        ),
-        ParamSpec(
             "start",
             "date",
-            "First date to keep, YYYY-MM-DD, inclusive; null = from the first observation. "
-            "Leave null when using lookback_years.",
+            "First date to keep, YYYY-MM-DD, inclusive; null = from the first observation.",
             required=False,
             default=None,
             nullable=True,
@@ -520,8 +507,7 @@ FILTER_PERIOD = CapabilitySpec(
         ParamSpec(
             "end",
             "date",
-            "Last date to keep, YYYY-MM-DD, inclusive; null = up to the last observation. "
-            "Leave null when using lookback_years.",
+            "Last date to keep, YYYY-MM-DD, inclusive; null = up to the last observation.",
             required=False,
             default=None,
             nullable=True,
@@ -534,14 +520,12 @@ FILTER_PERIOD = CapabilitySpec(
     ),
     assumptions=(
         Assumption(
-            "anchor",
-            "lookback_years counts back from the series' last observation, not from today, "
-            "so a replay gives the same window; start and end are inclusive.",
+            "inclusive",
+            "start and end are inclusive; a missing start or end means the first or last "
+            "observation.",
         ),
     ),
-    library_calls=(
-        "last date - pandas.DateOffset(years=N); boolean mask on the pandas DatetimeIndex"
-    ),
+    library_calls="boolean mask on the pandas DatetimeIndex",
 )
 
 FIND_EXTREMES = CapabilitySpec(

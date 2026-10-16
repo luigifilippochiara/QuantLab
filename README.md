@@ -170,11 +170,10 @@ with each step's library call, parameters (user edits marked) and output hash.
 `cli demo` prints the same chain.
 
 **More canned requests.** In mock mode the planner also has plans for these
-requests, typed exactly as written (they are not sidebar buttons): "When was
-NASDAQ at its highest over the last 5 years?", "Show weekly volatility for NASDAQ
-since 2020 and tell me when it peaked." (volatility on the full history, then
-filtered), "When was the VIX at its highest and lowest?" and "Summary statistics
-of daily S&P 500 returns in 2022."
+requests, typed exactly as written (they are not sidebar buttons): "Show weekly
+volatility for NASDAQ since 2020 and tell me when it peaked." (volatility on the
+full history, then filtered), "When was the VIX at its highest and lowest?" and
+"Summary statistics of daily S&P 500 returns in 2022."
 
 ## Live mode
 
@@ -306,16 +305,17 @@ small and descriptive:
 | `flag_regime` | Flag periods above a quantile threshold (e.g. high volatility) |
 | `summary_stats` | Count, mean, std, min, max, skew, excess kurtosis |
 | `compare_groups` | Average of a series in flagged vs normal periods (descriptive, no test) |
-| `filter_period` | Keep the last N years (counted back from the last observation) or a start/end window |
+| `filter_period` | Keep the observations between a start and/or an end date (inclusive) |
 | `find_extremes` | When a series reached its maximum and/or minimum, the value, and a tie count |
 
-**Periods and peaks.** `filter_period` takes either `lookback_years` or `start`
-and/or `end` (inclusive ISO dates), never both: anything else is a G03 BLOCK, as is
-a period entirely outside the data, and a period that leaves too few observations
-stops the run with R02. "The last N years" counts back from the series' last
-observation, never from today, so a replay months later selects the same window;
-the resolved start and end dates are recorded in the step's metadata and the run
-manifest. Where it goes matters: filtering *before* a rolling or expanding
+**Periods and peaks.** `filter_period` takes `start` and/or `end` (inclusive ISO
+dates): giving neither is a G03 BLOCK, as are a start not before the end and a
+period entirely outside the data, and a period that leaves too few observations
+stops the run with R02. The resolved start and end dates are recorded in the
+step's metadata and the run manifest. For a relative period such as "the last 5
+years", the planner sets an explicit `start` from the dataset's last date in the
+catalog and says so in its notes, so the date is visible and editable before
+anything runs, and a replay uses it as written. Where it goes matters: filtering *before* a rolling or expanding
 calculation shortens the history used for the window warm-up and the expanding
 threshold, while filtering *after* keeps the full history and only trims what is
 reported. The planner is told to filter after the calculation when the user asks

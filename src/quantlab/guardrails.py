@@ -841,21 +841,17 @@ def check_period(
 ) -> list[Issue]:
     """G03 INVALID_PARAM (period): filter_period's interval must be well defined and in the data.
 
-    Without it, an ambiguous interval (both "last 5 years" and explicit dates, or
-    neither) would be resolved by a hidden rule, a start after the end would give
-    an empty result, and a period entirely outside the data would silently
-    produce nothing. Partly-covered periods pass; if too few observations remain,
-    R02 stops the run.
+    Without it, a filter with no dates would silently keep everything, a start
+    after the end would give an empty result, and a period entirely outside the
+    data would silently produce nothing. Partly-covered periods pass; if too few
+    observations remain, R02 stops the run.
     """
     if spec.name != "filter_period":
         return []
-    lookback, start, end = params.get("lookback_years"), params.get("start"), params.get("end")
-    suggestion = "Give either lookback_years (the last N years) or start and/or end dates."
-    if lookback is not None and (start is not None or end is not None):
-        message = "filter_period got both lookback_years and start/end; use one or the other."
-        return [make_issue("G03", step.id, message, suggestion, key="period")]
-    if lookback is None and start is None and end is None:
-        message = "filter_period needs lookback_years, or start and/or end; none was given."
+    start, end = params.get("start"), params.get("end")
+    if start is None and end is None:
+        message = "filter_period needs start and/or end; neither was given."
+        suggestion = "Give start and/or end dates (YYYY-MM-DD)."
         return [make_issue("G03", step.id, message, suggestion, key="period")]
 
     first, last = parse_date(start), parse_date(end)
@@ -867,7 +863,7 @@ def check_period(
     meta = input_metas.get("series")
     entries = [catalog.get(d) for d in meta.dataset_ids] if meta else []
     if not entries or None in entries or (first is None and last is None):
-        return []  # lookback mode is anchored in the data; unknown inputs are reported elsewhere
+        return []  # invalid dates (check_params) and unknown inputs are reported elsewhere
     data_start = max(date.fromisoformat(e.start_date) for e in entries)
     data_end = min(date.fromisoformat(e.end_date) for e in entries)
     if (last is not None and last < data_start) or (first is not None and first > data_end):
@@ -876,7 +872,7 @@ def check_period(
             f"The period {start or 'start of data'} to {end or 'end of data'} lies entirely "
             f"outside the data ({names}: {data_start} to {data_end})."
         )
-        suggestion = f"Choose dates between {data_start} and {data_end}, or use lookback_years."
+        suggestion = f"Choose dates between {data_start} and {data_end}."
         return [make_issue("G03", step.id, message, suggestion, key="coverage")]
     return []
 

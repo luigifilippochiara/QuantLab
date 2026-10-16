@@ -71,6 +71,8 @@ def test_system_prompt_explains_filter_period_placement(catalog: Catalog) -> Non
     prompt = build_system_prompt(catalog, ["NASDAQCOM"])
     assert '"name": "filter_period"' in prompt and '"name": "find_extremes"' in prompt
     assert "filter AFTER the calculation" in prompt and "BEFORE a rolling" in prompt
+    # A relative period ("the last 5 years") becomes an explicit start from the data's end.
+    assert "end_date in DATASETS minus that many years" in prompt
 
 
 def test_mock_planner_refuses_unknown_requests() -> None:

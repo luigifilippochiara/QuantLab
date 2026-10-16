@@ -194,6 +194,28 @@ SARIMA_PLAN: dict[str, Any] = {
     "cannot_fulfill": False,
 }
 
+# A period filter on the daily NASDAQ, then its peak (no approvals needed). Tests
+# change filter_period's dates (s2) to exercise the period rules.
+PERIOD_PLAN: dict[str, Any] = {
+    "dataset_ids": ["NASDAQCOM"],
+    "steps": [
+        {"id": "s1", "capability": "load_series", "params": {"dataset_id": "NASDAQCOM"}},
+        {
+            "id": "s2",
+            "capability": "filter_period",
+            "inputs": {"series": "s1"},
+            "params": {"start": "2021-01-01"},
+        },
+        {
+            "id": "s3",
+            "capability": "find_extremes",
+            "inputs": {"series": "s2"},
+            "params": {"which": "max"},
+        },
+    ],
+    "cannot_fulfill": False,
+}
+
 # The approval scenario 1 needs: the return-method assumption of step s3.
 RETURN_METHOD_APPROVAL = "G12:s3:return_method"
 

@@ -469,21 +469,14 @@ def compare_groups(values: Artifact, flags: Artifact) -> Artifact:
 # ---------------------------------------------------------------------------
 
 
-def filter_period(
-    series: Artifact,
-    lookback_years: int | None = None,
-    start: str | None = None,
-    end: str | None = None,
-) -> Artifact:
-    """Restrict a series to a time interval: the last N years, or explicit dates.
+def filter_period(series: Artifact, start: str | None = None, end: str | None = None) -> Artifact:
+    """Restrict a series to a time interval between explicit dates.
 
-    Exactly one of the two ways must be used (the validator enforces it with G03
-    before anything runs; the check here is a second line of defence).
+    At least one of start and end must be given (the validator enforces it with
+    G03 before anything runs; the check here is a second line of defence).
 
     Args:
         series: SERIES artifact.
-        lookback_years: keep the last N years, counted back from the series' LAST
-            OBSERVATION, never from today's date.
         start: first date to keep, "YYYY-MM-DD", inclusive (None = from the first observation).
         end: last date to keep, "YYYY-MM-DD", inclusive (None = up to the last observation).
 
@@ -493,40 +486,26 @@ def filter_period(
         empty; the executor then stops the run with R02.
 
     Raises:
-        ValueError: if both ways or neither are given, if start is not before
+        ValueError: if neither start nor end is given, if start is not before
             end, or if the input series is empty.
     """
     x = series.value
-    explicit = start is not None or end is not None
-    if (lookback_years is not None) == explicit:
-        raise ValueError("give either lookback_years or start/end, not both and not neither.")
+    if start is None and end is None:
+        raise ValueError("give start and/or end.")
     if start is not None and end is not None and start >= end:
         raise ValueError(f"start {start} must be before end {end}.")
     if x.empty:
         raise ValueError("cannot filter an empty series.")
 
-    if lookback_years is not None:
-        # Anchored to the last observation, not to the system clock: the same data
-        # then gives the same window whenever the plan is run or replayed.
-        anchor = x.index[-1]
-        # Calendar years (DateOffset turns 29 February into 28 February). The window
-        # is (anchor - N years, anchor], as in pandas' former Series.last: it spans
-        # exactly N years, so the anniversary date itself is not counted twice.
-        first = anchor - pd.DateOffset(years=lookback_years) + pd.Timedelta(days=1)
-        last = anchor
-        how = f"the last {lookback_years} year(s), counted back from the last observation"
-    else:
-        first = pd.Timestamp(start) if start is not None else x.index[0]
-        last = pd.Timestamp(end) if end is not None else x.index[-1]
-        how = "explicit dates"
-
+    first = pd.Timestamp(start) if start is not None else x.index[0]
+    last = pd.Timestamp(end) if end is not None else x.index[-1]
     kept = x[(x.index >= first) & (x.index <= last)]
     meta = derive_meta(
         series.meta,
         kept,
         period_start=f"{first:%Y-%m-%d}",
         period_end=f"{last:%Y-%m-%d}",
-        notes=[f"kept {first:%Y-%m-%d} to {last:%Y-%m-%d} inclusive ({how})"],
+        notes=[f"kept {first:%Y-%m-%d} to {last:%Y-%m-%d} inclusive (explicit dates)"],
     )
     return Artifact(value=kept, data_type=DataType.SERIES, meta=meta)
 

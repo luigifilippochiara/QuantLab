@@ -186,21 +186,21 @@ def test_period_editing_with_date_widgets_and_extremes_table(app_env: Settings) 
     request = CANNED_REQUESTS_BY_ID["nasdaq_volatility_peak_since_2020"].request
     app.text_area(key="request_text").input(request).run()
     button(app, "Generate plan").click().run()
-    # Nullable parameters: a "Set" checkbox, then a date input or a bounded number input.
+    # Nullable dates: a "Set" checkbox, then a date input.
     assert [(c.label, c.value) for c in app.checkbox if c.key.endswith("-set")] == [
-        ("Set lookback_years", False), ("Set start", True), ("Set end", False),
+        ("Set start", True), ("Set end", False),
     ]  # fmt: skip
     (start,) = app.date_input
     assert start.label == "start" and start.value == datetime.date(2020, 1, 1)
 
-    next(c for c in app.checkbox if c.key.endswith("lookback_years-set")).check().run()
-    lookback = next(n for n in app.number_input if n.key.endswith("lookback_years"))
-    assert (lookback.min, lookback.max) == (1, 30)
-    lookback.set_value(3).run()
+    next(c for c in app.checkbox if c.key.endswith("end-set")).check().run()
+    next(d for d in app.date_input if d.key.endswith("-end")).set_value(
+        datetime.date(2019, 6, 30)
+    ).run()
     button(app, "Apply changes").click().run()
-    assert issue_codes(app) == {"G03", "G12"}  # both ways of giving the period
+    assert issue_codes(app) == {"G03", "G12"}  # the end is before the start
 
-    next(c for c in app.checkbox if c.key.endswith("lookback_years-set")).uncheck().run()
+    next(c for c in app.checkbox if c.key.endswith("end-set")).uncheck().run()
     next(d for d in app.date_input if d.key.endswith("-start")).set_value(
         datetime.date(2021, 1, 1)
     ).run()
@@ -224,11 +224,14 @@ def test_find_extremes_which_edit_in_the_editor(
     edited: str, rows: list[str], app_env: Settings
 ) -> None:
     app = open_page("analysis.py")
-    request = CANNED_REQUESTS_BY_ID["nasdaq_peak_5y"].request  # find_extremes(which="max")
+    # Its plan ends in find_extremes(which="max") at s6, after a G12 approval.
+    request = CANNED_REQUESTS_BY_ID["nasdaq_volatility_peak_since_2020"].request
     app.text_area(key="request_text").input(request).run()
     button(app, "Generate plan").click().run()
-    next(s for s in app.selectbox if s.key.endswith("-s3-which")).select(edited).run()
+    next(s for s in app.selectbox if s.key.endswith("-s6-which")).select(edited).run()
     button(app, "Apply changes").click().run()
+    app.checkbox(key=next(c.key for c in app.checkbox if c.key.startswith("approve-"))).check()
+    app.run()
     button(app, "Execute").click().run()
     assert not app.exception, app.exception
     table = next(d.value for d in app.dataframe if "extreme" in d.value.columns)

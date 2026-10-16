@@ -4,6 +4,7 @@ The UI only offers widgets for registered parameters, but every rule is enforced
 here, in the engine, so a crafted call cannot bypass it.
 """
 
+import copy
 from typing import Any
 
 import pytest
@@ -11,10 +12,10 @@ import pytest
 from quantlab.config import Settings
 from quantlab.engine import ExecutionRefusedError, Session
 from quantlab.lineage import Approval, load_run, replay
-from quantlab.mock_scenarios import CANNED_REQUESTS_BY_ID, SCENARIOS_BY_ID
+from quantlab.mock_scenarios import SCENARIOS_BY_ID
 from quantlab.narrator import build_facts_sheet, narrate
 
-from conftest import RETURN_METHOD_APPROVAL, canned_plan
+from conftest import PERIOD_PLAN, RETURN_METHOD_APPROVAL, canned_plan
 from fakes import FakeAnthropicClient, text_response, tool_response
 
 
@@ -86,23 +87,23 @@ def test_weekly_to_daily_warns_g14_and_runs_after_re_approval(settings: Settings
     assert session.execution.artifacts["s4"].meta.notes[0].endswith("sqrt(252)")
 
 
-def test_switching_filter_period_from_lookback_to_dates(settings: Settings) -> None:
-    """Both ways at once is a G03; clearing one (null) makes the plan valid again."""
-    canned = CANNED_REQUESTS_BY_ID["nasdaq_peak_5y"]
-    session = Session.start(canned.request, list(canned.dataset_ids), "mock", settings)
+def test_editing_filter_period_dates(settings: Settings) -> None:
+    """Date edits go through the same validator; no date at all, or start after end, is a G03."""
+    client = FakeAnthropicClient(tool_response(copy.deepcopy(PERIOD_PLAN)))
+    session = Session.start("NASDAQ peak since 2021", ["NASDAQCOM"], "live", settings,
+                            client=client)  # fmt: skip
     session.create_plan()
-    report = session.apply_param_edits({"s2": {"start": "2020-01-01"}})
+    report = session.apply_param_edits({"s2": {"start": None}})  # neither start nor end
     assert [i.issue_id for i in report.blocks] == ["G03:s2:period"]
-    report = session.apply_param_edits({"s2": {"lookback_years": None}})
-    assert report.issues == []
+    report = session.apply_param_edits({"s2": {"start": "2020-01-01", "end": "2019-12-31"}})
+    assert [i.issue_id for i in report.blocks] == ["G03:s2:period"]
     report = session.apply_param_edits({"s2": {"end": "2020-13-01"}})  # no 13th month
     assert [i.issue_id for i in report.blocks] == ["G03:s2:end"]
     session.apply_param_edits({"s2": {"end": "2022-12-31"}})
     assert session.execute().status == "completed"
     record = session.build_record()
     assert {(c.param, c.original, c.final) for c in record.param_diff} == {
-        ("lookback_years", 5, None),
-        ("start", None, "2020-01-01"),
+        ("start", "2021-01-01", "2020-01-01"),
         ("end", None, "2022-12-31"),
     }
 

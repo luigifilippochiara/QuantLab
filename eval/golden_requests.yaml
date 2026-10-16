@@ -99,16 +99,6 @@
 
 # Period filtering and extremes. Dates are quoted: YAML would read 2020-01-01 as a date.
 # The volatility case also checks the placement rule: filter AFTER the rolling calculation.
-- id: nasdaq_peak_5y
-  request: "When was NASDAQ at its highest over the last 5 years?"
-  datasets: [NASDAQCOM]
-  expect: plan
-  capabilities: [load_series, filter_period, find_extremes]
-  key_params:
-    load_series: {dataset_id: NASDAQCOM}
-    filter_period: {lookback_years: 5}
-    find_extremes: {which: max}
-
 - id: nasdaq_volatility_peak_since_2020
   request: "Show weekly volatility for NASDAQ since 2020 and tell me when it peaked."
   datasets: [NASDAQCOM]
