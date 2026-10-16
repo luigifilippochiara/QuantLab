@@ -24,7 +24,7 @@ catalog = ui.get_catalog(settings)
 for key, default in [
     ("session", None),
     ("request_text", ""),
-    ("dataset_select", ["NASDAQCOM"]),
+    ("dataset_select", []),  # nothing preselected: the analyst picks the datasets
     ("llm_mode", settings.llm_mode),
     ("replay_report", None),
     ("flash", None),  # one-off message shown after an edit is applied

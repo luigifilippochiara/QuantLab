@@ -287,6 +287,11 @@ and finally runs the page, whose own sidebar content comes below. It lives in
 prefixes the native menu, rejected as fragile: it depends on Streamlit's internal
 markup, which can change between versions.
 
+**No dataset is preselected.** The Datasets picker starts empty, so the analyst
+chooses the data instead of starting from a NASDAQ default; an example workflow
+fills in its own datasets. With nothing selected, the planner still sees every
+catalog dataset's metadata and is told that none was selected.
+
 **One colour pair for both themes.** Charts use blue `#3987e5` for series and
 orange `#d95926` for flagged regimes. The pair was run through a colour-vision
 validator against both Streamlit backgrounds (white and `#0e1117`): lightness,

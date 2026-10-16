@@ -86,12 +86,21 @@ def test_example_workflows_only_in_mock_mode(mode: str, app_env: Settings) -> No
     assert not any("example workflow" in i.value for i in app.info)
 
 
+def test_no_dataset_is_selected_when_the_app_opens(app_env: Settings) -> None:
+    app = open_page("analysis.py")
+    assert app.sidebar.multiselect[0].value == []
+    assert not any("title=" in c.value for c in app.sidebar.caption)  # no dataset lines
+    app.sidebar.button(key="scenario-volatility_flag_success").click().run()
+    assert app.sidebar.multiselect[0].value == ["NASDAQCOM"]  # an example fills in its own
+
+
 def test_datasets_are_labelled_id_first_with_full_names_on_hover(app_env: Settings) -> None:
     app = open_page("analysis.py")
     # Synthetic catalog (conftest): title "Synthetic equity index", full name with ", full name".
     datasets = app.sidebar.multiselect[0]
     assert "NASDAQCOM — Synthetic equity index" in datasets.options
     assert "- VIXCLS — Synthetic VIX, full name" in datasets.help
+    datasets.select("NASDAQCOM").run()
     (line,) = [c.value for c in app.sidebar.caption if "title=" in c.value]
     assert 'title="NASDAQCOM — Synthetic equity index, full name"' in line
     assert "<b>NASDAQCOM — Synthetic equity index</b>" in line
