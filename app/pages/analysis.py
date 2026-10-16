@@ -39,7 +39,7 @@ with st.sidebar:
         "Datasets available to the planner",
         catalog.ids(),
         key="dataset_select",
-        format_func=lambda d: ui.dataset_name(catalog, d),
+        format_func=lambda d: ui.dataset_label(catalog, d),
         help="Full names of the available datasets:\n\n" + ui.dataset_names_help(catalog),
     )
     # Hovering a selected dataset's line shows its full name.
@@ -296,7 +296,7 @@ for step in plan.steps:
         if record.error:
             st.error(ui.escape_md(record.error))
         if artifact is not None:
-            ui.render_artifact(step.id, step.capability, artifact, shading.get(step.id))
+            ui.render_artifact(step.id, step.capability, artifact, shading.get(step.id), catalog)
 
 # ---------------------------------------------------------------- trace
 

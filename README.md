@@ -498,7 +498,7 @@ runs/                       run records, plan cache, events.jsonl (git-ignored)
   commit in each manifest covers the code.
 * **Data licences.** SP500 and NASDAQCOM are marked "Copyrighted: Pre-Approval
   Required" on FRED; see `data/README.md` before redistributing the data.
-* **Short S&P 500 history.** FRED distributes only the last 10 years.
+* **Short S&P 500 Index history.** FRED distributes only the last 10 years.
 
 Roadmap:
 

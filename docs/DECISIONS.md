@@ -408,7 +408,7 @@ more. The summary-statistics test now checks skew and excess kurtosis against
 their textbook formulas instead of scipy, which is also a more independent check.
 
 **An intermediate set of examples preceded the current workflows**: the average
-daily S&P 500 return, daily high-volatility periods in the NASDAQ, a forecast
+daily S&P 500 Index return, daily high-volatility periods in the NASDAQ, a forecast
 request whose canned plan named a non-existent `forecast` capability (blocked by
 G02), the prompt injection, and the 10y-2y spread. It is superseded by the
 example workflows below.
@@ -537,9 +537,9 @@ goes through the same path (re-validation, approvals cleared, history recorded).
 ## Interface copy and polish
 
 **Full dataset names on hover, from the catalog.** Wherever a dataset is listed
-or selected, the UI shows its catalog title with the id, e.g. "NASDAQ Composite
-Index (NASDAQCOM)" (`ui.dataset_name`, read from `data/catalog.json`, never
-hardcoded). The sidebar multiselect and the `dataset_id` parameter select box
+or selected, the UI shows its catalog name with the id, now in the form
+"NASDAQCOM — NASDAQ Composite Index" (`ui.dataset_label`, read from
+`data/catalog.json`, never hardcoded; see "Dataset names and labels" below). The sidebar multiselect and the `dataset_id` parameter select box
 show the full name as their option labels and list every dataset's full name in
 their help tooltip; each selected dataset's sidebar line carries the full name in
 an HTML `title` attribute, so hovering the line shows it; the trace and replay
@@ -657,3 +657,32 @@ with the guardrail table, and the canned plans the mock planner answers with
 keep their names (`validate_plan`, `ValidationReport`, the "validation" stage in
 monitoring, the guardrail codes). No compatibility shim was left under the old
 names, so a stale import fails loudly instead of silently working.
+
+## Dataset names and labels
+
+**Display names checked against the official FRED titles** (fred.stlouisfed.org,
+2026-10-16). SP500 is titled "S&P 500" on FRED; it is displayed as "S&P 500 Index",
+with "Standard & Poor's 500" as its full name. NASDAQCOM is titled "NASDAQ
+Composite" on FRED, whose notes call it the "NASDAQ Composite Index", the name kept
+for display. VIXCLS and DEXSZUS match FRED exactly. DGS10 and DGS2 are titled
+"Market Yield on U.S. Treasury Securities at 10-Year (2-Year) Constant Maturity,
+Quoted on an Investment Basis"; the catalog held a truncated copy, and they are now
+displayed as "10-Year (2-Year) U.S. Treasury Constant Maturity Yield".
+
+**A `full_name` field next to the display `title`.** The catalog keeps the short
+display name in `title` (used in the planner's dataset summary and the UI) and the
+full name in `full_name` (shown on hover), so shortening a long official title loses
+nothing. Dataset ids, snapshot files and their hashes are unchanged, and the
+catalog's text is part of neither run records nor plan-cache keys, so existing plans,
+cached plans, mock plans, golden requests and replays keep working. Requests and
+canned plan rationales that say "S&P 500" are left as written: they are how
+analysts phrase requests, they are matched exactly, and rationales are part of a
+plan's hash.
+
+**One label everywhere: "<FRED id> — <display name>".** `ui.dataset_label` builds it
+from the catalog (e.g. "SP500 — S&P 500 Index", "DGS10 — 10-Year U.S. Treasury
+Constant Maturity Yield"), and `ui.dataset_full_name` the hover text. The FRED id
+is used for every dataset, so series without a market ticker look the same; it
+equals the dataset id plans use, which a test checks. The label is used in the
+dataset picker, the `dataset_id` parameter, the trace and replay tables, a "Source"
+line under each result and a "Datasets" line in Run history.

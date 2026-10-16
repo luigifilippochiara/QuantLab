@@ -5,10 +5,12 @@ from pathlib import Path
 import pandas as pd
 import pytest
 
+from quantlab.config import PROJECT_ROOT
 from quantlab.data import (
     Catalog,
     DatasetHashMismatchError,
     describe_datasets,
+    load_catalog,
     load_dataset,
     read_fred_csv,
     verify_dataset_hash,
@@ -91,3 +93,21 @@ def test_committed_catalog_matches_committed_snapshot() -> None:
     assert set(real.ids()) == {"SP500", "NASDAQCOM", "VIXCLS", "DGS10", "DGS2", "DEXSZUS"}
     for dataset_id in real.ids():
         assert verify_dataset_hash(real, dataset_id)[0], dataset_id
+
+
+def test_committed_catalog_display_names() -> None:
+    """Display names follow the official FRED titles (long ones shortened); ids are unchanged."""
+    catalog = load_catalog(PROJECT_ROOT / "data" / "catalog.json")
+    titles = {d: catalog.entries[d].title for d in catalog.ids()}
+    assert titles == {
+        "SP500": "S&P 500 Index",
+        "NASDAQCOM": "NASDAQ Composite Index",
+        "VIXCLS": "CBOE Volatility Index: VIX",
+        "DGS10": "10-Year U.S. Treasury Constant Maturity Yield",
+        "DGS2": "2-Year U.S. Treasury Constant Maturity Yield",
+        "DEXSZUS": "Swiss Francs to U.S. Dollar Spot Exchange Rate",
+    }
+    assert catalog.entries["SP500"].full_name == "Standard & Poor's 500"
+    assert catalog.entries["DGS10"].full_name.endswith("Quoted on an Investment Basis")
+    # The UI labels datasets by FRED id, and plans refer to dataset ids: they agree.
+    assert all(e.dataset_id == e.fred_id for e in catalog.entries.values())

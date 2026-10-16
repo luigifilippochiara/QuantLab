@@ -53,6 +53,9 @@ with st.container(border=True):
             f"Planner: {record.llm.provider} / {record.llm.model} · mode {record.llm.mode} · "
             f"prompt {record.llm.prompt_version} · from cache: {record.llm.from_cache}"
         )
+    if record.datasets:
+        labels = ", ".join(ui.dataset_label(catalog, d.dataset_id) for d in record.datasets)
+        st.caption(f"Datasets: {ui.escape_md(labels)}")
     if record.error:
         st.caption(f"Stopped because: {ui.escape_md(record.error)}")
     st.caption(

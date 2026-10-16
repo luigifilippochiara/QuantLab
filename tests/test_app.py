@@ -86,20 +86,35 @@ def test_example_workflows_only_in_mock_mode(mode: str, app_env: Settings) -> No
     assert not any("example workflow" in i.value for i in app.info)
 
 
-def test_datasets_show_their_full_catalog_names(app_env: Settings) -> None:
+def test_datasets_are_labelled_id_first_with_full_names_on_hover(app_env: Settings) -> None:
     app = open_page("analysis.py")
-    # Synthetic catalog titles (conftest), e.g. "Synthetic equity index (NASDAQCOM)".
+    # Synthetic catalog (conftest): title "Synthetic equity index", full name with ", full name".
     datasets = app.sidebar.multiselect[0]
-    assert "Synthetic equity index (NASDAQCOM)" in datasets.options
-    assert "- Synthetic VIX (VIXCLS)" in datasets.help
-    assert any('title="Synthetic equity index (NASDAQCOM)"' in c.value for c in app.sidebar.caption)
+    assert "NASDAQCOM — Synthetic equity index" in datasets.options
+    assert "- VIXCLS — Synthetic VIX, full name" in datasets.help
+    (line,) = [c.value for c in app.sidebar.caption if "title=" in c.value]
+    assert 'title="NASDAQCOM — Synthetic equity index, full name"' in line
+    assert "<b>NASDAQCOM — Synthetic equity index</b>" in line
 
     app.text_area(key="request_text").input(SCENARIO_1_REQUEST).run()
     button(app, "Generate plan").click().run()
     load = next(s for s in app.selectbox if s.key.endswith("-s1-dataset_id"))
     assert load.value == "NASDAQCOM"  # the plan still holds the id
-    assert "Synthetic equity index (NASDAQCOM)" in load.options
-    assert "- Synthetic S&P 500 (SP500)" in load.help
+    assert "NASDAQCOM — Synthetic equity index" in load.options
+    assert "- SP500 — Synthetic S&P 500, full name" in load.help
+
+    approve = next(c.key for c in app.checkbox if c.key.startswith("approve-"))
+    app.checkbox(key=approve).check().run()
+    button(app, "Execute").click().run()
+    assert any(c.value == "Source: NASDAQCOM — Synthetic equity index" for c in app.caption)
+    sources = next(d.value for d in app.dataframe if "file sha256" in d.value.columns)
+    assert sources["dataset"].tolist() == ["NASDAQCOM — Synthetic equity index"]
+    button(app, "Replay this run").click().run()
+    checks = next(d.value for d in app.dataframe if "recorded sha256" in d.value.columns)
+    assert checks["dataset"].tolist() == ["NASDAQCOM — Synthetic equity index"]
+
+    history = open_page("run_history.py")
+    assert any(c.value == "Datasets: NASDAQCOM — Synthetic equity index" for c in history.caption)
 
 
 @pytest.mark.parametrize(

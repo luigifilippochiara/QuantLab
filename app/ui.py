@@ -69,15 +69,26 @@ def escape_md(text: str) -> str:
     return text
 
 
-def dataset_name(catalog: Catalog, dataset_id: str) -> str:
-    """Full descriptive name from the catalog, e.g. "NASDAQ Composite Index (NASDAQCOM)"."""
+def dataset_label(catalog: Catalog, dataset_id: str) -> str:
+    """The label for a dataset everywhere in the UI: FRED series id, then display name.
+
+    Read from data/catalog.json, e.g. "SP500 — S&P 500 Index". The FRED id is used
+    for every dataset, so series without a market ticker (DGS10) look the same.
+    An id that is not in the catalog is shown as it is.
+    """
     entry = catalog.get(dataset_id)
-    return f"{entry.title} ({dataset_id})" if entry else dataset_id
+    return f"{entry.fred_id} — {entry.title}" if entry else dataset_id
+
+
+def dataset_full_name(catalog: Catalog, dataset_id: str) -> str:
+    """Hover text for a dataset: FRED series id, then the catalog's full name."""
+    entry = catalog.get(dataset_id)
+    return f"{entry.fred_id} — {entry.full_name}" if entry else dataset_id
 
 
 def dataset_names_help(catalog: Catalog) -> str:
     """Tooltip text listing the full name of every catalog dataset, one per line."""
-    return "\n".join(f"- {dataset_name(catalog, d)}" for d in catalog.ids())
+    return "\n".join(f"- {dataset_full_name(catalog, d)}" for d in catalog.ids())
 
 
 def catalog_span(catalog: Catalog) -> tuple[datetime.date, datetime.date]:
@@ -89,7 +100,7 @@ def catalog_span(catalog: Catalog) -> tuple[datetime.date, datetime.date]:
 
 
 def dataset_caption(catalog: Catalog, dataset_id: str) -> str:
-    """One sidebar line for a dataset; hovering it shows the dataset's full name.
+    """One sidebar line for a dataset (label, then details); hovering shows its full name.
 
     The tooltip is the HTML `title` attribute, so it appears over the text itself.
     Catalog text is escaped before it goes into the HTML.
@@ -99,8 +110,9 @@ def dataset_caption(catalog: Catalog, dataset_id: str) -> str:
         f"{entry.frequency} · {entry.kind} · {entry.start_date} to {entry.end_date} · "
         f"sha256 {entry.sha256[:12]}"
     )
-    name = html.escape(dataset_name(catalog, dataset_id), quote=True)
-    return f'<span title="{name}"><b>{html.escape(dataset_id)}</b>: {html.escape(details)}</span>'
+    label = html.escape(dataset_label(catalog, dataset_id))
+    full_name = html.escape(dataset_full_name(catalog, dataset_id), quote=True)
+    return f'<span title="{full_name}"><b>{label}</b>: {html.escape(details)}</span>'
 
 
 # Header styling: sizes and spacing only. Colours are inherited from the active
@@ -330,7 +342,13 @@ def flags_by_input(plan_steps: list[Any], artifacts: dict[str, Artifact]) -> dic
     return shading
 
 
-def render_artifact(step_id: str, capability: str, artifact: Artifact, flags: pd.Series | None):
+def render_artifact(
+    step_id: str,
+    capability: str,
+    artifact: Artifact,
+    flags: pd.Series | None,
+    catalog: Catalog,
+) -> None:
     """Show one step's output: a chart (series), a short count (flags) or a table (TABLE).
 
     Args:
@@ -338,6 +356,7 @@ def render_artifact(step_id: str, capability: str, artifact: Artifact, flags: pd
         capability: capability name.
         artifact: the step's output.
         flags: flags to shade on this series' chart, if any.
+        catalog: the dataset catalog, to label the source datasets.
     """
     meta = artifact.meta
     if artifact.data_type == DataType.SERIES:
@@ -358,6 +377,8 @@ def render_artifact(step_id: str, capability: str, artifact: Artifact, flags: pd
         st.dataframe(
             table_frame(capability, artifact.value), hide_index=True, alt=f"{capability} table"
         )
+    sources = ", ".join(dataset_label(catalog, d) for d in meta.source_dataset_ids)
+    st.caption("Source: " + escape_md(sources))
     if meta.notes:
         st.caption("Recorded assumptions: " + escape_md("; ".join(meta.notes)))
 
@@ -409,7 +430,7 @@ def render_trace(result: TraceResult, catalog: Catalog) -> None:
     sources = pd.DataFrame(
         [
             {
-                "dataset": dataset_name(catalog, s.dataset_id),
+                "dataset": dataset_label(catalog, s.dataset_id),
                 "FRED id": s.fred_id,
                 "file sha256": s.sha256,
                 "retrieved": s.retrieved_at,
@@ -438,7 +459,7 @@ def render_replay(report: ReplayReport, catalog: Catalog) -> None:
             pd.DataFrame(
                 [
                     {
-                        "dataset": dataset_name(catalog, c.dataset_id),
+                        "dataset": dataset_label(catalog, c.dataset_id),
                         "recorded sha256": c.recorded_sha256[:16],
                         "current sha256": (c.current_sha256 or "missing")[:16],
                         "match": "yes" if c.match else "NO",
@@ -509,13 +530,13 @@ def param_widget(
     if spec_param.name == "dataset_id":
         options = catalog.ids()
         index = options.index(current) if current in options else 0
-        # Options show the full catalog name; the tooltip lists every dataset's name.
+        # Options show each dataset's label; the tooltip lists every dataset's full name.
         return st.selectbox(
             label,
             options,
             index=index,
             key=key,
-            format_func=lambda d: dataset_name(catalog, d),
+            format_func=lambda d: dataset_label(catalog, d),
             help=f"{help_text}\n\n{dataset_names_help(catalog)}",
             disabled=disabled,
         )

@@ -26,18 +26,22 @@ from quantlab.data import file_sha256, read_fred_csv
 FRED_CSV_URL = "https://fred.stlouisfed.org/graph/fredgraph.csv?id={series_id}"
 
 # The series QuantLab ships with. `kind` drives the validator's guardrails, e.g.
-# rate_level series must be differenced, never turned into returns.
+# rate_level series must be differenced, never turned into returns. `title` is the
+# display name (the official FRED title, shortened when it is long) and `full_name`
+# the full name shown on hover.
 SERIES_TO_FETCH: list[dict[str, str]] = [
     {
         "fred_id": "SP500",
-        "title": "S&P 500",
-        "description": "S&P 500 equity index, daily close (index level); FRED keeps 10 years.",
+        "title": "S&P 500 Index",
+        "full_name": "Standard & Poor's 500",
+        "description": "S&P 500 Index, daily close (index level); FRED keeps 10 years.",
         "units": "Index",
         "kind": "price_level",
     },
     {
         "fred_id": "NASDAQCOM",
         "title": "NASDAQ Composite Index",
+        "full_name": "NASDAQ Composite Index",
         "description": "NASDAQ Composite equity index, daily close (index level).",
         "units": "Index, Feb 5 1971 = 100",
         "kind": "price_level",
@@ -45,20 +49,29 @@ SERIES_TO_FETCH: list[dict[str, str]] = [
     {
         "fred_id": "VIXCLS",
         "title": "CBOE Volatility Index: VIX",
+        "full_name": "CBOE Volatility Index: VIX",
         "description": "VIX implied volatility index, daily close; a level, not a tradable price.",
         "units": "Index (annualised implied volatility, percent)",
         "kind": "index_level",
     },
     {
         "fred_id": "DGS10",
-        "title": "Market Yield on U.S. Treasury Securities at 10-Year Constant Maturity",
+        "title": "10-Year U.S. Treasury Constant Maturity Yield",
+        "full_name": (
+            "Market Yield on U.S. Treasury Securities at 10-Year Constant Maturity, "
+            "Quoted on an Investment Basis"
+        ),
         "description": "10-year US Treasury constant-maturity yield, daily, in percent.",
         "units": "Percent",
         "kind": "rate_level",
     },
     {
         "fred_id": "DGS2",
-        "title": "Market Yield on U.S. Treasury Securities at 2-Year Constant Maturity",
+        "title": "2-Year U.S. Treasury Constant Maturity Yield",
+        "full_name": (
+            "Market Yield on U.S. Treasury Securities at 2-Year Constant Maturity, "
+            "Quoted on an Investment Basis"
+        ),
         "description": "2-year US Treasury constant-maturity yield, daily, in percent.",
         "units": "Percent",
         "kind": "rate_level",
@@ -66,6 +79,7 @@ SERIES_TO_FETCH: list[dict[str, str]] = [
     {
         "fred_id": "DEXSZUS",
         "title": "Swiss Francs to U.S. Dollar Spot Exchange Rate",
+        "full_name": "Swiss Francs to U.S. Dollar Spot Exchange Rate",
         "description": "CHF per USD spot exchange rate, daily noon buying rate in New York.",
         "units": "Swiss Francs to One U.S. Dollar",
         "kind": "price_level",
@@ -108,6 +122,7 @@ def fetch_series(item: dict[str, str], snapshots_dir: Path) -> dict[str, object]
         "dataset_id": series_id,
         "fred_id": series_id,
         "title": item["title"],
+        "full_name": item["full_name"],
         "description": item["description"],
         "units": item["units"],
         "frequency": "D",

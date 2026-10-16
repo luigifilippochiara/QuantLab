@@ -106,6 +106,7 @@ def build_synthetic_data_dir(data_dir: Path, missing_every: int = 50) -> Path:
                 "dataset_id": series_id,
                 "fred_id": series_id,
                 "title": title,
+                "full_name": f"{title}, full name",
                 "description": f"{title} (synthetic test data).",
                 "units": "test units",
                 "frequency": "D",

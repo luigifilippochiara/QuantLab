@@ -30,7 +30,8 @@ class DatasetEntry(BaseModel):
     Fields:
         dataset_id: id used in plans (equal to the FRED id in v1).
         fred_id: the FRED series id.
-        title: FRED series title.
+        title: display name: the official FRED title, shortened when it is long.
+        full_name: the full name (e.g. the complete official title), shown on hover.
         description: one-line plain description shown to users and to the LLM.
         units: units of the values (e.g. "Percent").
         frequency: observation frequency of the raw snapshot.
@@ -51,6 +52,7 @@ class DatasetEntry(BaseModel):
     dataset_id: str
     fred_id: str
     title: str
+    full_name: str
     description: str
     units: str
     frequency: Frequency
