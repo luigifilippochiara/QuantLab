@@ -169,6 +169,13 @@ result** shows the full chain `flag_regime` -> `rolling_volatility` ->
 with each step's library call, parameters (user edits marked) and output hash.
 `cli demo` prints the same chain.
 
+**More canned requests.** In mock mode the planner also has plans for these
+requests, typed exactly as written (they are not sidebar buttons): "When was
+NASDAQ at its highest over the last 5 years?", "Show weekly volatility for NASDAQ
+since 2020 and tell me when it peaked." (volatility on the full history, then
+filtered), "When was the VIX at its highest and lowest?" and "Summary statistics
+of daily S&P 500 returns in 2022."
+
 ## Live mode
 
 Live mode calls a language model for the planner and the narrator. The provider
@@ -239,11 +246,11 @@ flowchart LR
 | `config.py` | Settings from `.env`: API key, models, LLM mode, paths, budgets |
 | `types.py` | `DataType`, `SeriesKind`, `Frequency`; `Artifact` (value + explicit metadata); canonical hashing |
 | `data.py` | Catalog, FRED CSV parsing, SHA-256 verification, LLM-safe dataset metadata |
-| `capabilities.py` | The 9 quantitative functions: the only code that calls pandas/numpy for analysis |
+| `capabilities.py` | The 11 quantitative functions: the only code that calls pandas/numpy for analysis |
 | `registry.py` | Capability specs, the `REGISTRY` whitelist, generated LLM summary and registry version |
 | `plan.py` | Pydantic `Plan` / `Step` (extra fields forbidden), plan version hash, the LLM tool schema |
 | `validation.py` | Static guardrails G01-G14, edit lock, metadata dry run, `ValidationReport`, the guardrail table |
-| `scenarios.py` | Example workflows 1-5 with canned plans (used by mock mode, CLI, app, tests) |
+| `scenarios.py` | Example workflows 1-5 and further canned requests, with plans (mock mode, CLI, app, tests) |
 | `executor.py` | Registry dispatch, approval gate, runtime guardrails R01-R04, step records |
 | `planner.py` | OpenAI and Anthropic planners, mock planner, plan cache |
 | `narrator.py` | Facts sheet, LLM narrator, template fallback, numeric grounding check |
@@ -274,7 +281,7 @@ structured plan instead:
   without executing it.
 * **Reviewable.** An analyst reads a few lines of plan, not pages of code, and
   edits parameters through fields constrained by the registry.
-* **Tested once, reused always.** The 9 capabilities have unit tests against
+* **Tested once, reused always.** The 11 capabilities have unit tests against
   hand-computed values; generated code would need validating every time.
 * **Reproducible.** Plan, data hashes and library versions are enough to replay a
   run with no model involved.
@@ -299,6 +306,23 @@ small and descriptive:
 | `flag_regime` | Flag periods above a quantile threshold (e.g. high volatility) |
 | `summary_stats` | Count, mean, std, min, max, skew, excess kurtosis |
 | `compare_groups` | Average of a series in flagged vs normal periods (descriptive, no test) |
+| `filter_period` | Keep the last N years (counted back from the last observation) or a start/end window |
+| `find_extremes` | When a series reached its maximum and/or minimum, the value, and a tie count |
+
+**Periods and peaks.** `filter_period` takes either `lookback_years` or `start`
+and/or `end` (inclusive ISO dates), never both: anything else is a G03 BLOCK, as is
+a period entirely outside the data, and a period that leaves too few observations
+stops the run with R02. "The last N years" counts back from the series' last
+observation, never from today, so a replay months later selects the same window;
+the resolved start and end dates are recorded in the step's metadata and the run
+manifest. Where it goes matters: filtering *before* a rolling or expanding
+calculation shortens the history used for the window warm-up and the expanding
+threshold, while filtering *after* keeps the full history and only trims what is
+reported. The planner is told to filter after the calculation when the user asks
+to show a recent period, unless the calculation itself should be restricted.
+`find_extremes` works on any series (levels, returns, volatility), ignores
+missing values, and on a tie reports the earliest date with the number of tied
+dates, so an answer is never silently ambiguous.
 
 There are no statistical tests, regressions or forecasts: such requests are
 declined or blocked (example 3). Each spec declares named inputs (allowed data
@@ -372,17 +396,20 @@ rather than `temperature=0`.
 
 **Modes:** `live` (call the API), `cached` (reuse the cached plan for an
 identical request, datasets, model, prompt version and registry version), and
-`mock` (canned plans for the five example workflows; anything else is politely
-declined). Mock mode is also the fallback whenever the network or the API is
+`mock` (canned plans for the five example workflows and a few further requests;
+anything else is politely declined). Mock mode is also the fallback whenever the network or the API is
 unavailable.
 
 **Narrator** (`narrator.py`). Receives the request, a plain plan summary,
 warnings, approvals and a *facts sheet* of rounded computed numbers, and must use
 only those numbers. `check_grounding` then extracts every number in the narrative
 and checks that it is a correct rounding of a fact (or its percentage form), a
-plan parameter, a number from the request or a warning, an annualisation factor,
-or a date in the data range. The app shows "all numbers verified" or lists the
-unverified numbers; the deterministic facts table is always shown.
+plan parameter, a number from the request or a warning, or an annualisation
+factor. Dates are facts too: a date, as `2021-11-19` or in words such as
+"19 November 2021", must be a date of the facts sheet (a month must contain one,
+and a year on its own must lie within the data), so a narrative that names the
+wrong peak date fails the check. The app shows "all numbers verified" or lists
+the unverified numbers; the deterministic facts table is always shown.
 
 ## Reproducibility, lineage and monitoring
 
@@ -391,7 +418,8 @@ unverified numbers; the deterministic facts table is always shown.
   and as run with its version hash, parameter edits and the parameter-level diff,
   validation report, approvals, dataset versions (file SHA-256, retrieval time,
   rows and dates used), environment (Python, library versions, git commit),
-  registry version, step records with input and output hashes, warnings, the
+  registry version, step records with input and output hashes (and
+  `filter_period`'s resolved start and end dates), warnings, the
   narrative with its grounding result, and stage timings.
 * **Outputs.** `runs/<run_id>/outputs/<step>_<capability>.csv|json`. Each file is
   the canonical text that was hashed, so `shasum -a 256` reproduces the hash in
@@ -421,7 +449,8 @@ Two separate questions, measured separately:
   in a refusal or a BLOCK. Metrics: valid-plan rate, exact capability-sequence
   match, capability-set Jaccard, key-parameter accuracy and correct refusal/block
   rate. Reports go to `eval/reports/`. In mock mode this checks the harness only
-  (the mock knows just the five examples); `--mode live` measures the real model.
+  (the mock knows just the five examples and the canned requests); `--mode live`
+  measures the real model.
 * **Are the computations right?** Measured by the unit tests, independently of
   any model: returns, differences, spread alignment, rolling volatility and
   annualisation, the no-look-ahead property of expanding flags, summary
@@ -455,8 +484,10 @@ runs/                       run records, plan cache, events.jsonl (git-ignored)
 * **No plan -> observe -> replan loop.** Validation errors are shown to the
   analyst but not yet fed back to the model for a corrected plan.
 * **The grounding check is numeric.** It proves every number is a correct
-  rounding of an allowed value, not that the sentence attaches it to the right
-  concept, and it compares absolute values (sign errors are not caught).
+  rounding of an allowed value and every date is a date of the results, not that
+  the sentence attaches it to the right concept (a true date described as the
+  wrong extreme would pass), and it compares absolute values (sign errors are
+  not caught).
 * **Descriptive only.** There are no statistical tests, regressions or forecasts,
   so QuantLab describes what happened (averages, volatility, high-volatility
   periods, spreads) but does not judge significance or predict. Such requests

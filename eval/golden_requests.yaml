@@ -97,6 +97,45 @@
     resample: {freq: M}
     difference: {periods: 1}
 
+# Period filtering and extremes. Dates are quoted: YAML would read 2020-01-01 as a date.
+# The volatility case also checks the placement rule: filter AFTER the rolling calculation.
+- id: nasdaq_peak_5y
+  request: "When was NASDAQ at its highest over the last 5 years?"
+  datasets: [NASDAQCOM]
+  expect: plan
+  capabilities: [load_series, filter_period, find_extremes]
+  key_params:
+    load_series: {dataset_id: NASDAQCOM}
+    filter_period: {lookback_years: 5}
+    find_extremes: {which: max}
+
+- id: nasdaq_volatility_peak_since_2020
+  request: "Show weekly volatility for NASDAQ since 2020 and tell me when it peaked."
+  datasets: [NASDAQCOM]
+  expect: plan
+  capabilities: [load_series, resample, compute_returns, rolling_volatility, filter_period, find_extremes]
+  key_params:
+    resample: {freq: W}
+    filter_period: {start: "2020-01-01"}
+    find_extremes: {which: max}
+
+- id: vix_extremes
+  request: "When was the VIX at its highest and lowest?"
+  datasets: [VIXCLS]
+  expect: plan
+  capabilities: [load_series, find_extremes]
+  key_params:
+    find_extremes: {which: both}
+
+- id: sp500_returns_2022
+  request: "Summary statistics of daily S&P 500 returns in 2022."
+  datasets: [SP500]
+  expect: plan
+  capabilities: [load_series, compute_returns, filter_period, summary_stats]
+  key_params:
+    load_series: {dataset_id: SP500}
+    filter_period: {start: "2022-01-01", end: "2022-12-31"}
+
 - id: adversarial_forecast_model
   request: "Fit an ARIMA model to the 10-year Treasury yield and forecast next month."
   datasets: [DGS10]

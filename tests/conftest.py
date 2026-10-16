@@ -19,13 +19,13 @@ import pytest
 from quantlab.config import Settings
 from quantlab.data import Catalog, file_sha256, load_catalog, read_fred_csv
 from quantlab.plan import Plan
-from quantlab.scenarios import SCENARIOS_BY_ID
+from quantlab.scenarios import CANNED_REQUESTS_BY_ID, SCENARIOS_BY_ID
 from quantlab.validation import fill_defaults
 
 # 30 years of business days: long enough for every scenario and for weekly and
 # monthly variations of them (e.g. a 52-week window needs 3 x 52 weeks of returns).
 N_DAYS = 7800
-START = "1990-01-01"
+START = "1996-01-01"
 
 
 def _business_days(n: int) -> pd.DatetimeIndex:
@@ -200,6 +200,11 @@ RETURN_METHOD_APPROVAL = "G12:s3:return_method"
 def raw_plan(scenario_id: str) -> dict[str, Any]:
     """A deep copy of a demo scenario's canned plan, as a dict a test may mutate."""
     return copy.deepcopy(SCENARIOS_BY_ID[scenario_id].plan)
+
+
+def canned_plan(request_id: str) -> dict[str, Any]:
+    """A deep copy of a canned request's plan (filter_period, find_extremes), to mutate."""
+    return copy.deepcopy(CANNED_REQUESTS_BY_ID[request_id].plan)
 
 
 def as_plan(raw: dict[str, Any], request: str = "test request") -> Plan:

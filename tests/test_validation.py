@@ -1,4 +1,8 @@
-"""Static guardrails G01-G14: each triggers on a crafted plan and stays silent on a clean one."""
+"""Static guardrails G01-G14: each triggers on a crafted plan and stays silent on a clean one.
+
+Also covers filter_period's interval rules (G03): one way of giving the period,
+start before end, valid dates, and a period that overlaps the data.
+"""
 
 import json
 from typing import Any
@@ -17,7 +21,7 @@ from quantlab.validation import (
     validate_plan,
 )
 
-from conftest import RETURN_METHOD_APPROVAL, SARIMA_PLAN, SPREAD_PLAN, raw_plan
+from conftest import RETURN_METHOD_APPROVAL, SARIMA_PLAN, SPREAD_PLAN, canned_plan, raw_plan
 
 SUCCESS = "volatility_flag_success"  # scenario 1, the anchor case
 
@@ -114,6 +118,54 @@ def test_defaults_are_filled_in() -> None:
     assert filled.steps[4].params == {"method": "simple", "periods": 1}  # default added
     unknown = fill_defaults(Plan(plan_id="p", request="r", **SARIMA_PLAN))
     assert unknown.steps[1].params == SARIMA_PLAN["steps"][1]["params"]  # left untouched
+
+
+# --- G03 for filter_period: the period must be well defined and inside the data ---
+# Synthetic data runs from 1996-01-01 to 2025-11-21 (conftest).
+
+
+def test_period_plans_are_clean(catalog: Catalog) -> None:
+    assert validate(canned_plan("nasdaq_peak_5y"), catalog).issues == []
+    since_2020 = validate(canned_plan("nasdaq_volatility_peak_since_2020"), catalog)
+    assert since_2020.codes() == ["G12"]
+
+
+@pytest.mark.parametrize(
+    ("params", "issue_id"),
+    [
+        pytest.param({"lookback_years": 5, "start": "2020-01-01"}, "G03:s2:period", id="both"),
+        pytest.param({}, "G03:s2:period", id="neither"),
+        pytest.param({"start": "2021-01-01", "end": "2020-01-01"}, "G03:s2:period",
+                     id="start after end"),
+        pytest.param({"start": "2020/01/01"}, "G03:s2:start", id="not ISO"),
+        pytest.param({"start": "2021-02-30"}, "G03:s2:start", id="no such day"),
+        pytest.param({"lookback_years": 0}, "G03:s2:lookback_years", id="lookback below range"),
+        pytest.param({"lookback_years": 31}, "G03:s2:lookback_years", id="lookback above range"),
+        pytest.param({"start": "2031-01-01"}, "G03:s2:coverage", id="after the data"),
+        pytest.param({"end": "1990-12-31"}, "G03:s2:coverage", id="before the data"),
+    ],
+)  # fmt: skip
+def test_g03_invalid_periods(params: dict[str, Any], issue_id: str, catalog: Catalog) -> None:
+    raw = canned_plan("nasdaq_peak_5y")
+    step(raw, "s2")["params"] = params
+    report = validate(raw, catalog)
+    assert issue_id in [i.issue_id for i in report.blocks]
+    assert report.codes() == ["G03"]
+
+
+def test_a_partly_covered_period_passes(catalog: Catalog) -> None:
+    raw = canned_plan("nasdaq_peak_5y")
+    step(raw, "s2")["params"] = {"start": "1990-01-01", "end": "1997-06-30"}
+    assert validate(raw, catalog).issues == []  # too few rows left would be R02, at run time
+
+
+def test_null_is_accepted_only_for_nullable_params(catalog: Catalog) -> None:
+    raw = canned_plan("nasdaq_peak_5y")
+    step(raw, "s2")["params"] = {"lookback_years": 5, "start": None, "end": None}
+    assert validate(raw, catalog).issues == []
+    raw = raw_plan(SUCCESS)
+    step(raw, "s4")["params"] = {"window": None}
+    assert "G03:s4:window" in [i.issue_id for i in validate(raw, catalog).blocks]
 
 
 # --- G04 BAD_REFERENCE ----------------------------------------------------------
@@ -313,6 +365,10 @@ def test_dry_run_propagates_metadata(catalog: Catalog) -> None:
     mismatch = validate(raw_plan("frequency_mismatch_block"), catalog).dry_run
     assert mismatch["s6"]["data_type"] == "table"
     assert mismatch["s6"]["dataset_ids"] == ["NASDAQCOM", "VIXCLS"]
+    # filter_period keeps its input's kind and frequency; find_extremes gives a table.
+    period = validate(canned_plan("nasdaq_volatility_peak_since_2020"), catalog).dry_run
+    assert (period["s5"]["kind"], period["s5"]["frequency"]) == ("volatility", "W")
+    assert period["s6"]["data_type"] == "table" and period["s6"]["kind"] is None
 
 
 def test_tool_schema_excludes_system_fields_and_has_no_refs() -> None:

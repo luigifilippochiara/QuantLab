@@ -10,6 +10,7 @@ white and dark (#0e1117): lightness, chroma, colour-blind separation and contras
 all pass, so the same two colours work in either theme without detecting it.
 """
 
+import datetime
 import html
 from typing import Any
 
@@ -24,7 +25,7 @@ from quantlab.narrator import format_number
 from quantlab.registry import ParamSpec
 from quantlab.scenarios import SCENARIOS_BY_ID
 from quantlab.types import Artifact, DataType
-from quantlab.validation import Issue, Severity
+from quantlab.validation import Issue, Severity, parse_date
 
 SERIES_COLOR = "#3987e5"  # blue: the series itself
 REGIME_COLOR = "#d95926"  # orange: flagged regimes, and the second measure in grouped bars
@@ -34,6 +35,9 @@ SEVERITY_BADGE = {
     Severity.APPROVAL: ":orange-badge[APPROVAL]",
     Severity.WARN: ":yellow-badge[WARN]",
 }
+# Name of the first column for TABLE artifacts made of named rows.
+TABLE_ROW_NAMES = {"find_extremes": "extreme"}
+
 STATUS_BADGE = {
     "completed": ":green-badge[completed]",
     "ready": ":blue-badge[ready to execute]",
@@ -74,6 +78,14 @@ def dataset_name(catalog: Catalog, dataset_id: str) -> str:
 def dataset_names_help(catalog: Catalog) -> str:
     """Tooltip text listing the full name of every catalog dataset, one per line."""
     return "\n".join(f"- {dataset_name(catalog, d)}" for d in catalog.ids())
+
+
+def catalog_span(catalog: Catalog) -> tuple[datetime.date, datetime.date]:
+    """The earliest first date and the latest last date across the catalog's datasets."""
+    entries = list(catalog.entries.values())
+    first = min(datetime.date.fromisoformat(e.start_date) for e in entries)
+    last = max(datetime.date.fromisoformat(e.end_date) for e in entries)
+    return first, last
 
 
 def dataset_caption(catalog: Catalog, dataset_id: str) -> str:
@@ -343,10 +355,29 @@ def render_artifact(step_id: str, capability: str, artifact: Artifact, flags: pd
             "shaded on the chart of the series they were computed from."
         )
     elif artifact.data_type == DataType.TABLE:
-        rows = [{"statistic": k, "value": format_number(v)} for k, v in artifact.value.items()]
-        st.dataframe(pd.DataFrame(rows), hide_index=True, alt=f"{capability} table")
+        st.dataframe(
+            table_frame(capability, artifact.value), hide_index=True, alt=f"{capability} table"
+        )
     if meta.notes:
         st.caption("Recorded assumptions: " + escape_md("; ".join(meta.notes)))
+
+
+def table_frame(capability: str, table: dict[str, Any]) -> pd.DataFrame:
+    """A TABLE artifact as a DataFrame, with values formatted as in the facts sheet.
+
+    Named scalars give one row per statistic. Named rows, e.g. find_extremes'
+    {"max": {"date": ..., "value": ..., "tie_count": ...}}, give one row each,
+    with the row name first (column "extreme" for find_extremes).
+    """
+    if table and all(isinstance(row, dict) for row in table.values()):
+        first = TABLE_ROW_NAMES.get(capability, "row")
+        return pd.DataFrame(
+            [
+                {first: name, **{column: format_number(cell) for column, cell in row.items()}}
+                for name, row in table.items()
+            ]
+        )
+    return pd.DataFrame([{"statistic": k, "value": format_number(v)} for k, v in table.items()])
 
 
 def describe_params(params: dict[str, Any], edited: dict[str, Any]) -> str:
@@ -456,8 +487,10 @@ def param_widget(
     """Render an input widget for one parameter, limited to what the registry allows.
 
     Choices become select boxes, numbers become number inputs with the registry's
-    min/max, booleans become checkboxes, and dataset ids a select box of catalog
-    datasets shown by their full names.
+    min/max, booleans become checkboxes, dates become date inputs, and dataset
+    ids a select box of catalog datasets shown by their full names. A nullable
+    parameter (e.g. filter_period's start) gets a "set" checkbox first: unticked
+    means null. (A Streamlit input that has a value cannot be emptied again.)
 
     Args:
         spec_param: the parameter's registry spec.
@@ -493,14 +526,34 @@ def param_widget(
     if spec_param.type == "bool":
         start = current if isinstance(current, bool) else bool(spec_param.default)
         return st.checkbox(label, value=start, key=key, help=help_text, disabled=disabled)
+    if spec_param.nullable:
+        is_set = st.checkbox(
+            f"Set {spec_param.name}", value=current is not None, key=f"{key}-set",
+            help=f"Untick to leave {spec_param.name} unset (null).", disabled=disabled,
+        )  # fmt: skip
+        if not is_set:
+            return None
+    if spec_param.type == "date":
+        current_date = parse_date(current)
+        # Any date in the catalog is selectable, and the plan's own value always is.
+        low_date, high_date = catalog_span(catalog)
+        if current_date is not None:
+            low_date, high_date = min(low_date, current_date), max(high_date, current_date)
+        picked = st.date_input(
+            label, value=current_date, min_value=low_date, max_value=high_date,
+            format="YYYY-MM-DD", key=key, help=help_text, disabled=disabled,
+        )  # fmt: skip
+        # Plans hold dates as "YYYY-MM-DD" strings; an empty field is null.
+        return picked.isoformat() if picked is not None else None
     low, high = spec_param.min, spec_param.max
+    not_set = spec_param.nullable and current is None
     if spec_param.type == "int":
-        start = int(_clamp(current, low, high, low))
+        start = None if not_set else int(_clamp(current, low, high, low))
         return st.number_input(
             label, min_value=int(low), max_value=int(high), value=start, step=1, key=key,
             help=help_text, disabled=disabled,
         )  # fmt: skip
-    start = float(_clamp(current, low, high, low))
+    start = None if not_set else float(_clamp(current, low, high, low))
     return st.number_input(
         label, min_value=float(low), max_value=float(high), value=start, step=0.01,
         format="%.2f", key=key, help=help_text, disabled=disabled,

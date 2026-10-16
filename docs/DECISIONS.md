@@ -567,3 +567,82 @@ planner refuses (G13), and the misbehaving-planner test emits a `sarima` step
 that G02 blocks. `MOCK_PROMPT_VERSION` moved to `canned-scenarios-v4`; the plan
 cache key includes the request text, so plans cached for the old request are
 never reused.
+
+## Period filtering and extremes
+
+**Where `filter_period` goes in a plan.** It usually belongs right after
+`load_series` or at the end of the chain, and the planner prompt explains why the
+placement changes results: filtering BEFORE a rolling or expanding calculation
+shortens the history used for the window warm-up and for the expanding
+threshold's baseline (a 12-week volatility "since 2020" would then only start in
+March 2020, and an expanding 90th percentile would be judged against data since
+2020 only),
+while filtering AFTER keeps the full history for the calculation and only trims
+what is reported. When the user asks to *show* a recent period, the planner filters
+after the calculation, unless the user explicitly wants the calculation itself
+restricted to that period. The canned "volatility since 2020" plan and its golden
+case encode that default. Alternatives: always filter first (simplest to explain,
+but silently changes every rolling and expanding result), or let the validator
+reorder steps (rejected: the system never rewrites a plan; it only judges it).
+
+**"The last N years" is anchored to the last observation.** The window is
+(last date - N calendar years, last date], the convention of pandas' former
+`Series.last`: exactly N years, the anniversary date not counted twice. Anchoring
+to the data rather than to the system clock means a replay months later selects
+the same rows and reproduces the same hashes. The resolved, inclusive start and
+end dates are recorded in `ArtifactMeta.period_start` / `period_end`, in the step
+record of the manifest, in the step's notes and in the facts sheet. They are not
+inherited by later steps, like notes: each artifact describes its own step.
+Alternative: anchor to today, rejected because results would drift with the date
+of the run.
+
+**Two ways to give the period, one at a time.** `lookback_years`, `start` and `end`
+are optional parameters whose default is null; a new `ParamSpec.nullable` flag lets
+null mean "not set" for these only (every other parameter still rejects null).
+`check_period` (G03) blocks both ways at once, neither, a start not before the end,
+and a period entirely outside the coverage of the input's source datasets (from
+the catalog, so no data is read). These reuse G03 INVALID_PARAM rather than a new
+code: they are invalid parameter values, and the guardrail table stays stable.
+A period that overlaps the data only partly passes; if too few rows remain, the
+next step's R02 stops the run, and a new `MinObsRule.output_min_obs` makes R02 also
+check `filter_period`'s own output (at least 2 rows), since a period after the last
+complete week can be inside the catalog's coverage yet empty. Alternatives: two
+capabilities (`filter_lookback`, `filter_dates`), rejected as a bigger menu for one
+idea; a `mode` parameter, rejected as one more value to keep consistent.
+
+**A `date` parameter type and widgets for it.** Plans carry dates as "YYYY-MM-DD"
+strings (JSON has no date type); the validator accepts exactly that form and only
+real days (not 2021-02-30). The editor shows a date input bounded by the catalog's
+date range, and a bounded number input for `lookback_years`. A nullable parameter
+gets a "Set" checkbox in front of its widget, unticked meaning null, because a
+Streamlit input created with a value returns that value when emptied and so can
+never be cleared back to null. Edits go through `apply_param_edits` and the same
+validator as every other edit.
+
+**`find_extremes` returns a table of named rows.** `{"max": {"date", "value",
+"tie_count"}, "min": {...}}`, shown as columns extreme, date, value, tie_count.
+TABLE values may now be dicts of rows as well as dicts of scalars; the facts sheet
+flattens rows into `max_date`, `max_value`, `max_tie_count`. Missing values are
+dropped first. Ties use exact equality (the same recorded value) and report the
+earliest date with the number of tied dates, so the answer is never silently
+ambiguous. Alternative: `idxmax` alone, rejected because it hides ties.
+
+**Dates are facts in the grounding check.** Before, any ISO date inside the data
+range passed, so an invented peak date between the first and last observation
+would have been "verified". Now a date must be a date of the facts sheet; dates
+written in words ("19 November 2021", "Nov. 19, 2021") are parsed and checked the
+same way, a month ("November 2021") must contain a fact date, and a year on its own
+must still lie within the data range. The narrator prompt (narrator-v3) asks for
+dates exactly as displayed.
+
+**Further canned requests, kept apart from the example workflows.** Four requests
+using the new capabilities have canned plans (`scenarios.CANNED_REQUESTS`), matched
+by exact text or id only, before the examples' keywords: "Show weekly volatility
+for NASDAQ since 2020..." contains example 1's keywords but gets its own plan. They
+are golden cases too, so the mock evaluation scores them, but they are not sidebar
+buttons and `cli demo` still runs the five examples. The planner prompt moved to
+planner-v3 (the plan cache invalidates), the canned set to canned-scenarios-v5.
+
+**Synthetic test data now runs from 1996 to 2025.** The same 7,800 business days,
+values and Monday start, shifted six years, so tests can filter periods such as
+"since 2020"; weekly bars are unchanged and no existing test depended on the dates.

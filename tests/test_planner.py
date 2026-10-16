@@ -20,7 +20,7 @@ from quantlab.planner import (
     generate_plan,
     plan_from_output,
 )
-from quantlab.scenarios import SCENARIOS, SCENARIOS_BY_ID
+from quantlab.scenarios import CANNED_REQUESTS, SCENARIOS, SCENARIOS_BY_ID
 
 from fakes import (
     FakeAnthropicClient,
@@ -52,6 +52,25 @@ def test_mock_planner_matches_by_keyword() -> None:
     assert result.plan.cannot_fulfill  # scenario 3's refusal, not a NASDAQ plan
     result = MockPlanner().generate_plan("NASDAQ volatility flags, full-sample threshold", [])
     assert result.plan.steps[-1].params["method"] == "full_sample"  # scenario 2
+
+
+@pytest.mark.parametrize("canned", CANNED_REQUESTS, ids=lambda c: c.id)
+def test_mock_planner_answers_canned_requests_by_exact_text(canned) -> None:
+    for text in (canned.request, canned.id):
+        result = MockPlanner().generate_plan(text, list(canned.dataset_ids))
+        assert [s.capability for s in result.plan.steps] == [
+            s["capability"] for s in canned.plan["steps"]
+        ]
+    # The volatility request contains example 1's keywords (nasdaq, volatil), yet
+    # its exact text gets its own plan; a variation still matches example 1.
+    variation = MockPlanner().generate_plan("nasdaq volatility since 2020, and its peak", [])
+    assert variation.plan.steps[-1].capability == "flag_regime"
+
+
+def test_system_prompt_explains_filter_period_placement(catalog: Catalog) -> None:
+    prompt = build_system_prompt(catalog, ["NASDAQCOM"])
+    assert '"name": "filter_period"' in prompt and '"name": "find_extremes"' in prompt
+    assert "filter AFTER the calculation" in prompt and "BEFORE a rolling" in prompt
 
 
 def test_mock_planner_refuses_unknown_requests() -> None:

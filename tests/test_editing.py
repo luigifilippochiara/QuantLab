@@ -11,7 +11,7 @@ import pytest
 from quantlab.config import Settings
 from quantlab.engine import ExecutionRefusedError, Session
 from quantlab.lineage import Approval, load_run, replay
-from quantlab.scenarios import SCENARIOS_BY_ID
+from quantlab.scenarios import CANNED_REQUESTS_BY_ID, SCENARIOS_BY_ID
 
 from conftest import RETURN_METHOD_APPROVAL
 
@@ -82,6 +82,27 @@ def test_weekly_to_daily_warns_g14_and_runs_after_re_approval(settings: Settings
     assert session.execute().status == "completed"
     assert session.execution.artifacts["s4"].meta.frequency == "D"
     assert session.execution.artifacts["s4"].meta.notes[0].endswith("sqrt(252)")
+
+
+def test_switching_filter_period_from_lookback_to_dates(settings: Settings) -> None:
+    """Both ways at once is a G03; clearing one (null) makes the plan valid again."""
+    canned = CANNED_REQUESTS_BY_ID["nasdaq_peak_5y"]
+    session = Session.start(canned.request, list(canned.dataset_ids), "mock", settings)
+    session.create_plan()
+    report = session.apply_param_edits({"s2": {"start": "2020-01-01"}})
+    assert [i.issue_id for i in report.blocks] == ["G03:s2:period"]
+    report = session.apply_param_edits({"s2": {"lookback_years": None}})
+    assert report.issues == []
+    report = session.apply_param_edits({"s2": {"end": "2020-13-01"}})  # no 13th month
+    assert [i.issue_id for i in report.blocks] == ["G03:s2:end"]
+    session.apply_param_edits({"s2": {"end": "2022-12-31"}})
+    assert session.execute().status == "completed"
+    record = session.build_record()
+    assert {(c.param, c.original, c.final) for c in record.param_diff} == {
+        ("lookback_years", 5, None),
+        ("start", None, "2020-01-01"),
+        ("end", None, "2022-12-31"),
+    }
 
 
 # --- approvals belong to one plan version ----------------------------------------

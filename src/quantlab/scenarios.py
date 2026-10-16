@@ -17,6 +17,10 @@ Role in the architecture: pure data, shared by
 - the Streamlit sidebar (buttons that prefill the request),
 - the tests and the evaluation golden set.
 
+A few further CANNED_REQUESTS give the MockPlanner plans for requests that use
+filter_period and find_extremes. They are matched by exact text only and are
+not example workflows: the sidebar and `cli demo` show the five examples.
+
 The canned plans are written exactly as the LLM is asked to write them: only
 the fields of `plan.plan_tool_schema()`. Scenario 5's plan is deliberately
 misaligned, so that the validator, not the planner, has to catch the problem.
@@ -289,3 +293,200 @@ def match_scenario(request: str) -> Scenario | None:
         if all(any(word in lowered for word in group) for group in scenario.keywords):
             return scenario
     return None
+
+
+# ---------------------------------------------------------------------------
+# Further canned requests (mock mode): period filtering and extremes
+# ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class CannedRequest:
+    """A request the MockPlanner answers with a hand-written plan, besides the examples.
+
+    Matched by exact request text or id only, never by keywords, so the example
+    workflows keep their matching. All of them run to completion.
+
+    Fields:
+        id: stable identifier, e.g. "nasdaq_peak_5y".
+        request: the natural-language request.
+        dataset_ids: datasets selected for the request.
+        expected_codes: the static issue codes the canned plan raises, exactly.
+        plan: the canned planner output (LLM-shaped plan dict).
+    """
+
+    id: str
+    request: str
+    dataset_ids: tuple[str, ...]
+    expected_codes: tuple[str, ...]
+    plan: dict[str, Any]
+
+
+CANNED_REQUESTS: list[CannedRequest] = [
+    CannedRequest(
+        id="nasdaq_peak_5y",
+        request="When was NASDAQ at its highest over the last 5 years?",
+        dataset_ids=("NASDAQCOM",),
+        expected_codes=(),
+        plan=_plan(
+            ["NASDAQCOM"],
+            [
+                _step(
+                    "s1",
+                    "load_series",
+                    params={"dataset_id": "NASDAQCOM"},
+                    rationale="Load the NASDAQ Composite daily closes.",
+                ),
+                _step(
+                    "s2",
+                    "filter_period",
+                    {"series": "s1"},
+                    {"lookback_years": 5},
+                    rationale="Keep the last 5 years of closes.",
+                ),
+                _step(
+                    "s3",
+                    "find_extremes",
+                    {"series": "s2"},
+                    {"which": "max"},
+                    rationale="Find the date of the highest close in that period.",
+                ),
+            ],
+            "The last 5 years are counted back from the last close in the data, not from today.",
+        ),
+    ),
+    CannedRequest(
+        id="nasdaq_volatility_peak_since_2020",
+        request="Show weekly volatility for NASDAQ since 2020 and tell me when it peaked.",
+        dataset_ids=("NASDAQCOM",),
+        expected_codes=("G12",),
+        plan=_plan(
+            ["NASDAQCOM"],
+            [
+                _step(
+                    "s1",
+                    "load_series",
+                    params={"dataset_id": "NASDAQCOM"},
+                    rationale="Load the NASDAQ Composite daily closes.",
+                ),
+                _step(
+                    "s2",
+                    "resample",
+                    {"series": "s1"},
+                    {"freq": "W", "how": "last"},
+                    rationale="Weekly Friday closes.",
+                ),
+                _step(
+                    "s3",
+                    "compute_returns",
+                    {"series": "s2"},
+                    {"method": "simple"},
+                    rationale="Simple weekly returns.",
+                ),
+                _step(
+                    "s4",
+                    "rolling_volatility",
+                    {"series": "s3"},
+                    {"window": 12},
+                    rationale="12-week rolling annualised volatility on the full history.",
+                ),
+                _step(
+                    "s5",
+                    "filter_period",
+                    {"series": "s4"},
+                    {"start": "2020-01-01"},
+                    rationale="Show the volatility from 2020 onwards.",
+                ),
+                _step(
+                    "s6",
+                    "find_extremes",
+                    {"series": "s5"},
+                    {"which": "max"},
+                    rationale="Find the week volatility peaked since 2020.",
+                ),
+            ],
+            "Volatility is computed on the full history and then restricted to 2020 onwards, "
+            "so the first weeks of 2020 already have a complete 12-week window. The 12-week "
+            "window is an assumption: the request does not give one.",
+        ),
+    ),
+    CannedRequest(
+        id="vix_extremes",
+        request="When was the VIX at its highest and lowest?",
+        dataset_ids=("VIXCLS",),
+        expected_codes=(),
+        plan=_plan(
+            ["VIXCLS"],
+            [
+                _step(
+                    "s1",
+                    "load_series",
+                    params={"dataset_id": "VIXCLS"},
+                    rationale="Load the daily VIX level.",
+                ),
+                _step(
+                    "s2",
+                    "find_extremes",
+                    {"series": "s1"},
+                    {"which": "both"},
+                    rationale="Find the dates of the highest and lowest VIX close.",
+                ),
+            ],
+            "Uses the full history of the VIX snapshot.",
+        ),
+    ),
+    CannedRequest(
+        id="sp500_returns_2022",
+        request="Summary statistics of daily S&P 500 returns in 2022.",
+        dataset_ids=("SP500",),
+        expected_codes=("G12",),
+        plan=_plan(
+            ["SP500"],
+            [
+                _step(
+                    "s1",
+                    "load_series",
+                    params={"dataset_id": "SP500"},
+                    rationale="Load the S&P 500 daily closes.",
+                ),
+                _step(
+                    "s2",
+                    "compute_returns",
+                    {"series": "s1"},
+                    {"method": "simple"},
+                    rationale="Simple daily returns.",
+                ),
+                _step(
+                    "s3",
+                    "filter_period",
+                    {"series": "s2"},
+                    {"start": "2022-01-01", "end": "2022-12-31"},
+                    rationale="Keep the returns dated in 2022.",
+                ),
+                _step(
+                    "s4",
+                    "summary_stats",
+                    {"series": "s3"},
+                    rationale="Summarise the 2022 daily returns.",
+                ),
+            ],
+            "Returns are computed before filtering, so the first return of 2022 (from the "
+            "last close of 2021) is included.",
+        ),
+    ),
+]
+
+CANNED_REQUESTS_BY_ID: dict[str, CannedRequest] = {c.id: c for c in CANNED_REQUESTS}
+
+
+def match_canned_request(request: str) -> CannedRequest | None:
+    """Find the canned request with exactly this text or id.
+
+    Args:
+        request: the user's request.
+
+    Returns:
+        The matching CannedRequest, or None.
+    """
+    text = request.strip()
+    return next((c for c in CANNED_REQUESTS if text in (c.request, c.id)), None)

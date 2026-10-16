@@ -16,10 +16,12 @@ EXPECTED = [
     "flag_regime",
     "summary_stats",
     "compare_groups",
+    "filter_period",
+    "find_extremes",
 ]
 
 
-def test_exactly_the_nine_capabilities() -> None:
+def test_exactly_the_eleven_capabilities() -> None:
     assert list(REGISTRY) == EXPECTED
     for name, spec in REGISTRY.items():
         assert spec.name == name
@@ -55,6 +57,12 @@ def test_llm_summary_is_complete_and_hides_internals() -> None:
     returns = summary[EXPECTED.index("compute_returns")]
     assert returns["params"][0]["choices"] == ["simple", "log"]
     assert returns["inputs"][0]["kinds"] == ["price_level", "index_level"]
+    period = summary[EXPECTED.index("filter_period")]
+    assert [(p["name"], p["type"], p.get("nullable")) for p in period["params"]] == [
+        ("lookback_years", "int", True),
+        ("start", "date", True),
+        ("end", "date", True),
+    ]
 
 
 def test_registry_version_is_a_stable_hash() -> None:

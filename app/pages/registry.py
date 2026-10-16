@@ -7,10 +7,20 @@ so this page cannot drift from what the validator and executor enforce.
 import pandas as pd
 import streamlit as st
 
-from quantlab.registry import REGISTRY, llm_summary, registry_version
+from quantlab.registry import REGISTRY, ParamSpec, llm_summary, registry_version
 from quantlab.validation import GUARDRAILS
 
 import ui
+
+
+def allowed_values(p: ParamSpec) -> str:
+    """What a parameter accepts, in a few words: its choices, its range or its date format."""
+    if p.choices:
+        return ", ".join(p.choices)
+    if p.min is not None:
+        return f"{p.min:g} to {p.max:g}"
+    return "YYYY-MM-DD" if p.type == "date" else "-"
+
 
 st.title("Capability registry")
 st.caption(
@@ -49,10 +59,10 @@ for spec in REGISTRY.values():
                             "parameter": p.name,
                             "type": p.type,
                             "required": p.required,
-                            "default": "-" if p.required else str(p.default),
-                            "allowed": ", ".join(p.choices)
-                            if p.choices
-                            else (f"{p.min:g} to {p.max:g}" if p.min is not None else "-"),
+                            "default": "-"
+                            if p.required
+                            else ("null (not set)" if p.default is None else str(p.default)),
+                            "allowed": allowed_values(p),
                             "description": p.description,
                         }
                         for p in spec.params

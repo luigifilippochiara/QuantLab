@@ -24,7 +24,9 @@ class DataType(StrEnum):
 
     SERIES = "series"  # float time series: pd.Series with a DatetimeIndex
     FLAGS = "flags"  # boolean time series: pd.Series of bool with a DatetimeIndex
-    TABLE = "table"  # dict of named scalars, e.g. summary statistics
+    # dict of named scalars (e.g. summary statistics), or of named rows that are
+    # dicts of scalars (e.g. find_extremes: {"max": {"date": ..., "value": ...}})
+    TABLE = "table"
 
 
 class SeriesKind(StrEnum):
@@ -68,6 +70,8 @@ class ArtifactMeta:
         periods: the lag used by compute_returns / difference (1 = one-period changes).
         n_dropped_missing: load_series only, missing values dropped from the raw file.
         notes: human-readable assumptions recorded at run time (e.g. annualisation factor).
+        period_start: filter_period only, first date of the resolved interval (inclusive).
+        period_end: filter_period only, last date of the resolved interval (inclusive).
     """
 
     kind: SeriesKind | None
@@ -80,6 +84,8 @@ class ArtifactMeta:
     periods: int | None = None
     n_dropped_missing: int | None = None
     notes: list[str] = field(default_factory=list)
+    period_start: str | None = None
+    period_end: str | None = None
 
 
 @dataclass

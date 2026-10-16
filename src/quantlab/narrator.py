@@ -8,7 +8,8 @@ to use only those numbers, exactly as displayed, and to do no arithmetic.
 Then `check_grounding` verifies that claim deterministically: it extracts every
 number from the narrative and checks that each one is a correct rounding of a
 computed fact (or its x100 percentage form), a plan parameter, a number from the
-request or a warning, an annualisation factor, or a date inside the data range.
+request or a warning, or an annualisation factor. Dates are facts too: every
+date in the narrative must be a date of the facts sheet.
 The UI shows "all numbers verified" or lists the ungrounded numbers. The
 deterministic results table is always shown as the source of truth.
 
@@ -20,6 +21,7 @@ import math
 import re
 import time
 from dataclasses import dataclass
+from datetime import date
 from typing import Any
 
 from pydantic import BaseModel, Field
@@ -36,7 +38,7 @@ from quantlab.planner import (
 from quantlab.types import ANNUALISATION_FACTORS, Artifact, DataType
 from quantlab.validation import Issue
 
-NARRATOR_PROMPT_VERSION = "narrator-v2"
+NARRATOR_PROMPT_VERSION = "narrator-v3"
 
 SYSTEM_PROMPT = """\
 You write short, plain-English summaries of quantitative analysis results for a bank's \
@@ -47,9 +49,11 @@ Rules:
 write a decimal as a percentage (0.1275 as 12.75%).
 2. Do no arithmetic: no new differences, ratios, sums or rounding of your own.
 3. Do not add numbers from your own knowledge (no dates, levels or thresholds that are not given).
-4. Mention every warning and approved assumption that affects how the results should be read.
-5. Describe what was computed; do not claim causes, forecasts or statistical significance.
-6. Write 3 to 6 sentences as one paragraph. No headings, no bullet points.
+4. Dates are facts too: mention only dates from the FACTS SHEET, written exactly as displayed \
+(YYYY-MM-DD).
+5. Mention every warning and approved assumption that affects how the results should be read.
+6. Describe what was computed; do not claim causes, forecasts or statistical significance.
+7. Write 3 to 6 sentences as one paragraph. No headings, no bullet points.
 """
 
 # A number in text: digits with optional thousands separators and decimals.
@@ -57,6 +61,19 @@ write a decimal as a percentage (0.1275 as 12.75%).
 # guardrail codes (R04), dataset ids (DGS10) and release names (H.15).
 NUMBER_PATTERN = re.compile(r"(?<![\w.])(\d{1,3}(?:,\d{3})+|\d+)(\.\d+)?")
 DATE_PATTERN = re.compile(r"\b\d{4}-\d{2}-\d{2}\b")
+
+# Dates written in words, so "on 19 November 2021" cannot slip past the date
+# check as the plain numbers 19 and 2021. Full month names or their usual
+# abbreviations; the \b keeps words such as "market" or "decline" from matching.
+MONTH = (
+    r"(january|february|march|april|may|june|july|august|september|october|november|"
+    r"december|jan|feb|mar|apr|jun|jul|aug|sept|sep|oct|nov|dec)\b\.?"
+)
+MONTHS = {"jan": 1, "feb": 2, "mar": 3, "apr": 4, "may": 5, "jun": 6,
+          "jul": 7, "aug": 8, "sep": 9, "oct": 10, "nov": 11, "dec": 12}  # fmt: skip
+DAY_MONTH_YEAR = re.compile(rf"\b(\d{{1,2}})(?:st|nd|rd|th)?\s+{MONTH}\s*,?\s+(\d{{4}})\b", re.I)
+MONTH_DAY_YEAR = re.compile(rf"\b{MONTH}\s+(\d{{1,2}})(?:st|nd|rd|th)?\s*,?\s+(\d{{4}})\b", re.I)
+MONTH_YEAR = re.compile(rf"\b{MONTH}\s+(\d{{4}})\b", re.I)
 
 
 class Fact(BaseModel):
@@ -176,15 +193,22 @@ def build_facts_sheet(plan: Plan, artifacts: dict[str, Artifact]) -> list[Fact]:
             add(step.id, cap, "start", meta.start)
             add(step.id, cap, "end", meta.end)
             add(step.id, cap, "last_value", float(artifact.value.iloc[-1]))
+            if meta.period_start is not None:  # filter_period: the resolved interval
+                add(step.id, cap, "period_start", meta.period_start)
+                add(step.id, cap, "period_end", meta.period_end)
         elif artifact.data_type == DataType.FLAGS:
             flags = artifact.value
             add(step.id, cap, "n_obs", meta.n_obs)
             add(step.id, cap, "n_flagged", int(flags.sum()))
             add(step.id, cap, "share_flagged", float(flags.mean()))
             add(step.id, cap, "n_episodes", count_episodes(flags))
-        else:  # TABLE
+        else:  # TABLE: named scalars, or named rows such as find_extremes' "max"
             for key, value in artifact.value.items():
-                add(step.id, cap, key, value)
+                if isinstance(value, dict):  # e.g. "max_date", "max_value", "max_tie_count"
+                    for column, cell in value.items():
+                        add(step.id, cap, f"{key}_{column}", cell)
+                else:
+                    add(step.id, cap, key, value)
     return facts
 
 
@@ -204,18 +228,45 @@ def _numbers_in(text: str) -> list[tuple[str, float, int]]:
     return found
 
 
+def _written_dates(text: str) -> tuple[list[tuple[str, str | None]], str]:
+    """Find dates written in words, e.g. "19 November 2021" or "Nov 19, 2021".
+
+    Args:
+        text: narrative text (ISO dates already removed).
+
+    Returns:
+        ([(as written, ISO date or None if no such day exists)], the text with
+        those dates blanked out so their numbers are not checked again).
+    """
+    found: list[tuple[str, str | None]] = []
+
+    def to_iso(match: re.Match, day: str, month: str, year: str) -> str:
+        try:
+            iso = date(int(year), MONTHS[month[:3].lower()], int(day)).isoformat()
+        except ValueError:  # e.g. "31 February 2021": not a real day, so never grounded
+            iso = None
+        found.append((match.group(0), iso))
+        return " "
+
+    text = DAY_MONTH_YEAR.sub(lambda m: to_iso(m, m.group(1), m.group(2), m.group(3)), text)
+    text = MONTH_DAY_YEAR.sub(lambda m: to_iso(m, m.group(2), m.group(1), m.group(3)), text)
+    return found, text
+
+
 def check_grounding(
     narrative: str, facts: list[Fact], plan: Plan, extra_texts: list[str] | None = None
 ) -> GroundingResult:
-    """Check that every number in a narrative comes from the computed results or the inputs.
+    """Check that every number and date in a narrative comes from the results or the inputs.
 
     A number written with d decimals is grounded if it is within half a unit of
     its last digit of an allowed value, i.e. it is a correct rounding of it.
     Allowed values: each fact's value and its x100 form (percentages), numbers
     in the facts' display strings, numeric plan parameters (and x100), numbers in
     `extra_texts` (the request, warning messages, dataset titles) and the
-    annualisation factors. Dates and years are grounded if they lie within the
-    date range of the facts.
+    annualisation factors. Dates are facts: a date (YYYY-MM-DD, or written in
+    words such as "19 November 2021") is grounded only if it is a date of the
+    facts sheet, and a month ("November 2021") only if a fact date falls in it.
+    A year on its own is grounded if it lies within the date range of the facts.
 
     Limitation: this proves each number is a correct rounding of SOME allowed
     value, not that it is attached to the right concept in the sentence.
@@ -250,12 +301,24 @@ def check_grounding(
     ungrounded: list[str] = []
     checked = 0
 
-    # Dates first (and remove them, so "2026-10-09" is not read as 2026, 10 and 09).
-    for date in DATE_PATTERN.findall(narrative):
+    # Dates first, removing them so "2026-10-09" is not read as 2026, 10 and 09.
+    # A date must BE a fact: being inside the data range is not enough, or an
+    # invented peak date between the first and last observation would pass.
+    for iso in DATE_PATTERN.findall(narrative):
         checked += 1
-        if not (dates and first_date <= date <= last_date):
-            ungrounded.append(date)
-    remaining = DATE_PATTERN.sub(" ", narrative)
+        if iso not in dates:
+            ungrounded.append(iso)
+    written, remaining = _written_dates(DATE_PATTERN.sub(" ", narrative))
+    for text, iso in written:
+        checked += 1
+        if iso not in dates:
+            ungrounded.append(text)
+    for match in MONTH_YEAR.finditer(remaining):
+        checked += 1
+        month = f"{match.group(2)}-{MONTHS[match.group(1)[:3].lower()]:02d}"
+        if not any(d.startswith(month) for d in dates):
+            ungrounded.append(match.group(0))
+    remaining = MONTH_YEAR.sub(" ", remaining)
 
     for written, value, decimals in _numbers_in(remaining):
         checked += 1
@@ -272,6 +335,13 @@ def check_grounding(
 # ---------------------------------------------------------------------------
 # Template narrator (deterministic, no LLM)
 # ---------------------------------------------------------------------------
+
+
+def _input_name(step: Any, artifacts: dict[str, Artifact]) -> str:
+    """Name the series a step summarised, e.g. "the returns series (s2)"."""
+    source = step.inputs.get("series", "")
+    kind = artifacts[source].meta.kind if source in artifacts else None
+    return f"the {kind} series ({source})" if kind else f"the series ({source})"
 
 
 def template_narrative(
@@ -325,11 +395,23 @@ def template_narrative(
                 f"over {d['n_flagged']} flagged and {d['n_normal']} normal observations; this "
                 "is descriptive, not a statistical test."
             )
+        elif cap == "filter_period":
+            sentences.append(
+                f"The selected period ({sid}) runs from {d['period_start']} to "
+                f"{d['period_end']} and holds {d['n_obs']} observations."
+            )
+        elif cap == "find_extremes":
+            parts = []
+            for extreme, word in (("max", "maximum"), ("min", "minimum")):
+                if f"{extreme}_date" not in d:
+                    continue
+                part = f"its {word} was {d[extreme + '_value']} on {d[extreme + '_date']}"
+                if artifacts[sid].value[extreme]["tie_count"] > 1:
+                    part += f" (the earliest of {d[extreme + '_tie_count']} dates with that value)"
+                parts.append(part)
+            sentences.append(f"For {_input_name(step, artifacts)}, {' and '.join(parts)}.")
         elif cap == "summary_stats":
-            # Name what was summarised, e.g. "the returns series (s2)".
-            source = step.inputs.get("series", "")
-            kind = artifacts[source].meta.kind if source in artifacts else None
-            what = f"the {kind} series ({source})" if kind else f"the series ({source})"
+            what = _input_name(step, artifacts)
             sentences.append(
                 f"Over {d['count']} observations, {what} has mean {d['mean']}, "
                 f"standard deviation {d['std']}, minimum {d['min']} and maximum {d['max']} "

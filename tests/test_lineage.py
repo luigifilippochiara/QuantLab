@@ -1,9 +1,11 @@
 """Run records, replay and trace: a run can be saved, reproduced bit-for-bit and explained."""
 
 import hashlib
+import json
 
 from quantlab.config import Settings
 from quantlab.data import Catalog
+from quantlab.engine import run_request
 from quantlab.executor import execute_plan
 from quantlab.lineage import (
     Approval,
@@ -19,6 +21,7 @@ from quantlab.lineage import (
 )
 from quantlab.monitoring import read_events
 from quantlab.registry import registry_version
+from quantlab.scenarios import CANNED_REQUESTS_BY_ID
 from quantlab.validation import validate_plan
 
 from conftest import RETURN_METHOD_APPROVAL, SPREAD_PLAN, as_plan, raw_plan
@@ -122,3 +125,22 @@ def test_scenario_6_trace_from_the_flags_back_to_the_nasdaq_file(
         entry.retrieved_at,
     )
     assert source.start and source.end and source.rows_used
+
+
+def test_replay_of_a_period_and_extremes_run_matches(settings: Settings) -> None:
+    """Both new capabilities replay identically; the manifest keeps the resolved period."""
+    canned = CANNED_REQUESTS_BY_ID["nasdaq_volatility_peak_since_2020"]
+    session = run_request(canned.request, list(canned.dataset_ids), "mock", approve=True,
+                          settings=settings)  # fmt: skip
+    assert session.status == "completed"
+
+    record = load_run(session.run_id, settings.runs_dir)
+    period = next(step for step in record.steps if step.capability == "filter_period")
+    assert period.meta["period_start"] == "2020-01-01"
+    assert period.meta["period_end"] == period.end  # the last weekly observation
+    extremes = settings.runs_dir / session.run_id / "outputs" / "s6_find_extremes.json"
+    assert json.loads(extremes.read_text())["max"]["tie_count"] == 1
+
+    report = replay(session.run_id, settings)
+    assert report.all_match, report.message
+    assert [s.capability for s in report.steps][-2:] == ["filter_period", "find_extremes"]

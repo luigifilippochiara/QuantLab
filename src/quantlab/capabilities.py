@@ -1,6 +1,6 @@
 """Capability functions: the pre-written, tested quantitative building blocks.
 
-Role in the architecture: these 9 functions are the ONLY code that calls
+Role in the architecture: these 11 functions are the ONLY code that calls
 pandas / numpy for analysis. A plan can only *name* one of them (via the
 registry in registry.py); it can never supply code. Each function:
 
@@ -59,14 +59,16 @@ def derive_meta(base: ArtifactMeta, value: pd.Series | None, **changes: Any) -> 
         **changes: fields to override, e.g. kind=SeriesKind.RETURNS.
 
     Returns:
-        A new ArtifactMeta. Notes are NOT inherited: each artifact lists only the
-        assumptions made by the step that produced it (the trace shows the chain).
+        A new ArtifactMeta. Notes and the filter_period interval are NOT inherited:
+        each artifact describes only the step that produced it (the trace shows
+        the chain).
     """
     span: dict[str, Any] = {}
     if value is not None:
         n_obs, start, end = date_span(value)
         span = {"n_obs": n_obs, "start": start, "end": end}
-    return replace(base, **{"notes": [], **span, **changes})
+    step_only = {"notes": [], "period_start": None, "period_end": None}
+    return replace(base, **{**step_only, **span, **changes})
 
 
 def inner_join(left: pd.Series, right: pd.Series, names: tuple[str, str]) -> pd.DataFrame:
@@ -459,4 +461,113 @@ def compare_groups(values: Artifact, flags: Artifact) -> Artifact:
         source_dataset_ids=merged_sources(values, flags),
         notes=[note],
     )
+    return Artifact(value=table, data_type=DataType.TABLE, meta=meta)
+
+
+# ---------------------------------------------------------------------------
+# 10. filter_period
+# ---------------------------------------------------------------------------
+
+
+def filter_period(
+    series: Artifact,
+    lookback_years: int | None = None,
+    start: str | None = None,
+    end: str | None = None,
+) -> Artifact:
+    """Restrict a series to a time interval: the last N years, or explicit dates.
+
+    Exactly one of the two ways must be used (the validator enforces it with G03
+    before anything runs; the check here is a second line of defence).
+
+    Args:
+        series: SERIES artifact.
+        lookback_years: keep the last N years, counted back from the series' LAST
+            OBSERVATION, never from today's date.
+        start: first date to keep, "YYYY-MM-DD", inclusive (None = from the first observation).
+        end: last date to keep, "YYYY-MM-DD", inclusive (None = up to the last observation).
+
+    Returns:
+        SERIES artifact with the same kind and frequency. meta.period_start and
+        meta.period_end record the resolved interval (inclusive). It may be
+        empty; the executor then stops the run with R02.
+
+    Raises:
+        ValueError: if both ways or neither are given, if start is not before
+            end, or if the input series is empty.
+    """
+    x = series.value
+    explicit = start is not None or end is not None
+    if (lookback_years is not None) == explicit:
+        raise ValueError("give either lookback_years or start/end, not both and not neither.")
+    if start is not None and end is not None and start >= end:
+        raise ValueError(f"start {start} must be before end {end}.")
+    if x.empty:
+        raise ValueError("cannot filter an empty series.")
+
+    if lookback_years is not None:
+        # Anchored to the last observation, not to the system clock: the same data
+        # then gives the same window whenever the plan is run or replayed.
+        anchor = x.index[-1]
+        # Calendar years (DateOffset turns 29 February into 28 February). The window
+        # is (anchor - N years, anchor], as in pandas' former Series.last: it spans
+        # exactly N years, so the anniversary date itself is not counted twice.
+        first = anchor - pd.DateOffset(years=lookback_years) + pd.Timedelta(days=1)
+        last = anchor
+        how = f"the last {lookback_years} year(s), counted back from the last observation"
+    else:
+        first = pd.Timestamp(start) if start is not None else x.index[0]
+        last = pd.Timestamp(end) if end is not None else x.index[-1]
+        how = "explicit dates"
+
+    kept = x[(x.index >= first) & (x.index <= last)]
+    meta = derive_meta(
+        series.meta,
+        kept,
+        period_start=f"{first:%Y-%m-%d}",
+        period_end=f"{last:%Y-%m-%d}",
+        notes=[f"kept {first:%Y-%m-%d} to {last:%Y-%m-%d} inclusive ({how})"],
+    )
+    return Artifact(value=kept, data_type=DataType.SERIES, meta=meta)
+
+
+# ---------------------------------------------------------------------------
+# 11. find_extremes
+# ---------------------------------------------------------------------------
+
+
+def find_extremes(series: Artifact, which: str = "both") -> Artifact:
+    """When a series reached its maximum and/or minimum, and the value there.
+
+    Args:
+        series: SERIES artifact of any kind (a level, returns, a volatility...).
+        which: "max", "min" or "both".
+
+    Returns:
+        TABLE artifact with one row per extreme, e.g.
+        {"max": {"date": "2021-11-19", "value": 16057.44, "tie_count": 1}}.
+        tie_count is the number of dates on which the extreme value occurs
+        (1 = unique); on a tie the EARLIEST of those dates is reported.
+
+    Raises:
+        ValueError: if the series has no non-missing values.
+    """
+    # A missing value is not an observation, so it can never be an extreme.
+    x = series.value.dropna()
+    if x.empty:
+        raise ValueError("the series has no observations.")
+    table = {}
+    for extreme in ("max", "min") if which == "both" else (which,):
+        value = x.max() if extreme == "max" else x.min()
+        # Every date with exactly the extreme value. Exact equality on purpose: a tie
+        # means the same recorded value. The index is in time order, so the first
+        # date is the earliest, and the count keeps a tie from being silently hidden.
+        dates = x.index[x == value]
+        table[extreme] = {
+            "date": f"{dates[0]:%Y-%m-%d}",
+            "value": float(value),
+            "tie_count": len(dates),
+        }
+    note = "missing values ignored; on a tie the earliest date is reported (see tie_count)"
+    meta = derive_meta(series.meta, x, kind=None, notes=[note])
     return Artifact(value=table, data_type=DataType.TABLE, meta=meta)

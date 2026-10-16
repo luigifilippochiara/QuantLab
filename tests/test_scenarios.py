@@ -12,7 +12,7 @@ import pytest
 
 from quantlab.config import Settings
 from quantlab.engine import ExecutionRefusedError, Session, run_request
-from quantlab.scenarios import SCENARIOS, SCENARIOS_BY_ID, Scenario
+from quantlab.scenarios import CANNED_REQUESTS, SCENARIOS, SCENARIOS_BY_ID, CannedRequest, Scenario
 
 from conftest import RETURN_METHOD_APPROVAL, SARIMA_PLAN
 from fakes import FakeAnthropicClient, tool_response
@@ -42,6 +42,17 @@ def test_scenario_end_to_end(scenario: Scenario, settings: Settings) -> None:
         assert session.narrative.grounding.grounded
     else:
         assert session.execution is None  # nothing ran
+
+
+@pytest.mark.parametrize("canned", CANNED_REQUESTS, ids=lambda c: c.id)
+def test_canned_request_end_to_end(canned: CannedRequest, settings: Settings) -> None:
+    """The mock-mode plans for filter_period and find_extremes run and narrate cleanly."""
+    session = run_request(canned.request, list(canned.dataset_ids), "mock", approve=True,
+                          settings=settings)  # fmt: skip
+    assert session.status == "completed", session.build_record().error
+    assert session.report.codes() == sorted(canned.expected_codes)
+    assert not session.execution.issues
+    assert session.narrative.grounding.grounded, session.narrative.grounding.ungrounded
 
 
 def test_scenario_1_needs_one_approval_then_flags_weeks(settings: Settings) -> None:

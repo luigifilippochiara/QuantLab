@@ -282,3 +282,116 @@ def test_compare_groups_refuses_an_empty_group() -> None:
     flags = make_artifact([False, False], kind=SeriesKind.FLAGS, data_type=DataType.FLAGS)
     with pytest.raises(ValueError, match="both groups"):
         cap.compare_groups(values, flags)
+
+
+# --- filter_period --------------------------------------------------------------
+
+
+def test_lookback_is_anchored_to_the_last_observation() -> None:
+    # 84 month-ends, 2018-01-31 .. 2024-12-31. The last 2 years end at the last
+    # observation (2024-12-31), not today: the window is (2022-12-31, 2024-12-31].
+    monthly = make_artifact(np.arange(1.0, 85.0), freq=Frequency.M, start="2018-01-31")
+    out = cap.filter_period(monthly, lookback_years=2)
+    assert out.meta.n_obs == 24
+    assert (out.meta.start, out.meta.end) == ("2023-01-31", "2024-12-31")
+    assert out.value.tolist() == list(np.arange(61.0, 85.0))  # months 61..84
+    assert (out.meta.period_start, out.meta.period_end) == ("2023-01-01", "2024-12-31")
+
+
+def test_lookback_excludes_the_anniversary_date() -> None:
+    # Business days 2023-03-01 .. Fri 2024-03-15. One year back is Wed 2023-03-15,
+    # which is excluded, so exactly one year of observations remains.
+    days = pd.bdate_range("2023-03-01", "2024-03-15")
+    daily = make_artifact(np.ones(len(days)), freq=Frequency.D, start="2023-03-01")
+    out = cap.filter_period(daily, lookback_years=1)
+    assert out.meta.start == "2023-03-16" and out.meta.period_start == "2023-03-16"
+    assert out.meta.period_end == "2024-03-15"
+
+
+def test_lookback_from_a_leap_day() -> None:
+    # Thu 2024-02-29 minus one calendar year is 2023-02-28 (excluded).
+    days = pd.bdate_range("2023-02-01", "2024-02-29")
+    daily = make_artifact(np.ones(len(days)), freq=Frequency.D, start="2023-02-01")
+    out = cap.filter_period(daily, lookback_years=1)
+    assert (out.meta.period_start, out.meta.start) == ("2023-03-01", "2023-03-01")
+
+
+def test_explicit_start_and_end_are_inclusive() -> None:
+    # Fridays 2024-01-05 .. 2024-03-08 with values 1..10.
+    weekly = make_artifact(np.arange(1.0, 11.0), kind=SeriesKind.RETURNS, return_method="log")
+    out = cap.filter_period(weekly, start="2024-01-12", end="2024-02-02")
+    assert out.value.tolist() == [2.0, 3.0, 4.0, 5.0]  # 01-12, 01-19, 01-26, 02-02
+    assert (out.meta.period_start, out.meta.period_end) == ("2024-01-12", "2024-02-02")
+    # Same kind, frequency and return method as the input; the interval is in the notes.
+    assert (out.meta.kind, out.meta.frequency) == (SeriesKind.RETURNS, Frequency.W)
+    assert out.meta.return_method == "log"
+    assert out.meta.notes == ["kept 2024-01-12 to 2024-02-02 inclusive (explicit dates)"]
+
+
+def test_open_ended_periods_resolve_to_the_data_edges() -> None:
+    weekly = make_artifact(np.arange(1.0, 11.0))  # 2024-01-05 .. 2024-03-08
+    since = cap.filter_period(weekly, start="2024-02-20")
+    assert since.value.tolist() == [8.0, 9.0, 10.0]  # 02-23, 03-01, 03-08
+    assert (since.meta.period_start, since.meta.period_end) == ("2024-02-20", "2024-03-08")
+    until = cap.filter_period(weekly, end="2024-01-15")
+    assert until.value.tolist() == [1.0, 2.0]
+    assert (until.meta.period_start, until.meta.period_end) == ("2024-01-05", "2024-01-15")
+
+
+@pytest.mark.parametrize(
+    "params",
+    [
+        {"lookback_years": 1, "start": "2024-01-12"},  # both ways
+        {},  # neither
+        {"start": "2024-02-02", "end": "2024-01-12"},  # start after end
+    ],
+)
+def test_filter_period_refuses_an_ambiguous_interval(params: dict) -> None:
+    with pytest.raises(ValueError):
+        cap.filter_period(make_artifact(np.arange(1.0, 11.0)), **params)
+
+
+def test_filter_period_metadata_is_not_inherited() -> None:
+    weekly = make_artifact(np.arange(1.0, 30.0))
+    filtered = cap.filter_period(weekly, start="2024-02-01")
+    returns = cap.compute_returns(filtered, method="simple")
+    assert returns.meta.period_start is None and returns.meta.period_end is None
+
+
+# --- find_extremes ----------------------------------------------------------------
+
+
+def test_find_extremes_max_and_min() -> None:
+    out = cap.find_extremes(make_artifact([3.0, 7.0, 1.0, 5.0]))  # Fridays from 2024-01-05
+    assert out.value == {
+        "max": {"date": "2024-01-12", "value": 7.0, "tie_count": 1},
+        "min": {"date": "2024-01-19", "value": 1.0, "tie_count": 1},
+    }
+    assert out.data_type == DataType.TABLE and out.meta.kind is None
+    assert out.meta.source_dataset_ids == ["TEST"]
+
+
+def test_find_extremes_one_side_on_any_kind() -> None:
+    volatility = make_artifact([0.2, 0.5, 0.3], kind=SeriesKind.VOLATILITY)
+    assert cap.find_extremes(volatility, which="max").value == {
+        "max": {"date": "2024-01-12", "value": 0.5, "tie_count": 1}
+    }
+    assert list(cap.find_extremes(volatility, which="min").value) == ["min"]
+
+
+def test_find_extremes_ignores_missing_values() -> None:
+    out = cap.find_extremes(make_artifact([np.nan, 2.0, np.nan, 9.0, 4.0]))
+    assert out.value["max"] == {"date": "2024-01-26", "value": 9.0, "tie_count": 1}
+    assert out.value["min"] == {"date": "2024-01-12", "value": 2.0, "tie_count": 1}
+    assert out.meta.n_obs == 3
+
+
+def test_find_extremes_reports_the_earliest_tie_and_counts_it() -> None:
+    out = cap.find_extremes(make_artifact([5.0, 2.0, 5.0, 2.0, 5.0]))
+    assert out.value["max"] == {"date": "2024-01-05", "value": 5.0, "tie_count": 3}
+    assert out.value["min"] == {"date": "2024-01-12", "value": 2.0, "tie_count": 2}
+
+
+def test_find_extremes_refuses_an_all_missing_series() -> None:
+    with pytest.raises(ValueError):
+        cap.find_extremes(make_artifact([np.nan, np.nan]))

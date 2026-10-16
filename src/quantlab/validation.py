@@ -26,7 +26,9 @@ used: it was retired with the statistical tests, and codes are never reused, so
 the issue ids recorded in older run records keep their meaning.
 """
 
+import re
 from dataclasses import asdict, dataclass, field
+from datetime import date
 from enum import StrEnum
 from typing import Any
 
@@ -322,10 +324,26 @@ def fill_defaults(plan: Plan) -> Plan:
     return filled
 
 
+# Exactly "YYYY-MM-DD". date.fromisoformat alone would also accept "20200101".
+ISO_DATE = re.compile(r"\d{4}-\d{2}-\d{2}")
+
+
+def parse_date(value: Any) -> date | None:
+    """Return the date a "YYYY-MM-DD" string names, or None if it is not one (e.g. 2021-02-30)."""
+    if not isinstance(value, str) or not ISO_DATE.fullmatch(value):
+        return None
+    try:
+        return date.fromisoformat(value)
+    except ValueError:
+        return None
+
+
 def _has_type(value: Any, expected: str) -> bool:
-    """Strict type check of a parameter value against "int" / "float" / "str" / "bool"."""
+    """Strict type check of a parameter value: "int", "float", "str", "bool" or "date"."""
     if expected == "bool":
         return isinstance(value, bool)
+    if expected == "date":
+        return parse_date(value) is not None
     # bool is a subclass of int in Python (True == 1); reject it explicitly so
     # `"window": true` cannot silently mean window=1.
     if isinstance(value, bool):
@@ -349,7 +367,10 @@ def param_problem(spec_param: ParamSpec, value: Any) -> str | None:
     """
     name = spec_param.name
     if value is None:
-        return f"'{name}' must not be null."
+        # Null means "not set" for nullable parameters (filter_period's options).
+        return None if spec_param.nullable else f"'{name}' must not be null."
+    if spec_param.type == "date" and not _has_type(value, "date"):
+        return f"'{name}' must be a valid date written YYYY-MM-DD, got {value!r}."
     if not _has_type(value, spec_param.type):
         return f"'{name}' must be {spec_param.type}, got {value!r} ({type(value).__name__})."
     if spec_param.choices is not None and value not in spec_param.choices:
@@ -363,10 +384,14 @@ def param_problem(spec_param: ParamSpec, value: Any) -> str | None:
 def _allowed_values(spec_param: ParamSpec) -> str:
     """Human-readable description of a parameter's allowed values."""
     if spec_param.choices is not None:
-        return f"one of {list(spec_param.choices)}"
-    if spec_param.min is not None:
-        return f"{spec_param.type} in [{spec_param.min:g}, {spec_param.max:g}]"
-    return spec_param.type
+        allowed = f"one of {list(spec_param.choices)}"
+    elif spec_param.min is not None:
+        allowed = f"{spec_param.type} in [{spec_param.min:g}, {spec_param.max:g}]"
+    elif spec_param.type == "date":
+        allowed = "a date written YYYY-MM-DD"
+    else:
+        allowed = spec_param.type
+    return f"{allowed}, or null" if spec_param.nullable else allowed
 
 
 # ---------------------------------------------------------------------------
@@ -807,6 +832,55 @@ def check_look_ahead(
     return [make_issue("G10", step.id, message, suggestion)]
 
 
+def check_period(
+    step: Step,
+    spec: CapabilitySpec,
+    params: dict[str, Any],
+    input_metas: dict[str, StaticMeta | None],
+    catalog: Catalog,
+) -> list[Issue]:
+    """G03 INVALID_PARAM (period): filter_period's interval must be well defined and in the data.
+
+    Without it, an ambiguous interval (both "last 5 years" and explicit dates, or
+    neither) would be resolved by a hidden rule, a start after the end would give
+    an empty result, and a period entirely outside the data would silently
+    produce nothing. Partly-covered periods pass; if too few observations remain,
+    R02 stops the run.
+    """
+    if spec.name != "filter_period":
+        return []
+    lookback, start, end = params.get("lookback_years"), params.get("start"), params.get("end")
+    suggestion = "Give either lookback_years (the last N years) or start and/or end dates."
+    if lookback is not None and (start is not None or end is not None):
+        message = "filter_period got both lookback_years and start/end; use one or the other."
+        return [make_issue("G03", step.id, message, suggestion, key="period")]
+    if lookback is None and start is None and end is None:
+        message = "filter_period needs lookback_years, or start and/or end; none was given."
+        return [make_issue("G03", step.id, message, suggestion, key="period")]
+
+    first, last = parse_date(start), parse_date(end)
+    if first is not None and last is not None and first >= last:
+        message = f"filter_period start {start} is not before end {end}."
+        return [make_issue("G03", step.id, message, "Make start earlier than end.", key="period")]
+
+    # Coverage from the catalog: the dates every source dataset of the input has.
+    meta = input_metas.get("series")
+    entries = [catalog.get(d) for d in meta.dataset_ids] if meta else []
+    if not entries or None in entries or (first is None and last is None):
+        return []  # lookback mode is anchored in the data; unknown inputs are reported elsewhere
+    data_start = max(date.fromisoformat(e.start_date) for e in entries)
+    data_end = min(date.fromisoformat(e.end_date) for e in entries)
+    if (last is not None and last < data_start) or (first is not None and first > data_end):
+        names = ", ".join(e.dataset_id for e in entries)
+        message = (
+            f"The period {start or 'start of data'} to {end or 'end of data'} lies entirely "
+            f"outside the data ({names}: {data_start} to {data_end})."
+        )
+        suggestion = f"Choose dates between {data_start} and {data_end}, or use lookback_years."
+        return [make_issue("G03", step.id, message, suggestion, key="coverage")]
+    return []
+
+
 def check_material_assumptions(
     step: Step, spec: CapabilitySpec, params: dict[str, Any]
 ) -> list[Issue]:
@@ -1049,6 +1123,7 @@ def validate_plan(
         issues += check_input_types(step, spec, input_metas)
         issues += check_frequency_mismatch(step, spec, input_metas)
         issues += check_look_ahead(step, spec, params, input_metas)
+        issues += check_period(step, spec, params, input_metas, catalog)
         issues += check_material_assumptions(step, spec, params)
         metas[step.id] = infer_output_meta(spec, params, input_metas, catalog)
 

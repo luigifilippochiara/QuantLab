@@ -22,7 +22,8 @@ from typing import Any, Literal
 from quantlab import capabilities
 from quantlab.types import Artifact, DataType, SeriesKind
 
-ParamType = Literal["int", "float", "str", "bool"]
+# "date" is an ISO date string, "YYYY-MM-DD" (JSON has no date type).
+ParamType = Literal["int", "float", "str", "bool", "date"]
 
 # Special values for CapabilitySpec.output_kind, besides a fixed SeriesKind.
 SAME_AS_INPUT = "same_as_input"  # e.g. resample keeps the kind of its input
@@ -52,7 +53,7 @@ class ParamSpec:
 
     Fields:
         name: parameter name used in plans.
-        type: "int", "float", "str" or "bool".
+        type: "int", "float", "str", "bool" or "date" (a "YYYY-MM-DD" string).
         description: what it controls, in plain words.
         required: if True the plan must give a value; if False `default` is filled in.
         default: value used when the plan omits an optional parameter.
@@ -62,6 +63,9 @@ class ParamSpec:
         counted_in_periods: True for window-type parameters counted in periods of
             the input's frequency (12 means 12 weeks on weekly data, 12 days on
             daily data); used by G14 and to label the edit widget.
+        nullable: True if null is a valid value meaning "not set" (the default is
+            then null), e.g. filter_period's start and end. Every other
+            parameter rejects null.
     """
 
     name: str
@@ -73,6 +77,7 @@ class ParamSpec:
     max: float | None = None
     choices: tuple[str, ...] | None = None
     counted_in_periods: bool = False
+    nullable: bool = False
 
 
 @dataclass(frozen=True)
@@ -101,12 +106,15 @@ class MinObsRule:
         min_obs: absolute minimum number of usable (aligned) observations.
         window_param: if set, also require window_multiple x params[window_param].
         window_multiple: multiplier for window_param.
+        output_min_obs: if set, the step's OUTPUT must also have this many
+            observations (filter_period: the selected period); checked after the step.
     """
 
     description: str
     min_obs: int = 1
     window_param: str | None = None
     window_multiple: int = 1
+    output_min_obs: int | None = None
 
 
 @dataclass(frozen=True)
@@ -477,6 +485,98 @@ COMPARE_GROUPS = CapabilitySpec(
     library_calls="pandas.concat([values, flags], join='inner'); .mean() per group",
 )
 
+FILTER_PERIOD = CapabilitySpec(
+    name="filter_period",
+    description=(
+        "Restrict a series to a time interval: EITHER the last N years (lookback_years, "
+        "counted back from the series' last observation) OR start and/or end dates, "
+        "never both. Placement matters: filtering BEFORE a rolling or expanding "
+        "calculation shortens the history it uses; filtering AFTER keeps the full "
+        "history for the calculation and only trims what is reported."
+    ),
+    func=capabilities.filter_period,
+    inputs=(InputSpec("series", (DataType.SERIES,), "Any series to restrict to a period."),),
+    params=(
+        ParamSpec(
+            "lookback_years",
+            "int",
+            "Keep the last N years up to the series' last observation. Leave null when "
+            "giving start or end.",
+            required=False,
+            default=None,
+            min=1,
+            max=30,
+            nullable=True,
+        ),
+        ParamSpec(
+            "start",
+            "date",
+            "First date to keep, YYYY-MM-DD, inclusive; null = from the first observation. "
+            "Leave null when using lookback_years.",
+            required=False,
+            default=None,
+            nullable=True,
+        ),
+        ParamSpec(
+            "end",
+            "date",
+            "Last date to keep, YYYY-MM-DD, inclusive; null = up to the last observation. "
+            "Leave null when using lookback_years.",
+            required=False,
+            default=None,
+            nullable=True,
+        ),
+    ),
+    output_type=DataType.SERIES,
+    output_kind=SAME_AS_INPUT,
+    min_obs=MinObsRule(
+        "at least 2 observations, before and after filtering", min_obs=2, output_min_obs=2
+    ),
+    assumptions=(
+        Assumption(
+            "anchor",
+            "lookback_years counts back from the series' last observation, not from today, "
+            "so a replay gives the same window; start and end are inclusive.",
+        ),
+    ),
+    library_calls=(
+        "last date - pandas.DateOffset(years=N); boolean mask on the pandas DatetimeIndex"
+    ),
+)
+
+FIND_EXTREMES = CapabilitySpec(
+    name="find_extremes",
+    description=(
+        "When a series reached its maximum and/or minimum, and the value there (e.g. when "
+        "an index peaked, or when volatility was highest). Works on any series."
+    ),
+    func=capabilities.find_extremes,
+    inputs=(
+        InputSpec("series", (DataType.SERIES,), "Any series: a level, returns, a volatility..."),
+    ),
+    params=(
+        ParamSpec(
+            "which",
+            "str",
+            "max, min or both.",
+            required=False,
+            default="both",
+            choices=("max", "min", "both"),
+        ),
+    ),
+    output_type=DataType.TABLE,
+    output_kind=None,
+    min_obs=MinObsRule("at least 1 observation"),
+    assumptions=(
+        Assumption(
+            "ties",
+            "Missing values are ignored. If the extreme value occurs on several dates, the "
+            "earliest is reported and tie_count gives the number of dates.",
+        ),
+    ),
+    library_calls="pandas.Series.dropna().max() / .min(); dates where the value equals it",
+)
+
 
 # The registry itself: capability name -> spec. Built from a list so each key is
 # guaranteed to equal the spec's own name. This dict IS the whitelist.
@@ -492,6 +592,8 @@ REGISTRY: dict[str, CapabilitySpec] = {
         FLAG_REGIME,
         SUMMARY_STATS,
         COMPARE_GROUPS,
+        FILTER_PERIOD,
+        FIND_EXTREMES,
     ]
 }
 
@@ -519,6 +621,8 @@ def describe_capability(spec: CapabilitySpec) -> dict[str, Any]:
             described["choices"] = list(p.choices)
         if p.counted_in_periods:
             described["unit"] = "periods of the input frequency"
+        if p.nullable:
+            described["nullable"] = True
         described["description"] = p.description
         params.append(described)
 

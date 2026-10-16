@@ -261,8 +261,8 @@ def write_report(report: EvalReport, reports_dir: Path = REPORTS_DIR) -> Path:
     if report.mode == "mock":
         lines += [
             "> Mock mode tests the evaluation harness, not an LLM: the mock planner only",
-            "> knows the five example workflows and refuses everything else. Run with",
-            "> `--mode live` to measure the real planner.",
+            "> knows the five example workflows and a few canned requests, and refuses",
+            "> everything else. Run with `--mode live` to measure the real planner.",
             "",
         ]
     lines += [

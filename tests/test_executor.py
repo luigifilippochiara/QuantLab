@@ -20,6 +20,7 @@ from conftest import (
     SPREAD_PLAN,
     as_plan,
     build_synthetic_data_dir,
+    canned_plan,
     raw_plan,
 )
 
@@ -97,13 +98,22 @@ def test_execution_is_deterministic(catalog: Catalog) -> None:
     ]
 
 
-@pytest.mark.parametrize("name", ["scenario_1", "spread", "comparison"])
+@pytest.mark.parametrize(
+    "name", ["scenario_1", "spread", "comparison", "volatility_since_2020", "returns_2022"]
+)
 def test_dry_run_metadata_matches_runtime_metadata(name: str, catalog: Catalog) -> None:
     """The validator's predictions must equal what the capability functions produce."""
-    raw = {"scenario_1": raw_plan(SUCCESS), "spread": SPREAD_PLAN, "comparison": with_comparison()}
+    raw = {
+        "scenario_1": raw_plan(SUCCESS),
+        "spread": SPREAD_PLAN,
+        "comparison": with_comparison(),
+        "volatility_since_2020": canned_plan("nasdaq_volatility_peak_since_2020"),
+        "returns_2022": canned_plan("sp500_returns_2022"),
+    }
     plan = as_plan(raw[name])
-    dry_run = validate_plan(plan, catalog).dry_run
-    result = execute_plan(plan, catalog, {RETURN_METHOD_APPROVAL})
+    report = validate_plan(plan, catalog)
+    result = execute_plan(plan, catalog, {i.issue_id for i in report.approvals_required})
+    dry_run = report.dry_run
     assert result.status == "completed", result.error
     for step_id, artifact in result.artifacts.items():
         predicted, meta = dry_run[step_id], artifact.meta
@@ -150,6 +160,44 @@ def test_r02_window_too_long_for_the_history(catalog: Catalog) -> None:
     assert result.status == "blocked"
     assert "R02" in runtime_codes(result)
     assert result.step_records[-1].step_id == "s4"
+
+
+def test_r02_period_too_short_for_the_next_step(catalog: Catalog) -> None:
+    # Filtering BEFORE the rolling window: ~24 weekly returns since June 2025 are
+    # fewer than the 3 x 12 that a 12-week volatility needs.
+    raw = canned_plan("nasdaq_volatility_peak_since_2020")
+    load, weekly, returns = raw["steps"][:3]
+    raw["steps"] = [
+        load, weekly, returns,
+        {"id": "s4", "capability": "filter_period", "inputs": {"series": "s3"},
+         "params": {"start": "2025-06-01"}},
+        {"id": "s5", "capability": "rolling_volatility", "inputs": {"series": "s4"},
+         "params": {"window": 12}},
+    ]  # fmt: skip
+    result = execute_plan(as_plan(raw), catalog, {RETURN_METHOD_APPROVAL})
+    assert result.status == "blocked" and runtime_codes(result) == {"R02"}
+    assert result.step_records[-1].capability == "rolling_volatility"
+
+
+def test_r02_period_that_leaves_no_observations(catalog: Catalog) -> None:
+    # Inside the catalog's coverage (so no G03), but after the last complete week.
+    raw = canned_plan("nasdaq_volatility_peak_since_2020")
+    raw["steps"][4]["params"] = {"start": catalog.entries["NASDAQCOM"].end_date}
+    plan = as_plan(raw)
+    assert not validate_plan(plan, catalog).is_blocked
+    result = execute_plan(plan, catalog, {RETURN_METHOD_APPROVAL})
+    assert result.status == "blocked"
+    assert [i.issue_id for i in result.issues] == ["R02:s5:output"]
+    assert result.step_records[-1].step_id == "s5" and "s5" not in result.artifacts
+
+
+def test_step_record_keeps_the_resolved_period(catalog: Catalog) -> None:
+    result = execute_plan(as_plan(canned_plan("nasdaq_peak_5y")), catalog)
+    assert result.status == "completed", result.error
+    record = result.step_records[1]
+    # Synthetic NASDAQ ends 2025-11-20: the last 5 years start the day after 2020-11-20.
+    assert (record.meta["period_start"], record.meta["period_end"]) == ("2020-11-21", "2025-11-20")
+    assert result.step_records[0].meta["period_start"] is None
 
 
 # --- R03 MISSING_DATA -------------------------------------------------------------

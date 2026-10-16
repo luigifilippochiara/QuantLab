@@ -5,11 +5,13 @@ and replayed; blocked scenarios cannot execute; the other pages render; the
 header, mock-only example workflows and full dataset names on hover.
 """
 
+import datetime
+
 import pytest
 from streamlit.testing.v1 import AppTest
 
 from quantlab.config import PROJECT_ROOT, Settings
-from quantlab.scenarios import SCENARIOS_BY_ID
+from quantlab.scenarios import CANNED_REQUESTS_BY_ID, SCENARIOS_BY_ID
 
 PAGES = PROJECT_ROOT / "app" / "pages"
 SCENARIO_1_REQUEST = SCENARIOS_BY_ID["volatility_flag_success"].request
@@ -162,3 +164,41 @@ def test_full_sample_edit_raises_g10_and_reset_clears_it(app_env: Settings) -> N
     assert issue_codes(app) == {"G10", "G12"}
     button(app, "Reset to planner").click().run()
     assert issue_codes(app) == {"G12"}
+
+
+def test_period_editing_with_date_widgets_and_extremes_table(app_env: Settings) -> None:
+    app = open_page("analysis.py")
+    request = CANNED_REQUESTS_BY_ID["nasdaq_volatility_peak_since_2020"].request
+    app.text_area(key="request_text").input(request).run()
+    button(app, "Generate plan").click().run()
+    # Nullable parameters: a "Set" checkbox, then a date input or a bounded number input.
+    assert [(c.label, c.value) for c in app.checkbox if c.key.endswith("-set")] == [
+        ("Set lookback_years", False), ("Set start", True), ("Set end", False),
+    ]  # fmt: skip
+    (start,) = app.date_input
+    assert start.label == "start" and start.value == datetime.date(2020, 1, 1)
+
+    next(c for c in app.checkbox if c.key.endswith("lookback_years-set")).check().run()
+    lookback = next(n for n in app.number_input if n.key.endswith("lookback_years"))
+    assert (lookback.min, lookback.max) == (1, 30)
+    lookback.set_value(3).run()
+    button(app, "Apply changes").click().run()
+    assert issue_codes(app) == {"G03", "G12"}  # both ways of giving the period
+
+    next(c for c in app.checkbox if c.key.endswith("lookback_years-set")).uncheck().run()
+    next(d for d in app.date_input if d.key.endswith("-start")).set_value(
+        datetime.date(2021, 1, 1)
+    ).run()
+    button(app, "Apply changes").click().run()
+    assert issue_codes(app) == {"G12"}
+
+    app.checkbox(key=next(c.key for c in app.checkbox if c.key.startswith("approve-"))).check()
+    app.run()
+    button(app, "Execute").click().run()
+    assert not app.exception, app.exception
+    table = next(d.value for d in app.dataframe if "extreme" in d.value.columns)
+    assert list(table.columns) == ["extreme", "date", "value", "tie_count"]
+    assert table["extreme"].tolist() == ["max"] and table["date"].iloc[0] >= "2021-01-01"
+    trace = next(d.value for d in app.dataframe if "library call" in d.value.columns)
+    params = dict(zip(trace["step"], trace["params"], strict=True))
+    assert "start=2021-01-01 (edited, was 2020-01-01)" in params["s5"]

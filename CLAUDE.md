@@ -32,7 +32,7 @@ Hard rules:
 ## Architecture (src/quantlab/)
 
 `config` (settings) -> `types` (enums, Artifact, hashing) -> `data` (catalog,
-hash-verified snapshots) -> `capabilities` (the 9 quant functions, descriptive
+hash-verified snapshots) -> `capabilities` (the 11 quant functions, descriptive
 only; the ONLY code calling pandas/numpy for analysis) -> `registry` (specs,
 REGISTRY, LLM summary, version) -> `plan` (Pydantic Plan/Step) -> `validation`
 (static guardrails, dry run, GUARDRAILS table) -> `scenarios` (example workflows) ->

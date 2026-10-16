@@ -28,7 +28,12 @@ def test_mock_evaluation_scores_and_report(settings: Settings, tmp_path: Path) -
             scores[case_id].correct and scores[case_id].params_hit == scores[case_id].params_total
         )
     assert report.metrics["correct_refusal_block_rate"] == 1.0
-    # The mock only knows the demo scenarios, so free-form requests fail: by design.
+    # The canned requests have mock plans, scored like any other plan...
+    for case_id in ["nasdaq_peak_5y", "nasdaq_volatility_peak_since_2020", "vix_extremes",
+                    "sp500_returns_2022"]:  # fmt: skip
+        assert scores[case_id].correct, case_id
+        assert scores[case_id].params_hit == scores[case_id].params_total, case_id
+    # ...but free-form requests fail in mock mode: by design.
     assert not scores["vix_summary"].valid
     # A scenario-1-like variation gets scenario 1's canned plan: close in shape,
     # wrong parameters.
