@@ -93,8 +93,9 @@ Refreshing the data (needs network; creates a new data version):
 
 The **Analysis** page follows the safety model step by step:
 
-1. Choose the datasets the planner may use, then type a request or pick one of
-   the example workflows in the sidebar, and click **Generate plan**.
+1. Choose the datasets the planner may use (hover a dataset for its full name),
+   then type a request, or in mock mode pick one of the example workflows in the
+   sidebar, and click **Generate plan**.
 2. Review the plan. Each step is shown as a block with its inputs, its predicted
    output and its parameters as editable fields.
 3. Read the validation results. Blocking issues must be resolved, approvals must
@@ -130,11 +131,12 @@ the edited plan with identical hashes.
 
 ## Example workflows
 
-The sidebar offers five ready-made requests. Together they cover one realistic
-task, a market-risk analyst identifying periods of unusual market behaviour, and
-the protections QuantLab applies along the way. They run with canned plans in
-mock mode (`scenarios.py`) or with the live planner, from the app or with
-`cli demo`.
+In mock mode the sidebar offers five ready-made requests; in live and cached
+mode the sidebar hides them and you type the request. Together they cover one
+realistic task, a market-risk analyst identifying periods of unusual market
+behaviour, and the protections QuantLab applies along the way. They run with
+canned plans in mock mode (`scenarios.py`) or with the live planner, from the
+app or with `cli demo`.
 
 1. **High-volatility weeks** (`volatility_flag_success`): "Using the NASDAQ,
    compute weekly returns and 12-week rolling annualised volatility, and flag the
@@ -146,7 +148,7 @@ mock mode (`scenarios.py`) or with the live planner, from the app or with
    explicit approval (G10), explains that a full-sample threshold judges past
    weeks using information from the future, and recommends the expanding method.
    This protects the analyst from the most common source of overstated backtests.
-3. **Out-of-scope model request** (`random_forest_block`): "Fit a random forest to
+3. **Out-of-scope forecast request** (`sarima_forecast_block`): "Fit SARIMA to
    predict next week's NASDAQ return." The registry has no capability for model
    fitting or prediction, so the planner declines (G13) and lists what is
    available instead. If a planner ever proposed such a step anyway, the
@@ -198,8 +200,9 @@ marked "all numbers verified". An authentication error means the key is wrong;
 uv run python -m quantlab.cli demo --mode live
 ```
 
-The sidebar buttons send exactly these requests, so in **cached** mode their
-plans then appear instantly and identically, even on a slow network (the
+Typing exactly these requests in **cached** mode (or picking one in mock mode,
+then switching to cached: the request stays in the box) then returns their
+plans instantly and identically, even on a slow network (the
 narrator still calls the model, and falls back to the deterministic template if
 it cannot). A live model may decline a request for a different reason than the
 canned plan (for example refuse example 5 outright with G13, rather than

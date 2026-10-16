@@ -14,7 +14,7 @@ from quantlab.config import Settings
 from quantlab.engine import ExecutionRefusedError, Session, run_request
 from quantlab.scenarios import SCENARIOS, SCENARIOS_BY_ID, Scenario
 
-from conftest import RANDOM_FOREST_PLAN, RETURN_METHOD_APPROVAL
+from conftest import RETURN_METHOD_APPROVAL, SARIMA_PLAN
 from fakes import FakeAnthropicClient, tool_response
 
 
@@ -67,7 +67,7 @@ def test_scenario_2_needs_both_approvals(settings: Settings) -> None:
 
 
 def test_scenario_3_refusal_explains_what_is_possible(settings: Settings) -> None:
-    session = start("random_forest_block", settings)
+    session = start("sarima_forecast_block", settings)
     reason = session.plan.refusal_reason
     assert "no registered capability for model fitting or prediction" in reason
     assert "rolling volatility" in reason  # what the registry can do instead
@@ -75,9 +75,9 @@ def test_scenario_3_refusal_explains_what_is_possible(settings: Settings) -> Non
 
 
 def test_scenario_3_wall_holds_even_if_the_planner_misbehaves(settings: Settings) -> None:
-    """A planner that emits a 'random_forest' step instead of refusing is still blocked."""
-    request = SCENARIOS_BY_ID["random_forest_block"].request
-    client = FakeAnthropicClient(tool_response(RANDOM_FOREST_PLAN))
+    """A planner that emits a 'sarima' step instead of refusing is still blocked."""
+    request = SCENARIOS_BY_ID["sarima_forecast_block"].request
+    client = FakeAnthropicClient(tool_response(SARIMA_PLAN))
     session = run_request(request, ["NASDAQCOM"], "live", settings=settings, client=client)
     assert session.report.codes() == ["G02"]
     assert session.status == "blocked" and session.execution is None

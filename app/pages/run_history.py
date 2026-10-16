@@ -8,6 +8,7 @@ from quantlab.lineage import list_runs, load_run, replay, trace
 import ui
 
 settings = ui.get_settings()
+catalog = ui.get_catalog(settings)
 st.title("Run history")
 st.caption(
     "Every run is saved as runs/<run_id>/manifest.json with its outputs. Replay re-executes "
@@ -81,10 +82,10 @@ st.subheader("Replay")
 if record.plan_final is None:
     st.caption("This run has no plan, so there is nothing to replay.")
 elif st.button("Replay without the LLM", type="primary", icon=":material/replay:"):
-    ui.render_replay(replay(run_id, settings))
+    ui.render_replay(replay(run_id, settings), catalog)
 
 if record.steps:
     st.subheader("Trace")
     executed = [step.step_id for step in record.steps if step.output_hash]
     step_id = st.selectbox("Step to trace", executed, index=len(executed) - 1)
-    ui.render_trace(trace(record, step_id))
+    ui.render_trace(trace(record, step_id), catalog)

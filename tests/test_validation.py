@@ -17,7 +17,7 @@ from quantlab.validation import (
     validate_plan,
 )
 
-from conftest import RANDOM_FOREST_PLAN, RETURN_METHOD_APPROVAL, SPREAD_PLAN, raw_plan
+from conftest import RETURN_METHOD_APPROVAL, SARIMA_PLAN, SPREAD_PLAN, raw_plan
 
 SUCCESS = "volatility_flag_success"  # scenario 1, the anchor case
 
@@ -79,9 +79,9 @@ def test_g01_empty_plan(catalog: Catalog) -> None:
 
 
 def test_g02_a_planner_that_invents_a_model_is_still_blocked(catalog: Catalog) -> None:
-    report = validate(RANDOM_FOREST_PLAN, catalog)
+    report = validate(SARIMA_PLAN, catalog)
     assert report.codes() == ["G02"] and report.is_blocked
-    assert "random_forest" in report.blocks[0].message
+    assert "sarima" in report.blocks[0].message
 
 
 # --- G03 INVALID_PARAM ----------------------------------------------------------
@@ -112,8 +112,8 @@ def test_defaults_are_filled_in() -> None:
     raw = raw_plan("frequency_mismatch_block")  # its compute_returns omits `periods`
     filled = fill_defaults(Plan(plan_id="p", request="r", **raw))
     assert filled.steps[4].params == {"method": "simple", "periods": 1}  # default added
-    unknown = fill_defaults(Plan(plan_id="p", request="r", **RANDOM_FOREST_PLAN))
-    assert unknown.steps[1].params == {"n_estimators": 100, "target": "next_week_return"}
+    unknown = fill_defaults(Plan(plan_id="p", request="r", **SARIMA_PLAN))
+    assert unknown.steps[1].params == SARIMA_PLAN["steps"][1]["params"]  # left untouched
 
 
 # --- G04 BAD_REFERENCE ----------------------------------------------------------
@@ -263,7 +263,7 @@ def test_g12_message_names_the_chosen_value(catalog: Catalog) -> None:
 # --- G13 PLANNER_REFUSED --------------------------------------------------------
 
 
-@pytest.mark.parametrize("scenario_id", ["random_forest_block", "prompt_injection_block"])
+@pytest.mark.parametrize("scenario_id", ["sarima_forecast_block", "prompt_injection_block"])
 def test_g13_refusal(scenario_id: str, catalog: Catalog) -> None:
     report = validate(raw_plan(scenario_id), catalog)
     assert report.codes() == ["G13"] and report.is_blocked

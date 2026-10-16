@@ -15,8 +15,8 @@ from quantlab.types import Artifact, ArtifactMeta, DataType, Frequency, SeriesKi
 from quantlab.validation import fill_defaults, validate_plan
 
 from conftest import (
-    RANDOM_FOREST_PLAN,
     RETURN_METHOD_APPROVAL,
+    SARIMA_PLAN,
     SPREAD_PLAN,
     as_plan,
     build_synthetic_data_dir,
@@ -43,13 +43,13 @@ def runtime_codes(result) -> set[str]:
 
 
 def test_dispatch_refuses_unregistered_names(catalog: Catalog) -> None:
-    for name in ["random_forest", "eval", "__import__", "os.system", "load_series "]:
+    for name in ["sarima", "eval", "__import__", "os.system", "load_series "]:
         with pytest.raises(CapabilityRefusedError):
             dispatch(Step(id="s1", capability=name), {}, catalog)
 
 
 def test_blocked_plan_runs_nothing(catalog: Catalog) -> None:
-    result = execute_plan(as_plan(RANDOM_FOREST_PLAN), catalog)
+    result = execute_plan(as_plan(SARIMA_PLAN), catalog)
     assert result.status == "blocked"
     assert result.artifacts == {} and result.step_records == []
     assert runtime_codes(result) == {"G02"}

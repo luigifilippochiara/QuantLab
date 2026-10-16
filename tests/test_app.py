@@ -1,15 +1,18 @@
 """Streamlit app, driven headlessly with streamlit.testing.AppTest (mock mode, synthetic data).
 
 Covers the demo path: scenario 1 planned, approved, executed, narrated, traced
-and replayed; blocked scenarios cannot execute; the other pages render.
+and replayed; blocked scenarios cannot execute; the other pages render; the
+header, mock-only example workflows and full dataset names on hover.
 """
 
 import pytest
 from streamlit.testing.v1 import AppTest
 
 from quantlab.config import PROJECT_ROOT, Settings
+from quantlab.scenarios import SCENARIOS_BY_ID
 
 PAGES = PROJECT_ROOT / "app" / "pages"
+SCENARIO_1_REQUEST = SCENARIOS_BY_ID["volatility_flag_success"].request
 
 
 @pytest.fixture
@@ -22,9 +25,11 @@ def app_env(settings: Settings, monkeypatch: pytest.MonkeyPatch) -> Settings:
     return settings
 
 
-def open_page(name: str) -> AppTest:
-    """Load and run one page script."""
+def open_page(name: str, llm_mode: str | None = None) -> AppTest:
+    """Load and run one page script, optionally with the sidebar's LLM mode preset."""
     app = AppTest.from_file(str(PAGES / name), default_timeout=60)
+    if llm_mode is not None:
+        app.session_state["llm_mode"] = llm_mode
     app.run()
     assert not app.exception, app.exception
     return app
@@ -61,8 +66,41 @@ def test_scenario_1_full_flow(app_env: Settings) -> None:
     assert any("5 of 5 step outputs match" in s.value for s in app.success)
 
 
+def test_header_describes_the_product(app_env: Settings) -> None:
+    app = open_page("analysis.py")
+    assert app.title[0].value.endswith("QuantLab")
+    assert any("validated, fully traceable" in m.value for m in app.markdown)
+    assert any(c.value.startswith("**How it works:**") for c in app.caption)
+    assert not any("Audit trail" in c.value for c in app.sidebar.caption)
+
+
+@pytest.mark.parametrize("mode", ["live", "cached"])
+def test_example_workflows_only_in_mock_mode(mode: str, app_env: Settings) -> None:
+    assert len(open_page("analysis.py").sidebar.button) == 5  # mock: the five examples
+    app = open_page("analysis.py", llm_mode=mode)
+    assert len(app.sidebar.button) == 0
+    assert not any(h.value == "Example workflows" for h in app.sidebar.header)
+    assert not any("example workflow" in i.value for i in app.info)
+
+
+def test_datasets_show_their_full_catalog_names(app_env: Settings) -> None:
+    app = open_page("analysis.py")
+    # Synthetic catalog titles (conftest), e.g. "Synthetic equity index (NASDAQCOM)".
+    datasets = app.sidebar.multiselect[0]
+    assert "Synthetic equity index (NASDAQCOM)" in datasets.options
+    assert "- Synthetic VIX (VIXCLS)" in datasets.help
+    assert any('title="Synthetic equity index (NASDAQCOM)"' in c.value for c in app.sidebar.caption)
+
+    app.text_area(key="request_text").input(SCENARIO_1_REQUEST).run()
+    button(app, "Generate plan").click().run()
+    load = next(s for s in app.selectbox if s.key.endswith("-s1-dataset_id"))
+    assert load.value == "NASDAQCOM"  # the plan still holds the id
+    assert "Synthetic equity index (NASDAQCOM)" in load.options
+    assert "- Synthetic S&P 500 (SP500)" in load.help
+
+
 @pytest.mark.parametrize(
-    "scenario_id", ["random_forest_block", "prompt_injection_block", "frequency_mismatch_block"]
+    "scenario_id", ["sarima_forecast_block", "prompt_injection_block", "frequency_mismatch_block"]
 )
 def test_blocked_scenario_cannot_execute(scenario_id: str, app_env: Settings) -> None:
     app = open_page("analysis.py")

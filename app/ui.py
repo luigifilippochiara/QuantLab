@@ -10,6 +10,7 @@ white and dark (#0e1117): lightness, chroma, colour-blind separation and contras
 all pass, so the same two colours work in either theme without detecting it.
 """
 
+import html
 from typing import Any
 
 import pandas as pd
@@ -62,6 +63,65 @@ def escape_md(text: str) -> str:
     for char in "\\`*_{}[]<>#+-.!|$~":
         text = text.replace(char, "\\" + char)
     return text
+
+
+def dataset_name(catalog: Catalog, dataset_id: str) -> str:
+    """Full descriptive name from the catalog, e.g. "NASDAQ Composite Index (NASDAQCOM)"."""
+    entry = catalog.get(dataset_id)
+    return f"{entry.title} ({dataset_id})" if entry else dataset_id
+
+
+def dataset_names_help(catalog: Catalog) -> str:
+    """Tooltip text listing the full name of every catalog dataset, one per line."""
+    return "\n".join(f"- {dataset_name(catalog, d)}" for d in catalog.ids())
+
+
+def dataset_caption(catalog: Catalog, dataset_id: str) -> str:
+    """One sidebar line for a dataset; hovering it shows the dataset's full name.
+
+    The tooltip is the HTML `title` attribute, so it appears over the text itself.
+    Catalog text is escaped before it goes into the HTML.
+    """
+    entry = catalog.entries[dataset_id]
+    details = (
+        f"{entry.frequency} · {entry.kind} · {entry.start_date} to {entry.end_date} · "
+        f"sha256 {entry.sha256[:12]}"
+    )
+    name = html.escape(dataset_name(catalog, dataset_id), quote=True)
+    return f'<span title="{name}"><b>{html.escape(dataset_id)}</b>: {html.escape(details)}</span>'
+
+
+# Header styling: sizes and spacing only. Colours are inherited from the active
+# Streamlit theme, so the header reads correctly in both light and dark mode.
+HEADER_CSS = """
+<style>
+.ql-lead { font-size: 1.2rem; font-weight: 600; line-height: 1.45; margin: -0.6rem 0 0.3rem 0; }
+.ql-sub { font-size: 1rem; line-height: 1.5; opacity: 0.8; margin: 0 0 0.6rem 0; }
+</style>
+"""
+
+
+def render_header() -> None:
+    """Title, product description, trust badges and the "how it works" line."""
+    st.markdown(HEADER_CSS, unsafe_allow_html=True)
+    st.title(":material/query_stats: QuantLab", anchor=False)
+    st.markdown(
+        '<p class="ql-lead">Ask a market question in plain English and get a validated, '
+        "fully traceable quantitative answer in seconds.</p>"
+        '<p class="ql-sub">Every analysis is built only from approved, tested capabilities, '
+        "every number comes from a deterministic engine and is checked in the narrative, and "
+        "every run can be replayed exactly, down to the source data.</p>",
+        unsafe_allow_html=True,
+    )
+    st.markdown(
+        ":blue-badge[:material/rule: Validated before it runs] "
+        ":green-badge[:material/fact_check: Every number verified] "
+        ":violet-badge[:material/history: Replayable and traceable]"
+    )
+    st.caption(
+        "**How it works:** The LLM proposes a plan made only of approved capabilities; the "
+        "system validates it, you review and approve it, and a deterministic engine runs it."
+    )
 
 
 def same_value(a: Any, b: Any) -> bool:
@@ -304,7 +364,7 @@ def describe_params(params: dict[str, Any], edited: dict[str, Any]) -> str:
     )
 
 
-def render_trace(result: TraceResult) -> None:
+def render_trace(result: TraceResult, catalog: Catalog) -> None:
     """Show the lineage chain of a step and its source files; user-edited params are marked."""
     chain = pd.DataFrame(
         [
@@ -325,7 +385,7 @@ def render_trace(result: TraceResult) -> None:
     sources = pd.DataFrame(
         [
             {
-                "dataset": s.dataset_id,
+                "dataset": dataset_name(catalog, s.dataset_id),
                 "FRED id": s.fred_id,
                 "file sha256": s.sha256,
                 "retrieved": s.retrieved_at,
@@ -335,10 +395,15 @@ def render_trace(result: TraceResult) -> None:
             for s in result.sources
         ]
     )
-    st.dataframe(sources, hide_index=True, alt="Source datasets")
+    st.dataframe(
+        sources,
+        hide_index=True,
+        alt="Source datasets",
+        column_config={"dataset": st.column_config.TextColumn(width="large")},
+    )
 
 
-def render_replay(report: ReplayReport) -> None:
+def render_replay(report: ReplayReport, catalog: Catalog) -> None:
     """Show a replay report: overall verdict, dataset checks, per-step hash comparison."""
     if report.all_match:
         st.success(report.message, title="All output hashes match", icon=":material/verified:")
@@ -349,7 +414,7 @@ def render_replay(report: ReplayReport) -> None:
             pd.DataFrame(
                 [
                     {
-                        "dataset": c.dataset_id,
+                        "dataset": dataset_name(catalog, c.dataset_id),
                         "recorded sha256": c.recorded_sha256[:16],
                         "current sha256": (c.current_sha256 or "missing")[:16],
                         "match": "yes" if c.match else "NO",
@@ -359,6 +424,7 @@ def render_replay(report: ReplayReport) -> None:
             ),
             hide_index=True,
             alt="Dataset hash checks",
+            column_config={"dataset": st.column_config.TextColumn(width="large")},
         )
     if report.steps:
         st.dataframe(
@@ -392,18 +458,19 @@ def _clamp(value: Any, low: float, high: float, fallback: float) -> float:
 
 
 def param_widget(
-    spec_param: ParamSpec, current: Any, key: str, dataset_ids: list[str], disabled: bool = False
+    spec_param: ParamSpec, current: Any, key: str, catalog: Catalog, disabled: bool = False
 ) -> Any:
     """Render an input widget for one parameter, limited to what the registry allows.
 
     Choices become select boxes, numbers become number inputs with the registry's
-    min/max, booleans become checkboxes, and dataset ids a select box of catalog ids.
+    min/max, booleans become checkboxes, and dataset ids a select box of catalog
+    datasets shown by their full names.
 
     Args:
         spec_param: the parameter's registry spec.
         current: the value in the plan now (the widget starts from it).
         key: unique widget key.
-        dataset_ids: catalog dataset ids (for dataset_id).
+        catalog: the dataset catalog (for dataset_id: choices and full names).
         disabled: show the value without allowing changes (e.g. after execution).
 
     Returns:
@@ -414,9 +481,18 @@ def param_widget(
         # The same number means a different span at another frequency (see G14).
         label = f"{spec_param.name} (in periods of the series frequency)"
     if spec_param.name == "dataset_id":
-        options = dataset_ids
+        options = catalog.ids()
         index = options.index(current) if current in options else 0
-        return st.selectbox(label, options, index=index, key=key, help=help_text, disabled=disabled)
+        # Options show the full catalog name; the tooltip lists every dataset's name.
+        return st.selectbox(
+            label,
+            options,
+            index=index,
+            key=key,
+            format_func=lambda d: dataset_name(catalog, d),
+            help=f"{help_text}\n\n{dataset_names_help(catalog)}",
+            disabled=disabled,
+        )
     if spec_param.choices is not None:
         options = list(spec_param.choices)
         index = options.index(current) if current in options else 0

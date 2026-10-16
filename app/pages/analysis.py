@@ -39,14 +39,12 @@ with st.sidebar:
         "Datasets available to the planner",
         catalog.ids(),
         key="dataset_select",
-        format_func=lambda d: f"{d} · {catalog.entries[d].title}",
+        format_func=lambda d: ui.dataset_name(catalog, d),
+        help="Full names of the available datasets:\n\n" + ui.dataset_names_help(catalog),
     )
+    # Hovering a selected dataset's line shows its full name.
     for dataset_id in datasets:
-        entry = catalog.entries[dataset_id]
-        st.caption(
-            f"**{dataset_id}**: {entry.frequency} · {entry.kind} · "
-            f"{entry.start_date} to {entry.end_date} · sha256 `{entry.sha256[:12]}`"
-        )
+        st.caption(ui.dataset_caption(catalog, dataset_id), unsafe_allow_html=True)
 
     st.header("LLM mode")
     mode = st.segmented_control(
@@ -63,31 +61,25 @@ with st.sidebar:
             icon=":material/key_off:",
         )
 
-    st.header("Example workflows")
-    st.caption(
-        "Ready-made requests: a typical volatility analysis (1) and the safeguards "
-        "QuantLab applies to risky or out-of-scope requests (2-5)."
-    )
-    for scenario in SCENARIOS:
-        st.button(
-            scenario.label,
-            key=f"scenario-{scenario.id}",
-            on_click=ui.load_scenario,
-            args=(scenario.id,),
-            width="stretch",
+    # The example workflows run on canned plans, so they are offered in mock mode only.
+    if mode == "mock":
+        st.header("Example workflows")
+        st.caption(
+            "Ready-made requests: a typical volatility analysis (1) and the safeguards "
+            "QuantLab applies to risky or out-of-scope requests (2-5)."
         )
-    st.caption(
-        "Audit trail: after running 1, use **Trace a result** under the results to "
-        "follow any output back to the source file."
-    )
+        for scenario in SCENARIOS:
+            st.button(
+                scenario.label,
+                key=f"scenario-{scenario.id}",
+                on_click=ui.load_scenario,
+                args=(scenario.id,),
+                width="stretch",
+            )
 
 # ---------------------------------------------------------------- request
 
-st.title("QuantLab")
-st.caption(
-    "The LLM proposes a plan made only of approved capabilities; the system validates it, "
-    "you review and approve it, and a deterministic engine runs it."
-)
+ui.render_header()
 request = st.text_area("Request", key="request_text", height=110)
 if st.button(
     "Generate plan", type="primary", icon=":material/auto_awesome:", disabled=not request.strip()
@@ -100,10 +92,10 @@ if st.button(
 
 session: Session | None = st.session_state.session
 if session is None:
-    st.info(
-        "Type a request or pick an example workflow in the sidebar, then generate a plan.",
-        icon=":material/lightbulb:",
-    )
+    hint = "Type a request, then generate a plan."
+    if mode == "mock":
+        hint = "Type a request or pick an example workflow in the sidebar, then generate a plan."
+    st.info(hint, icon=":material/lightbulb:")
     st.stop()
 
 # ---------------------------------------------------------------- plan
@@ -163,7 +155,7 @@ else:
                         spec_param,
                         current,
                         f"param-{session.run_id}-{version}-{step.id}-{spec_param.name}",
-                        catalog.ids(),
+                        catalog,
                         disabled=finished,
                     )
                     original = proposal.get(step.id, {}).get(spec_param.name)
@@ -321,7 +313,7 @@ if executed:
         index=len(executed) - 1,  # the final result by default (e.g. flag_regime)
         format_func=lambda s: f"{s} · {records[s].capability}",
     )
-    ui.render_trace(session.trace(chosen_step))
+    ui.render_trace(session.trace(chosen_step), catalog)
 
 # ---------------------------------------------------------------- narrative
 
@@ -371,4 +363,4 @@ if session.manifest_path is not None:
     if right.button("Replay this run (no LLM)", icon=":material/replay:"):
         st.session_state.replay_report = replay(session.run_id, settings)
     if st.session_state.replay_report is not None:
-        ui.render_replay(st.session_state.replay_report)
+        ui.render_replay(st.session_state.replay_report, catalog)

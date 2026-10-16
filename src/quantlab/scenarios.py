@@ -5,7 +5,7 @@ periods of unusual market behaviour, and the protections QuantLab applies along
 the way:
 1. flag high-volatility weeks (the core analysis);
 2. look-ahead protection: a full-sample threshold needs explicit approval;
-3. a request outside the registry (a predictive model) is declined;
+3. a request outside the registry (a SARIMA forecast) is declined;
 4. instructions embedded in a request are treated as data and declined;
 5. combining series of different frequencies is blocked before anything runs.
 The audit trail of a result (the trace) is shown on example 1's output.
@@ -155,18 +155,18 @@ SCENARIOS: list[Scenario] = [
         ),
     ),
     Scenario(
-        id="random_forest_block",
+        id="sarima_forecast_block",
         number=3,
-        label="3 · Out-of-scope model request",
-        request="Fit a random forest to predict next week's NASDAQ return.",
+        label="3 · Out-of-scope forecast request",
+        request="Fit SARIMA to predict next week's NASDAQ return.",
         dataset_ids=("NASDAQCOM",),
         expected_status="blocked",
         expected_codes=("G13",),
         auto_approve=False,
-        keywords=(("random forest", "predict", "forecast"),),
+        keywords=(("sarima", "arima", "predict", "forecast"),),
         plan=_refusal(
             "There is no registered capability for model fitting or prediction (such as "
-            "a random forest). The registry can instead: load a dataset, resample it to "
+            "a SARIMA forecast). The registry can instead: load a dataset, resample it to "
             "weekly or monthly, compute returns or differences, take a spread, compute "
             "rolling volatility, flag high-volatility periods, summarise a series, and "
             "compare a series between flagged and normal periods."
@@ -261,7 +261,7 @@ SCENARIOS_BY_ID: dict[str, Scenario] = {s.id: s for s in SCENARIOS}
 # full-sample variant (2) wins over the plain volatility flag (1).
 MATCH_ORDER = (
     "prompt_injection_block",
-    "random_forest_block",
+    "sarima_forecast_block",
     "frequency_mismatch_block",
     "volatility_flag_lookahead",
     "volatility_flag_success",

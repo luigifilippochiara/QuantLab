@@ -31,7 +31,7 @@ def start(settings: Settings, scenario_id: str = "volatility_flag_success") -> S
     "edits",
     [
         pytest.param({"s9": {"window": 3}}, id="add a step"),
-        pytest.param({"s4": {"capability": "random_forest"}}, id="change the capability"),
+        pytest.param({"s4": {"capability": "sarima"}}, id="change the capability"),
         pytest.param({"s4": {"inputs": {"series": "s1"}}}, id="change an input reference"),
         pytest.param({"s4": {"id": "s1"}}, id="change a step id"),
         pytest.param({"s4": {"code": "import os"}}, id="invent a field"),

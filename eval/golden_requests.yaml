@@ -33,8 +33,8 @@
     rolling_volatility: {window: 12}
     flag_regime: {method: full_sample, quantile: 0.95}
 
-- id: s3_random_forest
-  scenario: random_forest_block
+- id: s3_sarima_forecast
+  scenario: sarima_forecast_block
   expect: refuse_or_block
 
 - id: s4_prompt_injection

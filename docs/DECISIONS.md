@@ -433,14 +433,14 @@ cached before the change are never reused.
 one realistic task, a market-risk analyst identifying periods of unusual market
 behaviour: the core analysis (1, high-volatility weeks, `volatility_flag_success`)
 and four built-in protections, against look-ahead (2,
-`volatility_flag_lookahead`), out-of-scope requests (3, `random_forest_block`),
+`volatility_flag_lookahead`), out-of-scope requests (3, `sarima_forecast_block`),
 prompt injection (4, `prompt_injection_block`) and misaligned frequencies (5,
 `frequency_mismatch_block`). The trace of example 1's `flag_regime` step shows
 the audit trail. They replace the earlier examples everywhere (sidebar,
 `cli demo`, golden set); the ids are kept as stable identifiers for the tests,
 the golden set and the CLI. Tests that need a clean rates plan or a misbehaving
 planner keep their own plans in `tests/conftest.py` (`SPREAD_PLAN`,
-`RANDOM_FOREST_PLAN`) rather than in `scenarios.py`, so the app shows only the
+`SARIMA_PLAN`) rather than in `scenarios.py`, so the app shows only the
 example set. Examples are matched by exact text, id, number ("1".."5") or keywords.
 
 **`compare_groups` is back, as a descriptive capability.** Example 5's plan ends
@@ -456,7 +456,7 @@ returns across VIX regimes.
 
 **Example 3 is a planner refusal; the G02 check is tested separately.** The canned
 plan refuses (G13) and lists what the registry can do, as a well-behaved LLM
-should. A test feeds a misbehaving planner's plan with a `random_forest` step
+should. A test feeds a misbehaving planner's plan with a `sarima` step
 through the engine (live mode, fake client) and asserts the validator blocks it
 with G02 and nothing runs.
 
@@ -533,3 +533,37 @@ replays with identical hashes.
 
 **"Reset to planner's proposal" is an edit back to the proposal's values**, so it
 goes through the same path (re-validation, approvals cleared, history recorded).
+
+## Interface copy and polish
+
+**Full dataset names on hover, from the catalog.** Wherever a dataset is listed
+or selected, the UI shows its catalog title with the id, e.g. "NASDAQ Composite
+Index (NASDAQCOM)" (`ui.dataset_name`, read from `data/catalog.json`, never
+hardcoded). The sidebar multiselect and the `dataset_id` parameter select box
+show the full name as their option labels and list every dataset's full name in
+their help tooltip; each selected dataset's sidebar line carries the full name in
+an HTML `title` attribute, so hovering the line shows it; the trace and replay
+tables show the full name in a wide column. Streamlit's multiselect chips cannot
+carry a per-chip tooltip, hence the help tooltip plus the hoverable lines.
+Alternative: a custom component, rejected because it adds a dependency.
+
+**Header: description, badges and "how it works", with light CSS only.** The
+title is followed by a two-line description for traders and market-risk
+analysts, three badges (validated, verified numbers, replayable) and the original
+sentence as the "How it works" line. The CSS sets only sizes and spacing; colours
+come from the active theme, so the header reads the same in light and dark mode.
+No new dependency.
+
+**Example workflows appear only in mock mode.** They are canned plans, so the
+sidebar shows them only when the LLM mode is mock; in live and cached mode the
+analyst types the request (a request picked in mock mode stays in the box after
+switching). The "Audit trail" hint under the examples is gone; Trace a result
+itself is unchanged.
+
+**Example 3 asks for a SARIMA forecast** (`sarima_forecast_block`, replacing the
+earlier model-fitting request). A forecast request is typical for a market-risk
+analyst and still has no registered capability, so the outcome is unchanged: the
+planner refuses (G13), and the misbehaving-planner test emits a `sarima` step
+that G02 blocks. `MOCK_PROMPT_VERSION` moved to `canned-scenarios-v4`; the plan
+cache key includes the request text, so plans cached for the old request are
+never reused.

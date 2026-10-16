@@ -85,7 +85,7 @@ def test_only_open_approval_issues_can_be_approved(settings: Settings) -> None:
 
 
 def test_blocked_scenario_is_recorded(settings: Settings) -> None:
-    session = start(settings, "random_forest_block")
+    session = start(settings, "sarima_forecast_block")
     assert session.status == "blocked"
     record = load_run(session.run_id, settings.runs_dir)
     assert record.status == "blocked" and "G13" in record.error
