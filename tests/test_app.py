@@ -133,6 +133,27 @@ def test_other_pages_render(page: str, app_env: Settings) -> None:
     open_page(page)
 
 
+def test_sidebar_title_sits_above_the_page_menu(app_env: Settings) -> None:
+    """Through the router: the title first, then the four page links, then the page's own."""
+    app = AppTest.from_file(str(PROJECT_ROOT / "app" / "streamlit_app.py"), default_timeout=60)
+    app.run()
+    assert not app.exception, app.exception
+    headers = [h.value for h in app.sidebar.header]
+    assert headers[0] == "QuantLab"
+    assert headers[1:] == ["Datasets", "LLM mode", "Example workflows"]  # Analysis, mock mode
+    links = [(link.value, link.proto.icon) for link in app.sidebar.get("page_link")]
+    assert links == [
+        ("Analysis", ":material/query_stats:"),
+        ("Run history", ":material/history:"),
+        ("Monitoring", ":material/monitoring:"),
+        ("Capability registry", ":material/menu_book:"),
+    ]
+    # Drawing order: the title, then the menu, then the page's own sidebar content.
+    order = [(node.type, node.value) for node in list(app.sidebar.children.values())[:6]]
+    assert [kind for kind, _ in order] == ["header"] + ["page_link"] * 4 + ["header"]
+    assert (order[0][1], order[5][1]) == ("QuantLab", "Datasets")
+
+
 def issue_codes(app: AppTest) -> set[str]:
     """Guardrail codes shown in the validation panel (from the issue headers)."""
     return {m.value.split("**")[1].split()[0] for m in app.markdown if "badge[" in m.value

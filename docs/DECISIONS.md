@@ -276,6 +276,17 @@ router; the four pages are plain scripts in `app/pages/` and shared rendering
 helpers live in `app/ui.py`. This gives readable page names ("Run history"
 rather than file names) and keeps each page a top-to-bottom script.
 
+**The sidebar title is drawn above a page menu made of `st.page_link`s.**
+`st.navigation` always draws its own menu at the very top of the sidebar, so
+nothing can be placed above it. The router therefore hides that menu
+(`position="hidden"`), then draws `st.header("QuantLab")`, the same call the pages
+use for "Datasets" and "LLM mode", so it matches their font and size by
+construction, followed by one `st.page_link` per `st.Page` (same titles and icons),
+and finally runs the page, whose own sidebar content comes below. It lives in
+`streamlit_app.py`, so all four pages share it. Alternative: CSS that moves or
+prefixes the native menu, rejected as fragile: it depends on Streamlit's internal
+markup, which can change between versions.
+
 **One colour pair for both themes.** Charts use blue `#3987e5` for series and
 orange `#d95926` for flagged regimes. The pair was run through a colour-vision
 validator against both Streamlit backgrounds (white and `#0e1117`): lightness,
