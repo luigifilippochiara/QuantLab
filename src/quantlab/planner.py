@@ -179,8 +179,8 @@ class MockPlanner:
                 "steps": [],
                 "cannot_fulfill": True,
                 "refusal_reason": (
-                    "Mock mode only knows the five demo requests (scenarios 1-5). Switch "
-                    "the LLM mode to live to plan free-form requests."
+                    "Mock mode only knows the five example workflows (1-5). Switch the "
+                    "LLM mode to live or cached to plan free-form requests."
                 ),
                 "planner_notes": None,
             }

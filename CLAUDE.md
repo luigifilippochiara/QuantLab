@@ -35,12 +35,12 @@ Hard rules:
 hash-verified snapshots) -> `capabilities` (the 9 quant functions, descriptive
 only; the ONLY code calling pandas/numpy for analysis) -> `registry` (specs,
 REGISTRY, LLM summary, version) -> `plan` (Pydantic Plan/Step) -> `validation`
-(static guardrails, dry run, GUARDRAILS table) -> `scenarios` (demo plans) ->
+(static guardrails, dry run, GUARDRAILS table) -> `scenarios` (example workflows) ->
 `executor` (dispatch, runtime guardrails, step records) -> `planner` /
 `narrator` (the only LLM code; OpenAI and Anthropic) -> `lineage` (manifest, replay, trace) ->
 `monitoring` (events.jsonl) -> `engine` (Session orchestrator used by app, CLI
 and notebooks) -> `evaluation`, `cli`. The Streamlit app is in `app/`
-(presentation only).
+(user interface only).
 
 ## Adding a capability
 
@@ -57,7 +57,7 @@ Keep the menu small and simple: the capabilities are descriptive on purpose
    `tests/test_executor.py` checks the dry run matches runtime metadata.
 4. The registry version changes automatically, which invalidates cached plans.
 
-## Code style (the owner must be able to read and explain all of it)
+## Code style (every line must be readable and explainable by a reviewer)
 
 - Python 3.12+, managed with uv. Direct dependencies pinned exactly in
   `pyproject.toml`; do not add libraries without a recorded decision

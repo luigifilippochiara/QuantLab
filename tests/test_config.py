@@ -49,8 +49,8 @@ def test_anthropic_provider_uses_its_own_key_and_model(clean_env: pytest.MonkeyP
 
 
 def test_model_override_and_bad_values(clean_env: pytest.MonkeyPatch) -> None:
-    clean_env.setenv("QUANTLAB_PLANNER_MODEL", "gpt-6-astra")
-    assert load_settings().narrator_model == "gpt-6-astra"  # narrator follows the planner
+    clean_env.setenv("QUANTLAB_PLANNER_MODEL", "gpt-6.1-sol")
+    assert load_settings().narrator_model == "gpt-6.1-sol"  # narrator follows the planner
     clean_env.setenv("QUANTLAB_LLM_PROVIDER", "gemini")
     with pytest.raises(ValueError, match="QUANTLAB_LLM_PROVIDER"):
         load_settings()

@@ -11,7 +11,7 @@ Pages (in app/pages/):
 - Monitoring: KPIs, latency per stage, capability usage, guardrail activity, errors.
 - Capability registry: the approved menu of capabilities and the guardrail table.
 
-The app is presentation only: every action goes through quantlab.engine (the
+The app is only a user interface: every action goes through quantlab.engine (the
 same orchestrator the CLI and notebooks use).
 """
 

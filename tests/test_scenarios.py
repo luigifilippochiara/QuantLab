@@ -1,8 +1,8 @@
-"""The five demo scenarios end to end (mock mode), plus scenario-specific checks.
+"""The five example workflows end to end (mock mode), plus workflow-specific checks.
 
-One use case: a market-risk analyst flagging unusual market behaviour. It works
-(1), it is smart (2), it is safe (3, 4, 5); scenario 6 (the trace) is tested in
-test_lineage.py and test_cli.py.
+One task, a market-risk analyst flagging unusual market behaviour: the core
+analysis (1) and the protections QuantLab applies (2-5). The audit trail of
+example 1 (the trace) is tested in test_lineage.py and test_cli.py.
 """
 
 import os

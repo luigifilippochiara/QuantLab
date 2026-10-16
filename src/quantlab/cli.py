@@ -1,6 +1,6 @@
 """Command-line interface.
 
-    uv run python -m quantlab.cli demo                    # all demo scenarios, mock mode
+    uv run python -m quantlab.cli demo                    # the example workflows, mock mode
     uv run python -m quantlab.cli run "<request>" --datasets NASDAQCOM --mode mock --approve-all
     uv run python -m quantlab.cli replay <run_id>          # re-run without the LLM, compare hashes
     uv run python -m quantlab.cli trace <run_id> <step_id> # where does this number come from?
@@ -92,14 +92,14 @@ def print_session(session: Session) -> None:
 
 
 def cmd_demo(args: argparse.Namespace, settings: Settings) -> int:
-    """Run demo scenarios 1-5 headlessly, then print scenario 1's trace (scenario 6).
+    """Run example workflows 1-5 headlessly, then print example 1's trace (the audit trail).
 
     Only scenarios 1 and 2 are auto-approved; blocked scenarios stay blocked. In
     mock mode the plans are the canned ones, so both the status and the issue
     codes must match. With a real LLM (live/cached) only the status is checked:
     the LLM may legitimately block for a different reason, e.g. refuse scenario 5
     outright (G13) instead of proposing a plan that the validator blocks (G09).
-    Running it in live mode also fills the plan cache for a cached-mode demo.
+    Running it in live mode also fills the plan cache for later cached-mode sessions.
     """
     rows = []
     all_ok = True
@@ -230,7 +230,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     commands = parser.add_subparsers(dest="command", required=True)
 
-    demo = commands.add_parser("demo", help="run demo scenarios 1-5, then trace scenario 1")
+    demo = commands.add_parser("demo", help="run example workflows 1-5, then trace example 1")
     demo.add_argument("--mode", choices=LLM_MODES, default="mock")
 
     run = commands.add_parser("run", help="run one request")

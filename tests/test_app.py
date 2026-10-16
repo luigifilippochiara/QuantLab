@@ -38,7 +38,7 @@ def button(app: AppTest, label: str):
 def test_scenario_1_full_flow(app_env: Settings) -> None:
     app = open_page("analysis.py")
     labels = [b.label for b in app.sidebar.button]
-    assert labels[0] == "1 · Volatility flag (success)" and len(labels) == 5
+    assert labels[0] == "1 · High-volatility weeks" and len(labels) == 5
     app.sidebar.button(key="scenario-volatility_flag_success").click().run()
     button(app, "Generate plan").click().run()
     assert not app.exception, app.exception

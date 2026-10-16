@@ -3,7 +3,7 @@
 #
 # Each case:
 #   id:           short name
-#   scenario:     a demo scenario id, e.g. volatility_flag_success (request and datasets
+#   scenario:     an example-workflow id, e.g. volatility_flag_success (request and datasets
 #                 are taken from scenarios.py), OR
 #   request + datasets
 #   expect:       plan            -> a valid plan (no BLOCK) is expected

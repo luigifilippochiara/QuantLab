@@ -1,6 +1,6 @@
 """Shared helpers for the Streamlit pages: charts, issue and table rendering, widgets.
 
-Role in the architecture: presentation only. Every number shown comes from the
+Role in the architecture: user interface only. Every number shown comes from the
 engine's results (artifacts, facts sheet, run records); nothing here computes
 analysis results or talks to an LLM.
 
@@ -70,7 +70,7 @@ def same_value(a: Any, b: Any) -> bool:
 
 
 def load_scenario(scenario_id: str) -> None:
-    """Button callback: put a demo scenario's request and datasets into the form."""
+    """Button callback: put an example workflow's request and datasets into the form."""
     scenario = SCENARIOS_BY_ID[scenario_id]
     st.session_state.request_text = scenario.request
     st.session_state.dataset_select = list(scenario.dataset_ids)

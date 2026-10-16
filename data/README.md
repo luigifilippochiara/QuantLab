@@ -52,7 +52,7 @@ SP500 was added.
 - `SP500` is marked on FRED as *Copyrighted: Pre-Approval Required*
   (Copyright S&P Dow Jones Indices LLC).
 
-The snapshot is included for reproducibility of this take-home exercise. Before
+The snapshot is included so that every analysis can be reproduced exactly. Before
 publishing this repository or redistributing the files, check the
 [FRED Terms of Use](https://fred.stlouisfed.org/legal/) and the series notes;
 the NASDAQ and S&P 500 series in particular may need the copyright holder's

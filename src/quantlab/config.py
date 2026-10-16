@@ -39,8 +39,8 @@ LLM_MODES = ("live", "cached", "mock")
 LLM_PROVIDERS = ("openai", "anthropic")
 
 # Default models (the narrator uses the planner's model unless set separately).
-# OpenAI: gpt-6-luna, the cheapest GPT-6 model, which the owner has used live for
-# both calls; gpt-6.1-sol (balanced) or gpt-6-astra (strongest) via the env vars.
+# OpenAI: gpt-6-luna, the cost-efficient GPT-6 model, used live for both calls;
+# gpt-6.1-sol can be selected with QUANTLAB_PLANNER_MODEL as an alternative.
 DEFAULT_MODELS = {"openai": "gpt-6-luna", "anthropic": "claude-sonnet-5-5"}
 
 
@@ -61,7 +61,8 @@ class Settings:
         planner_effort: reasoning effort for the planner call.
         narrator_effort: reasoning effort for the narrator call.
         llm_timeout_seconds: timeout for one LLM API call.
-        llm_max_retries: SDK retries on rate limits / server errors (kept low for live demos).
+        llm_max_retries: SDK retries on rate limits / server errors (kept low so a stuck
+            call fails fast and the user can switch to cached or mock mode).
         planner_max_tokens: output token cap for the planner call (includes thinking).
         narrator_max_tokens: output token cap for the narrator call (includes thinking).
         llm_provider: "openai" or "anthropic".

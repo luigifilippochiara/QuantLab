@@ -63,8 +63,11 @@ with st.sidebar:
             icon=":material/key_off:",
         )
 
-    st.header("Demo scenarios")
-    st.caption("One analyst's workflow: it works (1), it is smart (2), it is safe (3-5).")
+    st.header("Example workflows")
+    st.caption(
+        "Ready-made requests: a typical volatility analysis (1) and the safeguards "
+        "QuantLab applies to risky or out-of-scope requests (2-5)."
+    )
     for scenario in SCENARIOS:
         st.button(
             scenario.label,
@@ -74,8 +77,8 @@ with st.sidebar:
             width="stretch",
         )
     st.caption(
-        "6 · Traceability: after running 1, use **Trace a result** under the results "
-        "to follow the flags back to the NASDAQ file."
+        "Audit trail: after running 1, use **Trace a result** under the results to "
+        "follow any output back to the source file."
     )
 
 # ---------------------------------------------------------------- request
@@ -98,7 +101,7 @@ if st.button(
 session: Session | None = st.session_state.session
 if session is None:
     st.info(
-        "Pick a demo scenario in the sidebar or type a request, then generate a plan.",
+        "Type a request or pick an example workflow in the sidebar, then generate a plan.",
         icon=":material/lightbulb:",
     )
     st.stop()

@@ -1,7 +1,9 @@
-# Decisions
+# Design decisions
 
-Choices made where the spec (docs/SPEC.md) was silent, ambiguous, or did not
-work in practice. One short paragraph each: what, why, alternatives considered.
+The design decisions behind QuantLab: choices made where the v1 specification
+(docs/SPEC.md) was silent, ambiguous, or did not work in practice, and the
+rationale for later changes to the product. One short paragraph each: what, why,
+alternatives considered.
 
 ## Project setup
 
@@ -44,7 +46,7 @@ fields listed in the spec.
 (1962-1990 starts). FRED marks NASDAQCOM as "Copyrighted: Pre-Approval
 Required" and VIXCLS as "Citation Required"; there is no public-domain equity
 index with comparable history on FRED, so NASDAQCOM stays and the licence
-terms are documented in `data/README.md` (check them before publishing the repo).
+terms are documented in `data/README.md` (check them before redistributing the data).
 
 ## Configuration
 
@@ -124,17 +126,17 @@ reported because its suggestion ("use difference") is the actionable one.
 
 **The dry run's parameter-driven metadata is declared in the registry**
 (`meta_from_params`, e.g. resample sets `frequency` from `freq`). The validator
-predicts output metadata from it; a test runs scenarios A, B and E on synthetic
-data and checks the prediction equals what the capability functions actually produced.
+predicts output metadata from it; a test runs several plans on synthetic data
+and checks the prediction equals what the capability functions actually produced.
 
 **Issue ids are `code:step[:key]`** (e.g. `G12:s2:return_method`). Approvals are
 recorded against these ids. Any parameter edit re-validates the plan and clears
 earlier approvals, so an approval always refers to the plan as it will run.
 
-**A `scenarios.py` module (not in the spec's layout)** holds the demo scenarios
-and their canned plans as plain data. The MockPlanner, CLI demo, app sidebar,
-tests and golden set all need them, so they live in one place instead of inside
-planner.py. See "Six demo scenarios" below for the current set.
+**A `scenarios.py` module (not in the spec's layout)** holds the example
+workflows and their canned plans as plain data. The MockPlanner, `cli demo`, the
+app sidebar, the tests and the golden set all need them, so they live in one
+place instead of inside planner.py. See "Example workflows" below for the current set.
 
 ## Execution, lineage and monitoring
 
@@ -154,9 +156,9 @@ change that matters does not. The saved output file IS this canonical text, so
 **R03 is checked from what `load_series` actually dropped**
 (`meta.n_dropped_missing`), not from catalog counts. **R04** compares the size of
 the inner join with the size of EACH input and warns if either lost more than
-10%. Scenario E triggers it with the real data: DGS2 starts in 1976 and DGS10 in
-1962, so the spread silently loses 22% of the 10-year history. That warning is
-correct, so E completes "with warnings" rather than cleanly.
+10%. The 10y-2y spread triggers it with the real data: DGS2 starts in 1976 and
+DGS10 in 1962, so the spread silently loses 22% of the 10-year history. That
+warning is correct, so such a run completes "with warnings" rather than cleanly.
 
 **Two extra event types**, `plan_validated` and `execution_finished`, carry the
 validation and execution stage latencies needed for the per-stage latency
@@ -197,9 +199,9 @@ model that actually answered is recorded (`served_model`) so the run record
 stays accurate. It can be removed by deleting two arguments in planner.py and
 narrator.py.
 
-**Timeouts and retries tuned for a live demo:** 120 s per call and one SDK
-retry, so a stuck call fails within about 4 minutes and the presenter can switch
-to cached or mock mode. (Raised from 90 s when OpenAI reasoning models were
+**Timeouts and retries tuned for interactive use:** 120 s per call and one SDK
+retry, so a stuck call fails within about 4 minutes and the user can switch to
+cached or mock mode. (Raised from 90 s when OpenAI reasoning models were
 added, which can take longer at medium effort.)
 
 **The plan cache stores only successful planner output, and re-parses it on
@@ -210,7 +212,7 @@ narrator calls the LLM if it can and otherwise uses the template.
 
 **The mock planner refuses requests it does not recognise** (G13, "switch to
 live mode") instead of guessing. Keyword matching is ordered most-specific
-first, so the injection scenario D wins over everything else.
+first, so the prompt-injection example wins over everything else.
 
 **Grounding check rules.** A number written with d decimals is grounded if it
 is within half a unit of its last digit of an allowed value, i.e. it is a
@@ -256,9 +258,9 @@ commands can be used in CI.
 package without dynamic imports (which the safety rules forbid). `eval/run_eval.py`
 is a three-line wrapper around the same code.
 
-**The golden set references demo scenarios by id** (`scenario: volatility_flag_success`) instead of
-repeating their request text, so it cannot drift from `scenarios.py`. In mock
-mode only the five canned scenarios can match, so the mock report is a harness
+**The golden set references example workflows by id** (`scenario: volatility_flag_success`)
+instead of repeating their request text, so it cannot drift from `scenarios.py`.
+In mock mode only the five canned examples can match, so the mock report is a harness
 check (the report says so); `--mode live` measures the real planner. A
 parameter counts as correct only if EVERY step using that capability has the
 expected value (if a plan resamples two series, both must be weekly). Only
@@ -291,8 +293,8 @@ parameter clears the engine's approvals and unticks the boxes, so an approval
 always refers to the issue text of the plan that actually runs.
 
 **The app is regression-tested headlessly** with `streamlit.testing.AppTest`
-(scenario A planned, approved, executed, narrated, traced and replayed; a
-blocked scenario cannot execute; all pages render).
+(example 1 planned, edited, approved, executed, narrated, traced and replayed;
+blocked examples cannot execute; all pages render).
 
 ## Notebooks and documentation
 
@@ -318,8 +320,8 @@ to a third party, which an internal bank tool should not do.
 ## LLM provider: OpenAI added (default) alongside Anthropic
 
 **One setting, `QUANTLAB_LLM_PROVIDER` (`openai` by default, or `anthropic`),
-chooses the API for both LLM calls.** The owner wanted to run the live demo with
-an OpenAI key. Rather than deleting the Anthropic implementation, both providers
+chooses the API for both LLM calls.** OpenAI is the provider used for live
+operation. Rather than deleting the Anthropic implementation, both providers
 sit side by side in `planner.py` (planner classes, client factories, error
 messages) and `narrator.py` (one small function per provider returning the same
 `LLMReply`). Both get the same system prompt, the same plan schema and the same
@@ -330,7 +332,7 @@ because the spec names it and the switch costs little code.
 
 **OpenAI uses the Responses API, not Chat Completions.** OpenAI's reasoning
 guide recommends Responses for reasoning models and states that Chat Completions
-does not support function calling with GPT-6 Astra or GPT-6.1 Sol. Function
+does not support function calling with GPT-6.1 Sol. Function
 tools in Responses are flat (`{"type": "function", "name", "parameters",
 "strict"}`); the plan arrives as a JSON string in a `function_call` output item,
 which is parsed and then validated like any other plan. An invalid JSON string
@@ -338,19 +340,19 @@ is a G01.
 
 **Default OpenAI model `gpt-6-luna`, for both the planner and the narrator.**
 The first default was `gpt-6.1-sol`, OpenAI's "balanced intelligence and cost"
-model (per its models page in October 2026). The owner switched to `gpt-6-luna`,
-the cheapest GPT-6 model, which they had already run live for both calls without
+model (per its models page in October 2026). The default moved to `gpt-6-luna`,
+the cost-efficient GPT-6 model, after it had run live for both calls without
 problems; the narrator follows the planner's model unless
-`QUANTLAB_NARRATOR_MODEL` is set. `gpt-6.1-sol` (balanced) and `gpt-6-astra`
-(most capable) remain one environment variable away if planning quality on
-free-form requests turns out to need them.
+`QUANTLAB_NARRATOR_MODEL` is set. `gpt-6.1-sol` remains available as an
+alternative through `QUANTLAB_PLANNER_MODEL` if planning quality on free-form
+requests requires it.
 
 **Same request design as on Anthropic: `tool_choice="auto"` plus an explicit
 instruction, `strict: False`, no `temperature`.** OpenAI's docs do not confirm
 that the GPT-6 reasoning models accept a forced tool choice or a custom
-temperature, and a rejected parameter would break the live demo; `"required"`
+temperature, and a rejected parameter would break live sessions; `"required"`
 or a forced `{"type": "function", "name": "submit_plan"}` is a one-line change
-to try once a key is available. Strict mode requires closed objects, and plan
+to try against the live API. Strict mode requires closed objects, and plan
 params are free-form maps. Reasoning depth uses `reasoning={"effort": ...}` with
 the existing `medium` (planner) / `low` (narrator) settings, which all three
 GPT-6 models accept.
@@ -365,64 +367,57 @@ OpenAI a refusal simply produces no `submit_plan` call (G01), and the narrator
 falls back to the template.
 
 **`demo --mode live` checks only the outcome status.** With a real LLM a
-scenario may be blocked for a different reason than the canned plan (e.g. a
-refusal G13 for scenario 5 instead of G09, which the spec explicitly allows). In
-mock mode the issue codes are still checked exactly. Running the demo in live
-mode also warms the plan cache for a cached-mode presentation.
+example may be blocked for a different reason than the canned plan (e.g. a
+refusal G13 for example 5 instead of G09, which the spec explicitly allows). In
+mock mode the issue codes are still checked exactly. Running `cli demo` in live
+mode also pre-loads the plan cache for later cached-mode sessions.
 
-**Verification without a key.** Besides fake-client unit tests, the OpenAI path
-was run end to end with the real `openai` SDK against a local stand-in server
-returning Responses-API JSON: the request carried the intended parameters, the
-real response objects parsed, the run completed and the narrative was grounded.
-The real API was then used by the owner with `gpt-6-luna` (planner and narrator
-both worked; an unknown model id gave the expected G01 with "API error 404").
+**Verification of the OpenAI path.** Besides unit tests with simulated clients,
+the OpenAI path was run end to end with the real `openai` SDK against a local
+stand-in server returning Responses-API JSON: the request carried the intended
+parameters, the real response objects parsed, the run completed and the
+narrative was grounded. The real API has since been used with `gpt-6-luna`
+(planner and narrator both worked; an unknown model id gave the expected G01
+with "API error 404").
 
-## Simplification: descriptive capabilities, five simple demo scenarios
+## Descriptive capabilities only
 
 **Statistical tests removed: `compare_groups` (Welch t / Mann-Whitney),
 `ols_hac` (Newey-West regression) and `adf_test`; and `forward_return` with
-them.** The owner found the capabilities and demos too complex for a 15-minute
-presentation and asked for simple, descriptive analyses. `forward_return` only
-existed to feed the regime-comparison tests; without them it was a half
-workflow, and a "future return" column is easy to confuse with a prediction,
-which is exactly what scenario C must refuse. The menu is now eight descriptive
-capabilities. Alternative: keep the tests but leave them out of the demo,
-rejected because the LLM would still see and use them and the code would still
-need explaining.
+them.** The scope was narrowed to simple, descriptive analyses, which analysts
+can interpret correctly without a quant in the loop and reviewers can verify by
+reading. `forward_return` only existed to feed the regime-comparison tests;
+without them it was a half workflow, and a "future return" column is easy to
+confuse with a prediction, which QuantLab must decline. The menu became eight
+descriptive capabilities (nine once `compare_groups` returned in descriptive
+form, below). Alternative: keep the tests but leave them out of the example
+workflows, rejected because the planner would still see and use them and the
+code would still need maintaining.
 
 **Guardrails that only applied to tests were retired, without renumbering.**
 G11 OVERLAPPING_OBSERVATIONS (t-tests on overlapping forward returns), R05
 LOW_EFFECTIVE_SAMPLE (test power from few flagged episodes) and R02's per-group
 minimum are gone. The other codes keep their numbers, leaving a gap at G11.
 Renumbering was tried first and reverted: approvals are recorded by issue id
-(e.g. `G12:s2:return_method`), so renumbering made the owner's earlier live runs
-fail to replay even though they only used capabilities that still exist. Never
+(e.g. `G12:s2:return_method`), so renumbering made existing run records fail to
+replay even though they only used capabilities that still exist. Never
 reusing a code is the usual rule for exactly this reason.
 
 **scipy and statsmodels removed from the dependencies.** Nothing uses them any
 more. The summary-statistics test now checks skew and excess kurtosis against
 their textbook formulas instead of scipy, which is also a more independent check.
 
-**Five demo scenarios (A-E), each a few steps:** A average daily return of the
-S&P 500 (load, returns, summary statistics; the return-method approval G12);
-B periods of high volatility in the NASDAQ (load, returns, 21-day volatility,
-expanding 90th-percentile flags); C "predict the next 5 values of the VIX"
-(blocked, no forecasting capability); D the prompt injection (refused); E the
-10y-2y spread with summary statistics (no approvals; R04 warning on the real
-data). B stays on daily data (21-day window = about one trading month, 252 days
-of history before flagging = one year) so the plan needs no resampling step.
+**An intermediate set of examples preceded the current workflows**: the average
+daily S&P 500 return, daily high-volatility periods in the NASDAQ, a forecast
+request whose canned plan named a non-existent `forecast` capability (blocked by
+G02), the prompt injection, and the 10y-2y spread. It is superseded by the
+example workflows below.
 
-**Scenario C's canned plan names a `forecast` capability**, so in mock mode the
-validator blocks it (G02) rather than the planner refusing it: that shows the
-second line of defence. The live planner prompt now lists forecasts and
-statistical tests among the things to refuse (G13). Either way the request is
-blocked.
-
-**SP500 added to the catalog.** The owner's example was "average return of the
-S&P 500". FRED distributes only its last 10 years and marks it "Copyrighted:
+**SP500 added to the catalog**, as the reference equity index analysts most
+often ask about. FRED distributes only its last 10 years and marks it "Copyrighted:
 Pre-Approval Required", like NASDAQCOM (documented in `data/README.md`).
 NASDAQCOM stays for its 55-year history, which gives the high-volatility
-scenario many episodes. `scripts/fetch_data.py SP500` fetched only the new
+analysis many episodes. `scripts/fetch_data.py SP500` fetched only the new
 series, so the existing snapshot files and hashes did not change.
 
 **Narrator and prompt versions.** The narrator's rule on reading p-values became
@@ -432,37 +427,40 @@ grounding check. The prompt versions were bumped (`planner-v2`, `narrator-v2`,
 `canned-scenarios-v2`); together with the new registry version this means plans
 cached before the change are never reused.
 
-## Six demo scenarios: one analyst's workflow
+## Example workflows
 
-**Five canned requests plus a trace (scenario 6).** The demo scenarios now tell
-one story, a market-risk analyst flagging unusual market behaviour: it works
-(1 `volatility_flag_success`), it is smart (2 `volatility_flag_lookahead`), it is
-safe (3 `random_forest_block`, 4 `prompt_injection_block`, 5
-`frequency_mismatch_block`), it is auditable (6, the trace of scenario 1's
-`flag_regime` step). They replace the earlier A-E scenarios everywhere (sidebar,
-`cli demo`, golden set). Tests that need a clean rates plan or a misbehaving
+**Five ready-made requests and the audit trail.** The example workflows follow
+one realistic task, a market-risk analyst identifying periods of unusual market
+behaviour: the core analysis (1, high-volatility weeks, `volatility_flag_success`)
+and four built-in protections, against look-ahead (2,
+`volatility_flag_lookahead`), out-of-scope requests (3, `random_forest_block`),
+prompt injection (4, `prompt_injection_block`) and misaligned frequencies (5,
+`frequency_mismatch_block`). The trace of example 1's `flag_regime` step shows
+the audit trail. They replace the earlier examples everywhere (sidebar,
+`cli demo`, golden set); the ids are kept as stable identifiers for the tests,
+the golden set and the CLI. Tests that need a clean rates plan or a misbehaving
 planner keep their own plans in `tests/conftest.py` (`SPREAD_PLAN`,
 `RANDOM_FOREST_PLAN`) rather than in `scenarios.py`, so the app shows only the
-demo set. Scenarios are matched by exact text, id, number ("1".."5") or keywords.
+example set. Examples are matched by exact text, id, number ("1".."5") or keywords.
 
-**`compare_groups` is back, as a descriptive capability.** Scenario 5's plan ends
+**`compare_groups` is back, as a descriptive capability.** Example 5's plan ends
 in `compare_groups(values, flags)`, which had been removed with the statistical
 tests; without it the validator would report G02 (unknown capability) and never
 reach the frequency check. It returns the mean of the values in flagged and in
 normal periods, the group sizes and the difference, and nothing else: no p-value
 or test statistic, no scipy, consistent with the earlier "no statistical tests"
 decision. Its assumptions say so explicitly, and the narrator template calls the
-result descriptive. Alternative: make scenario 5 use `spread` of two
-differently-sampled series, rejected because the specified story is about
-comparing returns across VIX regimes.
+result descriptive. Alternative: make example 5 use `spread` of two
+differently-sampled series, rejected because the workflow it represents compares
+returns across VIX regimes.
 
-**Scenario 3 is a planner refusal; the G02 wall is tested separately.** The canned
+**Example 3 is a planner refusal; the G02 check is tested separately.** The canned
 plan refuses (G13) and lists what the registry can do, as a well-behaved LLM
 should. A test feeds a misbehaving planner's plan with a `random_forest` step
 through the engine (live mode, fake client) and asserts the validator blocks it
 with G02 and nothing runs.
 
-**Scenario 4's "no shell" test allows the run record's git queries.** The engine
+**Example 4's "no shell" test allows the run record's git queries.** The engine
 saves even blocked runs, and the manifest records the git commit and dirty flag
 through two fixed, read-only `git` commands (`subprocess.run` with an argument
 list, never a shell). The test therefore asserts that `os.system` and `os.popen`
@@ -477,9 +475,9 @@ using information from the future, and suggests `method='expanding'`. G09 names
 which input is too frequent, the dataset it comes from, and the frequency to
 resample to (e.g. "Resample VIXCLS to weekly right after load_series").
 
-**`cli demo` auto-approves only scenarios 1 and 2** (`Scenario.auto_approve`), prints
-scenario id, status, issue codes and run id plus a `check` column used for the
-exit code, then prints scenario 1's trace chain as scenario 6. The trace panel in
+**`cli demo` auto-approves only examples 1 and 2** (`Scenario.auto_approve`), prints
+the example id, status, issue codes and run id plus a `check` column used for the
+exit code, then prints example 1's trace chain as the audit trail. The trace panel in
 the app moved directly under the results, labelled "Trace a result", with the
 final step selected by default.
 
@@ -521,7 +519,7 @@ depending on the order of edits.
 series unchanged, never `pandas.resample("D")`, which would insert weekend NaNs;
 weekly or monthly data to D is still refused as upsampling. The dry run already
 maps D to daily, and volatility is then annualised with 252. A user can switch
-scenario 1 to daily by changing one parameter.
+example 1 to daily by changing one parameter.
 
 **Approvals belong to one plan version.** `plan.plan_hash` hashes the plan's
 content (datasets, steps, refusal fields; not the plan id or request). Each
