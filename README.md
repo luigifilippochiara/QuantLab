@@ -469,11 +469,22 @@ runs/                       run records, plan cache, events.jsonl (git-ignored)
   Required" on FRED; see `data/README.md` before redistributing the data.
 * **Short S&P 500 history.** FRED distributes only the last 10 years.
 
-Roadmap: a replan loop with validator feedback; more capabilities, each a
-reviewed and tested code change (drawdowns, correlations, statistical tests such
-as comparing returns across regimes, regressions with robust errors, GARCH);
-authentication and role-based access with named approvers and four-eyes
-approvals; a persistent store for runs and events; CI running the tests, lint,
-the example workflows, the notebooks and the live evaluation; scheduled data
-refreshes with a catalog history; per-run cost tracking and prompt caching for
-the planner.
+Roadmap:
+
+* **Governed dataset onboarding.** A reviewed process to add or refresh datasets (fetch,
+  review, hash, register in the catalog, with a catalog history), kept separate from
+  analysis so users never pull data at runtime. Requests for data that is not available
+  are logged as unmet data needs and become the intake queue for this process.
+* **New capabilities.** Further reviewed analysis functions in the registry (drawdowns,
+  correlations, statistical tests such as comparing returns across regimes, regressions
+  with robust errors, GARCH), each added as a code change with tests, never generated at
+  runtime.
+* **New guardrails.** Further validation rules as new risks are identified, each with a
+  defined severity (BLOCK, APPROVAL or WARN) and test coverage.
+* **Replan loop.** Validator feedback sent back to the planner for a corrected plan.
+* **Access control.** Authentication and role-based access, with named approvers and
+  four-eyes approvals.
+* **Persistent store** for runs and events.
+* **Continuous integration** running the tests, lint, the example workflows, the
+  notebooks and the live evaluation.
+* **Cost control.** Per-run cost tracking and prompt caching for the planner.
