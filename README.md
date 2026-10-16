@@ -60,12 +60,79 @@ uv run streamlit run app/streamlit_app.py         # the app (works in mock mode)
 uv run jupyter nbconvert --to notebook --execute --inplace notebooks/*.ipynb
 ```
 
-Live LLM mode: `cp .env.example .env`, set `ANTHROPIC_API_KEY`, then pick
-**live** or **cached** in the app sidebar (or `--mode live` in the CLI). The
-default planner and narrator model is `claude-sonnet-5-5` (configurable in `.env`).
-
 Refreshing the data (needs network; creates a new data version):
 `uv run python scripts/fetch_data.py`.
+
+## Running the live demo
+
+Live mode calls a real LLM for the planner and the narrator. The provider is
+set in `.env`: **OpenAI** by default (model `gpt-6.1-sol`, Responses API), or
+Anthropic (`QUANTLAB_LLM_PROVIDER=anthropic`, model `claude-sonnet-5-5`).
+
+**1. Configure (once).**
+
+```bash
+cp .env.example .env
+# edit .env:  QUANTLAB_LLM_PROVIDER=openai   OPENAI_API_KEY=sk-...
+#             optionally QUANTLAB_PLANNER_MODEL=gpt-6-luna (cheaper) or gpt-6-astra (strongest)
+```
+
+**2. Smoke-test the key and model** (one planner call and one narrator call):
+
+```bash
+uv run python -m quantlab.cli run "Show summary statistics of the daily VIX level." --datasets VIXCLS --mode live
+```
+
+It should print a two-step plan, `Status: completed` and a narrative written by
+the LLM with "all numbers verified". An authentication error means the key is
+wrong; "API error 404" usually means the model id is not available to your
+account (set `QUANTLAB_PLANNER_MODEL`).
+
+**3. Warm the plan cache before presenting** (one LLM call per scenario):
+
+```bash
+uv run python -m quantlab.cli demo --mode live
+```
+
+The scenario buttons in the app send exactly these requests, so in **cached**
+mode the plans then appear instantly and identically, even if the network is
+slow during the interview (the narrator still calls the LLM, and falls back to
+the deterministic template if it cannot). A real LLM may block a scenario for a
+different reason than the mock (for example refuse C outright instead of
+proposing a random forest the validator blocks), which is fine: the demo
+command only checks that blocked scenarios stay blocked.
+
+**4. Start the app** and open http://localhost:8501:
+
+```bash
+uv run streamlit run app/streamlit_app.py
+```
+
+In the sidebar, pick **cached** (the default when a key is set) or **live**,
+then a scenario button, **Generate plan**, review, approve, **Execute**. If the
+API misbehaves, switch the sidebar to **mock**: everything keeps working
+offline with the canned plans.
+
+A 15-minute path through the app:
+
+1. **Capability registry** page: the approved menu, the guardrail table, and
+   the exact capability summary the LLM sees.
+2. **Analysis, scenario A**: the plan table and raw JSON, the G12 approval that
+   gates Execute, the volatility chart with shaded high-volatility regimes, the
+   two test cards, the narrative with its "all numbers verified" badge, the
+   facts sheet, then **Trace** step s7 back to the NASDAQ file hash. Optionally
+   edit a parameter (e.g. window 26) to show it is re-validated and the approval
+   is asked again.
+3. **Scenario B**: look-ahead (G10) and material-assumption (G12) approvals plus
+   the overlapping-observations warning (G11).
+4. **Scenarios C and D**: an unregistered capability and returns of a yield are
+   blocked; the prompt injection is refused. No code is ever run.
+5. **Scenario E**: daily VIX flags against weekly returns, blocked by G09.
+6. **Scenario F**: the rates analysis, with an honest R04 warning (the 2-year
+   yield starts 14 years after the 10-year).
+7. **Run history**: open scenario A's manifest and **Replay** it without the
+   LLM (every output hash matches). **Monitoring**: runs, block rate, latency
+   per stage (planning is where the LLM time goes), guardrail activity.
 
 ## Architecture
 
@@ -99,7 +166,7 @@ flowchart LR
 | `validation.py` | Static guardrails G01-G13, metadata dry run, `ValidationReport`, the guardrail table |
 | `scenarios.py` | Demo scenarios A-F with canned plans (used by mock mode, CLI, app, tests) |
 | `executor.py` | Registry dispatch, approval gate, runtime guardrails R01-R05, step records |
-| `planner.py` | Anthropic planner, mock planner, plan cache |
+| `planner.py` | OpenAI and Anthropic planners, mock planner, plan cache |
 | `narrator.py` | Facts sheet, LLM narrator, template fallback, numeric grounding check |
 | `lineage.py` | Run record (manifest), save/load, replay, trace |
 | `monitoring.py` | Append-only JSONL event log and dashboard aggregations |
@@ -150,8 +217,8 @@ rule, assumptions (some need approval) and the underlying library call.
 
 **Library surface, deliberately small:** pandas and numpy (time series), scipy
 (Welch and Mann-Whitney tests), statsmodels (OLS with HAC errors, ADF), pydantic
-(strict plan parsing), streamlit and plotly (UI), the official `anthropic` SDK,
-python-dotenv and pyyaml. Deliberately **not** included: scikit-learn (no ML in
+(strict plan parsing), streamlit and plotly (UI), the official `openai` and
+`anthropic` SDKs, python-dotenv and pyyaml. Deliberately **not** included: scikit-learn (no ML in
 v1; "fit a random forest" is a test case for refusal), `arch` (GARCH is a later
 capability; rolling volatility suffices for regime flags), and LangChain or any
 agent framework (two structured LLM calls do not need an orchestration layer,
@@ -192,16 +259,24 @@ the checks. Approvals are recorded with a timestamp and the exact issue text.
 
 ## The LLM calls
 
+**Providers.** `QUANTLAB_LLM_PROVIDER` selects OpenAI (default; Responses API,
+`gpt-6.1-sol`) or Anthropic (Messages API, `claude-sonnet-5-5`). Both receive the
+same prompts and plan schema, and their output goes through the same parsing
+and validation; only `planner.py` imports the provider SDKs, and only
+`planner.py` and `narrator.py` call them. The run record stores the provider,
+the requested model and the model version that actually answered.
+
 **Planner** (`planner.py`). The system prompt contains rules, the capability
 summary generated from the registry, and dataset metadata (never values). The
 request is wrapped in `<user_request>` tags and treated as data: instructions
 inside it ("ignore your rules", "run this Python") lead to a refusal. Output
-arrives through a `submit_plan` tool whose input schema is the plan schema, and
-is then parsed strictly (G01) and validated. Two API constraints shaped this
-(details in `docs/DECISIONS.md`): current models reject *forced* tool choice and
-non-default temperature, so the tool call is requested by instruction, and
-determinism comes from the plan cache and LLM-free replay rather than
-`temperature=0`.
+arrives through a `submit_plan` function tool whose schema is the plan schema,
+and is then parsed strictly (G01) and validated. Two API constraints shaped this
+(details in `docs/DECISIONS.md`): current reasoning models do not reliably accept
+a *forced* tool choice or a non-default temperature, so the tool call is
+requested by instruction (`tool_choice="auto"`), reasoning depth is set with an
+effort level, and determinism comes from the plan cache and LLM-free replay
+rather than `temperature=0`.
 
 **Modes:** `live` (call the API), `cached` (reuse the cached plan for an
 identical request, datasets, model, prompt version and registry version), and
@@ -280,14 +355,16 @@ src/quantlab/               the package (see the module table above)
 app/                        Streamlit: streamlit_app.py (router), ui.py, pages/
 notebooks/01..08            one notebook per layer, executed, mock mode
 eval/                       golden_requests.yaml, run_eval.py, reports/
-tests/                      pytest suite (synthetic data, fake LLM client)
+tests/                      pytest suite (synthetic data, fake LLM clients)
 runs/                       run records, plan cache, events.jsonl (git-ignored)
 ```
 
 ## Known limitations and next steps
 
-* **Live LLM mode was built against the SDK and tested with a fake client**, but
-  not exercised against the real API during development (no key was available).
+* **Live LLM mode was not exercised against the real APIs during development**
+  (no keys were available). Both providers are tested with fake clients, and the
+  OpenAI path was also run end to end with the real `openai` SDK against a local
+  stand-in server. Run the smoke test in "Running the live demo" before presenting.
   Mock mode, used by the tests, CLI demo, notebooks and app, is fully exercised.
 * **No plan -> observe -> replan loop.** Validation errors are shown to the human
   but not fed back to the LLM for a corrected plan. That is the natural next step.

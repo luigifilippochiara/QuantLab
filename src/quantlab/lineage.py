@@ -33,14 +33,22 @@ from quantlab.types import Artifact, DataType, canonical_text
 from quantlab.validation import Issue, ValidationReport
 
 # Library versions recorded in every manifest (fixed names, never user input).
-RECORDED_PACKAGES = ("pandas", "numpy", "scipy", "statsmodels", "pydantic", "anthropic")
+RECORDED_PACKAGES = (
+    "pandas",
+    "numpy",
+    "scipy",
+    "statsmodels",
+    "pydantic",
+    "openai",
+    "anthropic",
+)
 
 
 class LLMInfo(BaseModel):
     """How the plan was produced.
 
     Fields:
-        provider: "anthropic" or "mock".
+        provider: "openai", "anthropic" or "mock".
         model: model id requested (or "mock").
         served_model: model that actually answered (differs if a refusal fallback ran).
         prompt_version: planner prompt version.

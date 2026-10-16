@@ -67,7 +67,7 @@ class Session:
         catalog: dataset catalog.
         run_id: unique run id.
         created_at: UTC timestamp.
-        client: optional Anthropic client (tests inject a fake one).
+        client: optional OpenAI or Anthropic client (tests inject a fake one).
         plan_result: what the planner returned.
         plan_original: the plan exactly as the planner proposed it.
         plan: the current plan: defaults filled in, user edits applied.
@@ -119,7 +119,7 @@ class Session:
             dataset_ids: datasets selected by the user.
             mode: LLM mode; defaults to the configured mode.
             settings: settings; defaults to load_settings().
-            client: optional Anthropic client (tests).
+            client: optional OpenAI or Anthropic client (tests).
 
         Returns:
             A new Session (a request_received event is logged).
@@ -542,7 +542,7 @@ def run_request(
         mode: LLM mode (default from settings).
         approve: approve every APPROVAL issue automatically (CLI --approve-all).
         settings: settings (default load_settings()).
-        client: optional Anthropic client (tests).
+        client: optional OpenAI or Anthropic client (tests).
 
     Returns:
         The finished Session. Its status says how far it got: "blocked" (static

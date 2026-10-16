@@ -19,6 +19,7 @@ template narrator writes the summary instead.
 import math
 import re
 import time
+from dataclasses import dataclass
 from typing import Any
 
 from pydantic import BaseModel, Field
@@ -26,7 +27,12 @@ from pydantic import BaseModel, Field
 from quantlab.capabilities import count_episodes
 from quantlab.config import Settings
 from quantlab.plan import Plan, describe_plan
-from quantlab.planner import FALLBACK_BETA, api_error_message, make_client
+from quantlab.planner import (
+    FALLBACK_BETA,
+    api_error_message,
+    make_anthropic_client,
+    make_openai_client,
+)
 from quantlab.types import ANNUALISATION_FACTORS, Artifact, DataType
 from quantlab.validation import Issue
 
@@ -419,7 +425,7 @@ def narrate(
         mode: "live" or "cached" use the LLM; "mock" uses the template.
         settings: settings (narrator model, effort, tokens, timeout).
         extra_texts: other trusted texts whose numbers are allowed (e.g. dataset titles).
-        client: optional Anthropic client (tests inject a fake one).
+        client: optional OpenAI or Anthropic client (tests inject a fake one).
 
     Returns:
         A NarrativeResult including the grounding check.
@@ -443,6 +449,65 @@ def narrate(
     return result
 
 
+@dataclass
+class LLMReply:
+    """One text answer from either provider, in the same shape.
+
+    Fields:
+        text: the answer text ("" if none).
+        model: model that answered.
+        input_tokens: prompt tokens reported by the API.
+        output_tokens: output tokens reported by the API.
+        problem: why the answer cannot be used (refusal, truncation...), or None.
+    """
+
+    text: str
+    model: str | None
+    input_tokens: int | None
+    output_tokens: int | None
+    problem: str | None
+
+
+def _ask_openai(prompt: str, settings: Settings, client: Any) -> LLMReply:
+    """Ask an OpenAI model for the narrative (Responses API)."""
+    response = (client or make_openai_client(settings)).responses.create(
+        model=settings.narrator_model,
+        instructions=SYSTEM_PROMPT,
+        input=[{"role": "user", "content": prompt}],
+        reasoning={"effort": settings.narrator_effort},
+        max_output_tokens=settings.narrator_max_tokens,  # includes reasoning tokens
+    )
+    usage = response.usage
+    return LLMReply(
+        text=response.output_text.strip(),
+        model=response.model,
+        input_tokens=usage.input_tokens if usage is not None else None,
+        output_tokens=usage.output_tokens if usage is not None else None,
+        problem=None if response.status == "completed" else f"status {response.status}",
+    )
+
+
+def _ask_anthropic(prompt: str, settings: Settings, client: Any) -> LLMReply:
+    """Ask a Claude model for the narrative (Messages API, with refusal fallback)."""
+    response = (client or make_anthropic_client(settings)).beta.messages.create(
+        model=settings.narrator_model,
+        max_tokens=settings.narrator_max_tokens,
+        system=SYSTEM_PROMPT,
+        messages=[{"role": "user", "content": prompt}],
+        output_config={"effort": settings.narrator_effort},
+        betas=[FALLBACK_BETA],
+        fallbacks="default",
+    )
+    unusable = response.stop_reason in ("refusal", "max_tokens")
+    return LLMReply(
+        text=" ".join(b.text for b in response.content if b.type == "text").strip(),
+        model=response.model,
+        input_tokens=response.usage.input_tokens,
+        output_tokens=response.usage.output_tokens,
+        problem=f"stop reason {response.stop_reason}" if unusable else None,
+    )
+
+
 def _llm_narrative(
     request: str,
     plan: Plan,
@@ -451,37 +516,32 @@ def _llm_narrative(
     settings: Settings,
     client: Any,
 ) -> tuple[NarrativeResult | None, str | None]:
-    """Ask the LLM for the narrative.
+    """Ask the configured provider's LLM for the narrative.
 
     Returns:
         (result, None) on success, or (None, error message) if the call failed or
         the answer is unusable.
     """
+    prompt = build_user_prompt(request, plan, facts, issues)
     started = time.perf_counter()
     try:
-        response = (client or make_client(settings)).beta.messages.create(
-            model=settings.narrator_model,
-            max_tokens=settings.narrator_max_tokens,
-            system=SYSTEM_PROMPT,
-            messages=[{"role": "user", "content": build_user_prompt(request, plan, facts, issues)}],
-            output_config={"effort": settings.narrator_effort},
-            betas=[FALLBACK_BETA],
-            fallbacks="default",
-        )
+        if settings.llm_provider == "openai":
+            reply = _ask_openai(prompt, settings, client)
+        else:
+            reply = _ask_anthropic(prompt, settings, client)
     except Exception as exc:  # any API failure falls back to the deterministic template
         return None, api_error_message(exc, settings)
 
-    text = " ".join(b.text for b in response.content if b.type == "text").strip()
-    if response.stop_reason in ("refusal", "max_tokens") or not text:
-        return None, f"LLM narrative unusable (stop reason: {response.stop_reason})."
+    if reply.problem is not None or not reply.text:
+        return None, f"LLM narrative unusable ({reply.problem or 'empty answer'})."
     return (
         NarrativeResult(
-            text=text,
+            text=reply.text,
             source="llm",
-            model=response.model,
+            model=reply.model,
             latency_ms=round((time.perf_counter() - started) * 1000, 1),
-            input_tokens=response.usage.input_tokens,
-            output_tokens=response.usage.output_tokens,
+            input_tokens=reply.input_tokens,
+            output_tokens=reply.output_tokens,
             facts=facts,
         ),
         None,

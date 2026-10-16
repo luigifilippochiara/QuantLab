@@ -21,7 +21,9 @@ Hard rules:
 
 - Never use `eval`, `exec`, `compile`, `__import__`, `importlib.import_module` or
   `getattr` in `src/` (enforced by `tests/test_safety.py`). Dispatch is a dict lookup.
-- The LLM is used only in `planner.py` and `narrator.py` (also enforced by a test).
+- The LLM is used only in `planner.py` and `narrator.py`; only `planner.py` imports
+  the provider SDKs (`openai`, `anthropic`). Both are enforced by a test. The
+  provider is chosen by `QUANTLAB_LLM_PROVIDER` (default `openai`).
 - The LLM never sees data values: only the generated registry summary and
   dataset metadata (`data.describe_datasets`).
 - Numbers shown to the user come from the executor, never from the LLM.
@@ -34,7 +36,7 @@ code calling pandas/scipy/statsmodels for analysis) -> `registry` (specs,
 REGISTRY, LLM summary, version) -> `plan` (Pydantic Plan/Step) -> `validation`
 (static guardrails, dry run, GUARDRAILS table) -> `scenarios` (demo plans) ->
 `executor` (dispatch, runtime guardrails, step records) -> `planner` /
-`narrator` (the only LLM code) -> `lineage` (manifest, replay, trace) ->
+`narrator` (the only LLM code; OpenAI and Anthropic) -> `lineage` (manifest, replay, trace) ->
 `monitoring` (events.jsonl) -> `engine` (Session orchestrator used by app, CLI
 and notebooks) -> `evaluation`, `cli`. The Streamlit app is in `app/`
 (presentation only).
@@ -66,7 +68,7 @@ and notebooks) -> `evaluation`, `cli`. The Streamlit app is in `app/`
   Do not comment trivial lines.
 - Type hints everywhere. Keep `uv run ruff check .` and `uv run ruff format --check .` clean.
 - Tests need no network and no API key: synthetic data from `tests/conftest.py`,
-  the fake LLM client in `tests/fakes.py`.
+  the fake OpenAI and Anthropic clients in `tests/fakes.py`.
 
 ## Commands
 

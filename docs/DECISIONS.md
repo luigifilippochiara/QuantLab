@@ -210,9 +210,10 @@ model that actually answered is recorded (`served_model`) so the run record
 stays accurate. It can be removed by deleting two arguments in planner.py and
 narrator.py.
 
-**Timeouts and retries tuned for a live demo:** 90 s per call and one SDK retry,
-so a stuck call fails within about 3 minutes and the presenter can switch to
-cached or mock mode.
+**Timeouts and retries tuned for a live demo:** 120 s per call and one SDK
+retry, so a stuck call fails within about 4 minutes and the presenter can switch
+to cached or mock mode. (Raised from 90 s when OpenAI reasoning models were
+added, which can take longer at medium effort.)
 
 **The plan cache stores only successful planner output, and re-parses it on
 load.** A broken plan is never cached (it would be served forever in cached
@@ -325,3 +326,60 @@ for a `.gitkeep`): they are timestamped outputs; regenerate them with
 **Streamlit telemetry is off** (`.streamlit/config.toml`,
 `browser.gatherUsageStats = false`): by default Streamlit sends usage statistics
 to a third party, which an internal bank tool should not do.
+
+## LLM provider: OpenAI added (default) alongside Anthropic
+
+**One setting, `QUANTLAB_LLM_PROVIDER` (`openai` by default, or `anthropic`),
+chooses the API for both LLM calls.** The owner wanted to run the live demo with
+an OpenAI key. Rather than deleting the Anthropic implementation, both providers
+sit side by side in `planner.py` (planner classes, client factories, error
+messages) and `narrator.py` (one small function per provider returning the same
+`LLMReply`). Both get the same system prompt, the same plan schema and the same
+validation, so swapping providers changes nothing downstream. The rule "the LLM
+appears only in the planner and narrator" still holds: only `planner.py` imports
+the SDKs, enforced by a test. Alternative: replace Anthropic entirely, rejected
+because the spec names it and the switch costs little code.
+
+**OpenAI uses the Responses API, not Chat Completions.** OpenAI's reasoning
+guide recommends Responses for reasoning models and states that Chat Completions
+does not support function calling with GPT-6 Astra or GPT-6.1 Sol. Function
+tools in Responses are flat (`{"type": "function", "name", "parameters",
+"strict"}`); the plan arrives as a JSON string in a `function_call` output item,
+which is parsed and then validated like any other plan. An invalid JSON string
+is a G01.
+
+**Default OpenAI model `gpt-6.1-sol`**, OpenAI's "balanced intelligence and
+cost" model (per its models page in October 2026), the counterpart of the
+Anthropic default `claude-sonnet-5-5`. `gpt-6-luna` (cheapest) and
+`gpt-6-astra` (most capable) work by setting `QUANTLAB_PLANNER_MODEL`.
+
+**Same request design as on Anthropic: `tool_choice="auto"` plus an explicit
+instruction, `strict: False`, no `temperature`.** OpenAI's docs do not confirm
+that the GPT-6 reasoning models accept a forced tool choice or a custom
+temperature, and a rejected parameter would break the live demo; `"required"`
+or a forced `{"type": "function", "name": "submit_plan"}` is a one-line change
+to try once a key is available. Strict mode requires closed objects, and plan
+params are free-form maps. Reasoning depth uses `reasoning={"effort": ...}` with
+the existing `medium` (planner) / `low` (narrator) settings, which all three
+GPT-6 models accept.
+
+**OpenAI planner output cap 25,000 tokens.** The cap includes reasoning tokens,
+and OpenAI's reasoning guide recommends reserving at least 25,000 at first. An
+`incomplete` response (e.g. `max_output_tokens` reached) is a G01 for the
+planner and a template fallback for the narrator. Anthropic keeps 16,000.
+
+**No server-side refusal fallback on OpenAI.** That feature is Anthropic's; on
+OpenAI a refusal simply produces no `submit_plan` call (G01), and the narrator
+falls back to the template.
+
+**`demo --mode live` checks only the outcome status.** With a real LLM a
+scenario may be blocked for a different reason than the canned plan (e.g. a
+refusal G13 for scenario C instead of G02 + G08, which the spec explicitly
+allows). In mock mode the issue codes are still checked exactly. Running the
+demo in live mode also warms the plan cache for a cached-mode presentation.
+
+**Verification without a key.** Besides fake-client unit tests, the OpenAI path
+was run end to end with the real `openai` SDK against a local stand-in server
+returning Responses-API JSON: the request carried the intended parameters, the
+real response objects parsed, the run completed and the narrative was grounded.
+The real API itself has not been called.

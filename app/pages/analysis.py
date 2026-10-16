@@ -51,10 +51,14 @@ with st.sidebar:
     mode = st.segmented_control(
         "LLM mode", LLM_MODES, key="llm_mode", required=True, label_visibility="collapsed"
     )
+    st.caption(
+        f"Live and cached modes call **{settings.llm_provider}**: planner "
+        f"`{settings.planner_model}`, narrator `{settings.narrator_model}`."
+    )
     if mode != "mock" and not settings.has_api_key:
         st.warning(
-            "No ANTHROPIC_API_KEY is set: live and cached calls will fail unless a cached "
-            "plan exists. Mock mode works offline.",
+            f"No {settings.api_key_name} is set: live and cached calls will fail unless a "
+            "cached plan exists. Mock mode works offline.",
             icon=":material/key_off:",
         )
 

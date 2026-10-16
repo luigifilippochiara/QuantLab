@@ -1,12 +1,108 @@
-"""A tiny stand-in for the Anthropic client, so planner and narrator tests need no network.
+"""Stand-ins for the OpenAI and Anthropic clients, so LLM tests need no network or key.
 
-It mimics only what QuantLab uses: client.beta.messages.create(**kwargs) returning
-an object with .content (blocks with .type/.name/.input/.text), .stop_reason,
-.model and .usage. Every call's keyword arguments are recorded for assertions.
+They mimic only what QuantLab uses, and record every call's keyword arguments:
+- OpenAI:    client.responses.create(**kwargs) -> .output (items with .type/.name/
+             .arguments), .output_text, .status, .incomplete_details, .model, .usage
+- Anthropic: client.beta.messages.create(**kwargs) -> .content (blocks with
+             .type/.name/.input/.text), .stop_reason, .model, .usage
 """
 
+import json
 from dataclasses import dataclass, field
 from typing import Any
+
+
+class FakeEndpoint:
+    """Records calls to .create() and returns a fixed response (or raises a fixed error)."""
+
+    def __init__(self, response: Any, error: Exception | None) -> None:
+        self.response = response
+        self.error = error
+        self.calls: list[dict[str, Any]] = []
+
+    def create(self, **kwargs: Any) -> Any:
+        self.calls.append(kwargs)
+        if self.error is not None:
+            raise self.error
+        return self.response
+
+
+# ---------------------------------------------------------------------------
+# OpenAI (Responses API)
+# ---------------------------------------------------------------------------
+
+
+@dataclass
+class FakeOutputItem:
+    """An item of response.output (a function call or a message)."""
+
+    type: str
+    name: str = ""
+    arguments: str = ""
+
+
+@dataclass
+class FakeIncompleteDetails:
+    """Why a response is incomplete."""
+
+    reason: str
+
+
+@dataclass
+class FakeOpenAIUsage:
+    """Token usage of a response."""
+
+    input_tokens: int = 1500
+    output_tokens: int = 400
+
+
+@dataclass
+class FakeOpenAIResponse:
+    """A Responses API response."""
+
+    output: list[FakeOutputItem]
+    output_text: str = ""
+    status: str = "completed"
+    incomplete_details: FakeIncompleteDetails | None = None
+    model: str = "gpt-6.1-sol"
+    usage: FakeOpenAIUsage = field(default_factory=FakeOpenAIUsage)
+
+
+class FakeOpenAIClient:
+    """client.responses.create(...) -> canned response."""
+
+    def __init__(self, response: FakeOpenAIResponse | None = None, error: Exception | None = None):
+        self.responses = FakeEndpoint(response, error)
+
+    @property
+    def calls(self) -> list[dict[str, Any]]:
+        return self.responses.calls
+
+
+def openai_tool_response(plan_input: Any) -> FakeOpenAIResponse:
+    """A response in which the model called submit_plan with `plan_input` (sent as JSON text)."""
+    arguments = plan_input if isinstance(plan_input, str) else json.dumps(plan_input)
+    return FakeOpenAIResponse(
+        output=[FakeOutputItem(type="function_call", name="submit_plan", arguments=arguments)]
+    )
+
+
+def openai_text_response(
+    text: str, status: str = "completed", reason: str = ""
+) -> FakeOpenAIResponse:
+    """A response containing only text (optionally incomplete, with a reason)."""
+    details = FakeIncompleteDetails(reason) if reason else None
+    return FakeOpenAIResponse(
+        output=[FakeOutputItem(type="message")],
+        output_text=text,
+        status=status,
+        incomplete_details=details,
+    )
+
+
+# ---------------------------------------------------------------------------
+# Anthropic (Messages API)
+# ---------------------------------------------------------------------------
 
 
 @dataclass
@@ -37,33 +133,18 @@ class FakeResponse:
     usage: FakeUsage = field(default_factory=FakeUsage)
 
 
-class FakeMessages:
-    """Records calls and returns a fixed response (or raises a fixed exception)."""
-
-    def __init__(self, response: FakeResponse | None, error: Exception | None) -> None:
-        self.response = response
-        self.error = error
-        self.calls: list[dict[str, Any]] = []
-
-    def create(self, **kwargs: Any) -> FakeResponse:
-        self.calls.append(kwargs)
-        if self.error is not None:
-            raise self.error
-        return self.response
-
-
 class FakeBeta:
     """Holds .messages, like client.beta."""
 
-    def __init__(self, messages: FakeMessages) -> None:
+    def __init__(self, messages: FakeEndpoint) -> None:
         self.messages = messages
 
 
-class FakeClient:
+class FakeAnthropicClient:
     """client.beta.messages.create(...) -> canned response."""
 
     def __init__(self, response: FakeResponse | None = None, error: Exception | None = None):
-        self.beta = FakeBeta(FakeMessages(response, error))
+        self.beta = FakeBeta(FakeEndpoint(response, error))
 
     @property
     def calls(self) -> list[dict[str, Any]]:

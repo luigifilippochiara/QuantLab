@@ -135,11 +135,14 @@ def settings(tmp_path: Path, synthetic_data_template: Path) -> Settings:
     """
     data_dir = tmp_path / "data"
     shutil.copytree(synthetic_data_template, data_dir)
+    # Provider "anthropic" pairs with FakeAnthropicClient; OpenAI tests switch it
+    # with dataclasses.replace(settings, llm_provider="openai").
     return Settings(
         anthropic_api_key=None,
         planner_model="test-model",
         narrator_model="test-model",
         llm_mode="mock",
+        llm_provider="anthropic",
         data_dir=data_dir,
         runs_dir=tmp_path / "runs",
     )

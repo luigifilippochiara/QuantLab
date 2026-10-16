@@ -1,9 +1,11 @@
 """Planner: mock scenarios, LLM call shape (via a fake client), error handling, plan cache."""
 
 import copy
+import dataclasses
 
 import anthropic
 import httpx2
+import openai
 import pytest
 
 from quantlab.config import Settings
@@ -11,6 +13,7 @@ from quantlab.data import Catalog, load_dataset
 from quantlab.plan import plan_tool_schema
 from quantlab.planner import (
     MockPlanner,
+    api_error_message,
     build_system_prompt,
     cache_key,
     describe_api_error,
@@ -19,7 +22,14 @@ from quantlab.planner import (
 )
 from quantlab.scenarios import SCENARIOS, SCENARIOS_BY_ID
 
-from fakes import FakeClient, text_response, tool_response
+from fakes import (
+    FakeAnthropicClient,
+    FakeOpenAIClient,
+    openai_text_response,
+    openai_tool_response,
+    text_response,
+    tool_response,
+)
 
 PLAN_A = SCENARIOS_BY_ID["A"].plan
 
@@ -61,7 +71,7 @@ def test_system_prompt_has_registry_and_metadata_but_no_values(catalog: Catalog)
 
 
 def test_live_call_shape_and_success(settings: Settings, catalog: Catalog) -> None:
-    client = FakeClient(tool_response(copy.deepcopy(PLAN_A)))
+    client = FakeAnthropicClient(tool_response(copy.deepcopy(PLAN_A)))
     result = generate_plan("weekly nasdaq volatility", ["NASDAQCOM"], "live", settings, catalog,
                            client)  # fmt: skip
     assert result.plan is not None and result.error is None
@@ -78,15 +88,15 @@ def test_live_call_shape_and_success(settings: Settings, catalog: Catalog) -> No
 @pytest.mark.parametrize(
     ("client", "expected"),
     [
-        (FakeClient(text_response("Sure! Here is my plan: ...")), "instead of calling"),
-        (FakeClient(text_response("", stop_reason="refusal")), "declined"),
-        (FakeClient(text_response("...", stop_reason="max_tokens")), "cut off"),
-        (FakeClient(tool_response({"steps": "nonsense"})), "does not match"),
-        (FakeClient(error=RuntimeError("socket closed")), "socket closed"),
+        (FakeAnthropicClient(text_response("Sure! Here is my plan: ...")), "did not call"),
+        (FakeAnthropicClient(text_response("", stop_reason="refusal")), "declined"),
+        (FakeAnthropicClient(text_response("...", stop_reason="max_tokens")), "cut off"),
+        (FakeAnthropicClient(tool_response({"steps": "nonsense"})), "does not match"),
+        (FakeAnthropicClient(error=RuntimeError("socket closed")), "socket closed"),
     ],
 )
 def test_planner_failures_become_g01(
-    client: FakeClient, expected: str, settings: Settings, catalog: Catalog
+    client: FakeAnthropicClient, expected: str, settings: Settings, catalog: Catalog
 ) -> None:
     result = generate_plan("anything", ["NASDAQCOM"], "live", settings, catalog, client)
     assert result.plan is None
@@ -101,7 +111,7 @@ def test_describe_api_error_is_specific() -> None:
 
 
 def test_cached_mode_reuses_the_plan(settings: Settings, catalog: Catalog) -> None:
-    client = FakeClient(tool_response(copy.deepcopy(PLAN_A)))
+    client = FakeAnthropicClient(tool_response(copy.deepcopy(PLAN_A)))
     first = generate_plan("req", ["NASDAQCOM"], "cached", settings, catalog, client)
     second = generate_plan("req", ["NASDAQCOM"], "cached", settings, catalog, client)
     assert not first.from_cache and second.from_cache
@@ -111,7 +121,7 @@ def test_cached_mode_reuses_the_plan(settings: Settings, catalog: Catalog) -> No
 
 
 def test_failures_are_not_cached(settings: Settings, catalog: Catalog) -> None:
-    failing = FakeClient(error=RuntimeError("down"))
+    failing = FakeAnthropicClient(error=RuntimeError("down"))
     generate_plan("req", ["NASDAQCOM"], "cached", settings, catalog, failing)
     assert not settings.cache_dir.exists() or not any(settings.cache_dir.iterdir())
 
@@ -122,3 +132,72 @@ def test_cache_key_depends_on_inputs() -> None:
     assert base != cache_key("req2", ["A", "B"], "m")
     assert base != cache_key("req", ["A"], "m")
     assert base != cache_key("req", ["A", "B"], "other-model")
+
+
+# --- OpenAI provider (Responses API) ----------------------------------------------
+
+
+@pytest.fixture
+def openai_settings(settings: Settings) -> Settings:
+    """The test settings, switched to the OpenAI provider."""
+    return dataclasses.replace(settings, llm_provider="openai", planner_model="gpt-test")
+
+
+def test_openai_call_shape_and_success(openai_settings: Settings, catalog: Catalog) -> None:
+    client = FakeOpenAIClient(openai_tool_response(copy.deepcopy(PLAN_A)))
+    result = generate_plan("weekly nasdaq volatility", ["NASDAQCOM"], "live", openai_settings,
+                           catalog, client)  # fmt: skip
+    assert result.plan is not None and result.error is None
+    assert (result.provider, result.served_model, result.input_tokens) == (
+        "openai",
+        "gpt-6.1-sol",
+        1500,
+    )
+    call = client.calls[0]
+    assert call["model"] == "gpt-test"
+    tool = call["tools"][0]
+    assert (tool["type"], tool["name"], tool["strict"]) == ("function", "submit_plan", False)
+    assert tool["parameters"] == plan_tool_schema()
+    assert call["tool_choice"] == "auto"
+    assert call["reasoning"] == {"effort": openai_settings.planner_effort}
+    assert call["max_output_tokens"] == openai_settings.planner_max_tokens
+    assert "temperature" not in call
+    assert "<user_request>" in call["input"][0]["content"]
+    assert "CAPABILITY REGISTRY" in call["instructions"]
+
+
+@pytest.mark.parametrize(
+    ("client", "expected"),
+    [
+        (FakeOpenAIClient(openai_text_response("Here is my plan...")), "did not call"),
+        (FakeOpenAIClient(openai_text_response("", "incomplete", "max_output_tokens")),
+         "max_output_tokens"),
+        (FakeOpenAIClient(openai_tool_response("{not json")), "not valid JSON"),
+        (FakeOpenAIClient(openai_tool_response({"steps": "nonsense"})), "does not match"),
+        (FakeOpenAIClient(error=RuntimeError("socket closed")), "socket closed"),
+    ],
+)  # fmt: skip
+def test_openai_failures_become_g01(
+    client: FakeOpenAIClient, expected: str, openai_settings: Settings, catalog: Catalog
+) -> None:
+    result = generate_plan("anything", ["NASDAQCOM"], "live", openai_settings, catalog, client)
+    assert result.plan is None
+    assert expected in result.error
+    assert {issue.code for issue in result.issues} == {"G01"}
+
+
+def test_openai_errors_are_described(openai_settings: Settings) -> None:
+    request = httpx2.Request("POST", "https://api.openai.com/v1/responses")
+    assert "network" in describe_api_error(openai.APIConnectionError(request=request))
+    assert "timed out" in describe_api_error(openai.APITimeoutError(request=request))
+    assert "OPENAI_API_KEY" in api_error_message(RuntimeError("no key"), openai_settings)
+
+
+def test_openai_cached_plan_records_its_provider(
+    openai_settings: Settings, catalog: Catalog
+) -> None:
+    client = FakeOpenAIClient(openai_tool_response(copy.deepcopy(PLAN_A)))
+    generate_plan("req", ["NASDAQCOM"], "cached", openai_settings, catalog, client)
+    second = generate_plan("req", ["NASDAQCOM"], "cached", openai_settings, catalog, client)
+    assert second.from_cache and second.provider == "openai"
+    assert len(client.calls) == 1

@@ -8,7 +8,7 @@ from quantlab.lineage import load_run, replay
 from quantlab.monitoring import kpis, read_events
 from quantlab.scenarios import SCENARIOS_BY_ID
 
-from fakes import FakeClient
+from fakes import FakeAnthropicClient
 
 A = SCENARIOS_BY_ID["A"]
 
@@ -94,7 +94,7 @@ def test_blocked_scenario_is_recorded(settings: Settings) -> None:
 
 
 def test_planner_failure_is_a_recorded_g01(settings: Settings) -> None:
-    client = FakeClient(error=RuntimeError("service unavailable"))
+    client = FakeAnthropicClient(error=RuntimeError("service unavailable"))
     session = Session.start("anything", ["NASDAQCOM"], "live", settings, client)
     report = session.create_plan()
     assert report.codes() == ["G01"] and session.status == "blocked"
@@ -104,7 +104,7 @@ def test_planner_failure_is_a_recorded_g01(settings: Settings) -> None:
 
 
 def test_over_budget_request_never_reaches_the_planner(settings: Settings) -> None:
-    client = FakeClient(error=AssertionError("must not be called"))
+    client = FakeAnthropicClient(error=AssertionError("must not be called"))
     session = Session.start("x" * 5000, ["NASDAQCOM"], "live", settings, client)
     assert session.create_plan().codes() == ["G06"]
     assert client.calls == []

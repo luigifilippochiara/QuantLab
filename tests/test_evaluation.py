@@ -8,7 +8,7 @@ from quantlab.data import Catalog
 from quantlab.evaluation import load_golden, run_evaluation, score_case, write_report
 from quantlab.scenarios import SCENARIOS_BY_ID
 
-from fakes import FakeClient, tool_response
+from fakes import FakeAnthropicClient, tool_response
 
 
 def test_golden_file_resolves_scenarios() -> None:
@@ -40,7 +40,7 @@ def test_mock_evaluation_scores_and_report(settings: Settings, tmp_path: Path) -
 
 def test_live_scoring_with_a_perfect_fake_planner(settings: Settings, catalog: Catalog) -> None:
     case = next(c for c in load_golden() if c.id == "F_rates_spread")
-    client = FakeClient(tool_response(copy.deepcopy(SCENARIOS_BY_ID["F"].plan)))
+    client = FakeAnthropicClient(tool_response(copy.deepcopy(SCENARIOS_BY_ID["F"].plan)))
     score = score_case(case, settings, catalog, "live", client)
     assert score.correct and score.sequence_match and score.jaccard == 1.0
     assert score.params_hit == score.params_total == 2

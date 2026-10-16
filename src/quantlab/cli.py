@@ -92,7 +92,14 @@ def print_session(session: Session) -> None:
 
 
 def cmd_demo(args: argparse.Namespace, settings: Settings) -> int:
-    """Run every demo scenario headlessly and compare with the expected outcome."""
+    """Run every demo scenario headlessly and compare with the expected outcome.
+
+    In mock mode the plans are the canned ones, so both the status and the issue
+    codes must match. With a real LLM (live/cached) only the status is checked:
+    the LLM may legitimately block for a different reason, e.g. refuse scenario C
+    outright (G13) instead of proposing a plan that the validator blocks (G02, G08).
+    Running it in live mode also fills the plan cache for a cached-mode demo.
+    """
     rows = []
     all_ok = True
     for scenario in SCENARIOS:
@@ -104,9 +111,9 @@ def cmd_demo(args: argparse.Namespace, settings: Settings) -> int:
             settings=settings,
         )
         codes = all_issue_codes(session)
-        ok = session.status == scenario.expected_status and set(scenario.expected_codes) <= set(
-            codes
-        )
+        ok = session.status == scenario.expected_status
+        if args.mode == "mock":
+            ok = ok and set(scenario.expected_codes) <= set(codes)
         all_ok &= ok
         rows.append(
             [
@@ -119,6 +126,9 @@ def cmd_demo(args: argparse.Namespace, settings: Settings) -> int:
             ]
         )
     print_table(["scenario", "expected", "status", "issue codes", "run_id", "check"], rows)
+    if args.mode != "mock":
+        print(f"\n(LLM: {settings.llm_provider} / {settings.planner_model}; only the outcome "
+              "status is checked, the issue codes show how each block happened.)")  # fmt: skip
     print("\nAll scenarios behaved as expected." if all_ok else "\nSome scenarios did NOT.")
     return 0 if all_ok else 1
 

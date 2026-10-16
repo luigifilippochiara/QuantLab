@@ -6,8 +6,10 @@ configuration explicit (you can see exactly what a run used) and lets tests poin
 the whole system at temporary folders.
 
 Environment variables (all optional):
-    ANTHROPIC_API_KEY          key for the planner and narrator LLM calls
-    QUANTLAB_PLANNER_MODEL     model id for the planner (default: claude-sonnet-5-5)
+    QUANTLAB_LLM_PROVIDER      openai | anthropic: which LLM API to call (default: openai)
+    OPENAI_API_KEY             key used when the provider is openai
+    ANTHROPIC_API_KEY          key used when the provider is anthropic
+    QUANTLAB_PLANNER_MODEL     planner model id (default: gpt-6.1-sol / claude-sonnet-5-5)
     QUANTLAB_NARRATOR_MODEL    model id for the narrator (default: same as planner)
     QUANTLAB_PLANNER_EFFORT    planner reasoning effort: low|medium|high (default: medium)
     QUANTLAB_NARRATOR_EFFORT   narrator reasoning effort: low|medium|high (default: low)
@@ -32,7 +34,12 @@ PROJECT_ROOT = Path(__file__).resolve().parents[2]
 # mock:   never call an LLM; use hand-written plans and the template narrator.
 LLM_MODES = ("live", "cached", "mock")
 
-DEFAULT_MODEL = "claude-sonnet-5-5"
+# Which LLM API the planner and narrator call in live/cached mode. Both providers
+# get the same prompts, the same plan schema and the same validation.
+LLM_PROVIDERS = ("openai", "anthropic")
+
+# Default models: each provider's balanced tier (good planning quality, moderate cost).
+DEFAULT_MODELS = {"openai": "gpt-6.1-sol", "anthropic": "claude-sonnet-5-5"}
 
 
 @dataclass(frozen=True)
@@ -40,7 +47,7 @@ class Settings:
     """All settings for one process. Frozen so nothing changes them mid-run.
 
     Fields:
-        anthropic_api_key: API key, or None when not configured.
+        anthropic_api_key: Anthropic API key, or None when not configured.
         planner_model: model id used by the planner.
         narrator_model: model id used by the narrator.
         llm_mode: default LLM mode ("live", "cached" or "mock").
@@ -55,6 +62,8 @@ class Settings:
         llm_max_retries: SDK retries on rate limits / server errors (kept low for live demos).
         planner_max_tokens: output token cap for the planner call (includes thinking).
         narrator_max_tokens: output token cap for the narrator call (includes thinking).
+        llm_provider: "openai" or "anthropic".
+        openai_api_key: OpenAI API key, or None when not configured.
     """
 
     anthropic_api_key: str | None
@@ -68,10 +77,12 @@ class Settings:
     max_request_chars: int = 2000
     planner_effort: str = "medium"
     narrator_effort: str = "low"
-    llm_timeout_seconds: float = 90.0
+    llm_timeout_seconds: float = 120.0
     llm_max_retries: int = 1
     planner_max_tokens: int = 16000
     narrator_max_tokens: int = 8000
+    llm_provider: str = "openai"
+    openai_api_key: str | None = None
 
     @property
     def catalog_path(self) -> Path:
@@ -89,9 +100,19 @@ class Settings:
         return self.runs_dir / "events.jsonl"
 
     @property
+    def api_key(self) -> str | None:
+        """The API key of the configured provider (None if not set)."""
+        return self.openai_api_key if self.llm_provider == "openai" else self.anthropic_api_key
+
+    @property
+    def api_key_name(self) -> str:
+        """Name of the environment variable holding the configured provider's key."""
+        return "OPENAI_API_KEY" if self.llm_provider == "openai" else "ANTHROPIC_API_KEY"
+
+    @property
     def has_api_key(self) -> bool:
-        """True when an Anthropic API key is configured."""
-        return bool(self.anthropic_api_key)
+        """True when the configured provider's API key is set."""
+        return bool(self.api_key)
 
 
 def load_settings() -> Settings:
@@ -104,23 +125,31 @@ def load_settings() -> Settings:
         A frozen Settings object.
 
     Raises:
-        ValueError: if QUANTLAB_LLM_MODE is set to an unknown mode.
+        ValueError: if QUANTLAB_LLM_PROVIDER or QUANTLAB_LLM_MODE has an unknown value.
     """
     load_dotenv(PROJECT_ROOT / ".env", override=False)
 
+    provider = os.environ.get("QUANTLAB_LLM_PROVIDER") or "openai"
+    if provider not in LLM_PROVIDERS:
+        raise ValueError(f"QUANTLAB_LLM_PROVIDER must be one of {LLM_PROVIDERS}, got {provider!r}.")
+
     # Treat an empty string (as in the .env.example template) the same as "not set".
-    api_key = os.environ.get("ANTHROPIC_API_KEY") or None
-    planner_model = os.environ.get("QUANTLAB_PLANNER_MODEL") or DEFAULT_MODEL
+    anthropic_key = os.environ.get("ANTHROPIC_API_KEY") or None
+    openai_key = os.environ.get("OPENAI_API_KEY") or None
+    provider_key = openai_key if provider == "openai" else anthropic_key
+    planner_model = os.environ.get("QUANTLAB_PLANNER_MODEL") or DEFAULT_MODELS[provider]
     narrator_model = os.environ.get("QUANTLAB_NARRATOR_MODEL") or planner_model
 
     # Without a key the only mode that can work is mock, so make it the default.
-    default_mode = "cached" if api_key else "mock"
+    default_mode = "cached" if provider_key else "mock"
     llm_mode = os.environ.get("QUANTLAB_LLM_MODE") or default_mode
     if llm_mode not in LLM_MODES:
         raise ValueError(f"QUANTLAB_LLM_MODE must be one of {LLM_MODES}, got {llm_mode!r}.")
 
     return Settings(
-        anthropic_api_key=api_key,
+        llm_provider=provider,
+        openai_api_key=openai_key,
+        anthropic_api_key=anthropic_key,
         planner_model=planner_model,
         narrator_model=narrator_model,
         llm_mode=llm_mode,
@@ -130,4 +159,8 @@ def load_settings() -> Settings:
         max_datasets=int(os.environ.get("QUANTLAB_MAX_DATASETS") or 5),
         planner_effort=os.environ.get("QUANTLAB_PLANNER_EFFORT") or "medium",
         narrator_effort=os.environ.get("QUANTLAB_NARRATOR_EFFORT") or "low",
+        # OpenAI's reasoning guide recommends reserving at least 25,000 output
+        # tokens (reasoning + answer); Anthropic's SDK advises ~16,000 for
+        # non-streaming calls to stay under its HTTP timeout.
+        planner_max_tokens=25000 if provider == "openai" else 16000,
     )

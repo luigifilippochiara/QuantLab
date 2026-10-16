@@ -36,8 +36,13 @@ def test_scan_would_catch_violations() -> None:
 
 
 def test_llm_is_used_only_by_planner_and_narrator() -> None:
-    """Only planner.py imports the Anthropic SDK; only planner.py and narrator.py call the API."""
-    importers = {p.name for p in source_files() if "import anthropic" in p.read_text()}
-    assert importers == {"planner.py"}
-    callers = {p.name for p in source_files() if "messages.create(" in p.read_text()}
+    """Only planner.py imports the LLM SDKs; only planner.py and narrator.py call the APIs."""
+    for sdk in ("import anthropic", "import openai"):
+        importers = {p.name for p in source_files() if sdk in p.read_text()}
+        assert importers == {"planner.py"}, sdk
+    callers = {
+        p.name
+        for p in source_files()
+        if "messages.create(" in p.read_text() or "responses.create(" in p.read_text()
+    }
     assert callers == {"planner.py", "narrator.py"}

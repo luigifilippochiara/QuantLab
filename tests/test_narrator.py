@@ -1,5 +1,7 @@
 """Narrator: facts sheet, formatting, numeric grounding check, template and LLM paths."""
 
+import dataclasses
+
 import pytest
 
 from quantlab.config import Settings
@@ -16,7 +18,7 @@ from quantlab.plan import Plan
 from quantlab.scenarios import SCENARIOS_BY_ID
 from quantlab.validation import fill_defaults, validate_plan
 
-from fakes import FakeClient, text_response
+from fakes import FakeAnthropicClient, FakeOpenAIClient, openai_text_response, text_response
 
 
 def run_scenario(scenario_id: str, catalog: Catalog):
@@ -134,7 +136,9 @@ def test_llm_narrative_with_invented_number_is_flagged(
     plan, result, issues = run_scenario("F", catalog)
     facts = build_facts_sheet(plan, result.artifacts)
     p_value = next(f.display for f in facts if f.fact_id == "s8.p_value")
-    client = FakeClient(text_response(f"The ADF p-value is {p_value}; the half-life is 7.77."))
+    client = FakeAnthropicClient(
+        text_response(f"The ADF p-value is {p_value}; the half-life is 7.77.")
+    )
     narrative = narrate(plan.request, plan, result.artifacts, issues, "live", settings,
                         client=client)  # fmt: skip
     assert narrative.source == "llm" and narrative.model == "claude-sonnet-5-5"
@@ -146,9 +150,34 @@ def test_llm_narrative_with_invented_number_is_flagged(
 
 def test_llm_failure_falls_back_to_the_template(settings: Settings, catalog: Catalog) -> None:
     plan, result, issues = run_scenario("F", catalog)
-    client = FakeClient(error=RuntimeError("connection reset"))
+    client = FakeAnthropicClient(error=RuntimeError("connection reset"))
     narrative = narrate(plan.request, plan, result.artifacts, issues, "live", settings,
                         client=client)  # fmt: skip
     assert narrative.source == "template"
     assert "connection reset" in narrative.error
     assert narrative.grounding.grounded
+
+
+def test_openai_narrative_path(settings: Settings, catalog: Catalog) -> None:
+    plan, result, issues = run_scenario("F", catalog)
+    facts = build_facts_sheet(plan, result.artifacts)
+    p_value = next(f.display for f in facts if f.fact_id == "s8.p_value")
+    client = FakeOpenAIClient(openai_text_response(f"The ADF p-value is {p_value}."))
+    openai_settings = dataclasses.replace(settings, llm_provider="openai")
+    narrative = narrate(plan.request, plan, result.artifacts, issues, "live", openai_settings,
+                        client=client)  # fmt: skip
+    assert narrative.source == "llm" and narrative.model == "gpt-6.1-sol"
+    assert narrative.grounding.grounded
+    call = client.calls[0]
+    assert "FACTS SHEET" in call["input"][0]["content"]
+    assert call["reasoning"] == {"effort": openai_settings.narrator_effort}
+    assert "temperature" not in call
+
+
+def test_incomplete_openai_narrative_falls_back(settings: Settings, catalog: Catalog) -> None:
+    plan, result, issues = run_scenario("F", catalog)
+    client = FakeOpenAIClient(openai_text_response("", "incomplete", "max_output_tokens"))
+    openai_settings = dataclasses.replace(settings, llm_provider="openai")
+    narrative = narrate(plan.request, plan, result.artifacts, issues, "live", openai_settings,
+                        client=client)  # fmt: skip
+    assert narrative.source == "template" and "incomplete" in narrative.error

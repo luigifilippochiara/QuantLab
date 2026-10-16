@@ -8,9 +8,14 @@ values, and its output is never executed: it is parsed into a `Plan` and then
 validated, reviewed by a human and run by the deterministic executor.
 
 Three LLM modes:
-- live:   call the Anthropic API (and store the result in the plan cache);
+- live:   call the LLM API (and store the result in the plan cache);
 - cached: reuse the cached plan for an identical request if there is one, else call the API;
 - mock:   no LLM at all; return the hand-written plan of a demo scenario.
+
+Two providers, chosen by `settings.llm_provider`: OpenAI (Responses API) and
+Anthropic (Messages API). Both get the same system prompt, the same plan schema
+as a `submit_plan` tool, and their output goes through the same parse and
+validation. This module is the only one that imports the provider SDKs.
 
 A failed call or unusable output never raises: it comes back as a PlanResult
 with an error and G01 issues, which the UI shows like any other blocked plan.
@@ -26,6 +31,7 @@ from pathlib import Path
 from typing import Any, Protocol
 
 import anthropic
+import openai
 
 from quantlab.config import Settings
 from quantlab.data import Catalog, describe_datasets
@@ -93,7 +99,7 @@ class PlanResult:
         issues: G01 issues explaining why there is no plan (empty on success).
         raw_output: what the planner returned (the tool input dict, or text), for audit.
         error: one-line error, or None.
-        provider: "anthropic" or "mock".
+        provider: "openai", "anthropic" or "mock".
         model: model requested.
         served_model: model that actually answered (differs if a fallback was used).
         prompt_version: version of the planner prompt (or of the canned plans).
@@ -180,11 +186,11 @@ class MockPlanner:
 
 
 # ---------------------------------------------------------------------------
-# Anthropic planner
+# Shared by both LLM planners
 # ---------------------------------------------------------------------------
 
 
-def make_client(settings: Settings) -> anthropic.Anthropic:
+def make_anthropic_client(settings: Settings) -> anthropic.Anthropic:
     """Create an Anthropic client with QuantLab's timeout and retry settings.
 
     With no key in the settings, the SDK resolves credentials itself (e.g. a
@@ -197,25 +203,43 @@ def make_client(settings: Settings) -> anthropic.Anthropic:
     )
 
 
+def make_openai_client(settings: Settings) -> openai.OpenAI:
+    """Create an OpenAI client with QuantLab's timeout and retry settings.
+
+    With no key in the settings, the SDK falls back to the OPENAI_API_KEY
+    environment variable; if there is none, the call fails cleanly.
+    """
+    return openai.OpenAI(
+        api_key=settings.openai_api_key,
+        timeout=settings.llm_timeout_seconds,
+        max_retries=settings.llm_max_retries,
+    )
+
+
 def api_error_message(exc: Exception, settings: Settings) -> str:
     """describe_api_error, plus a hint when no API key is configured at all."""
     message = describe_api_error(exc)
     if not settings.has_api_key:
-        message += " (No ANTHROPIC_API_KEY is configured: set it in .env, or use mock mode.)"
+        message += f" (No {settings.api_key_name} is configured: set it in .env, or use mock mode.)"
     return message
 
 
 def describe_api_error(exc: Exception) -> str:
-    """One-line, user-facing description of an Anthropic SDK error (most specific first)."""
-    if isinstance(exc, anthropic.AuthenticationError):
-        return "authentication failed: check ANTHROPIC_API_KEY."
-    if isinstance(exc, anthropic.RateLimitError):
+    """One-line, user-facing description of an LLM SDK error (most specific first).
+
+    Both SDKs define the same error classes, so each check covers both providers.
+    The timeout check comes before the connection check because a timeout is a
+    kind of connection error in both SDKs.
+    """
+    if isinstance(exc, (anthropic.AuthenticationError, openai.AuthenticationError)):
+        return "authentication failed: check the API key in .env."
+    if isinstance(exc, (anthropic.RateLimitError, openai.RateLimitError)):
         return "rate limited by the API; retry shortly or use cached/mock mode."
-    if isinstance(exc, anthropic.APITimeoutError):
+    if isinstance(exc, (anthropic.APITimeoutError, openai.APITimeoutError)):
         return "the API call timed out; retry or use cached/mock mode."
-    if isinstance(exc, anthropic.APIStatusError):
+    if isinstance(exc, (anthropic.APIStatusError, openai.APIStatusError)):
         return f"API error {exc.status_code}: {exc.message}"
-    if isinstance(exc, anthropic.APIConnectionError):
+    if isinstance(exc, (anthropic.APIConnectionError, openai.APIConnectionError)):
         return "could not reach the API (network error); use cached or mock mode."
     return f"{type(exc).__name__}: {exc}"
 
@@ -225,6 +249,133 @@ def build_system_prompt(catalog: Catalog, dataset_ids: list[str]) -> str:
     datasets = json.dumps(describe_datasets(catalog, dataset_ids), indent=1)
     # str.replace rather than str.format: the prompt contains literal JSON braces.
     return SYSTEM_PROMPT.replace("{registry}", llm_summary()).replace("{datasets}", datasets)
+
+
+def build_user_message(request: str, dataset_ids: list[str]) -> str:
+    """The user turn: the request wrapped in tags (so it reads as data) plus the datasets."""
+    return (
+        f"<user_request>\n{request}\n</user_request>\n"
+        f"Selected datasets: {', '.join(dataset_ids) or 'none'}"
+    )
+
+
+def accept_tool_input(result: PlanResult, tool_input: Any, request: str) -> PlanResult:
+    """Record the submit_plan arguments and parse them into a Plan (G01 issues if invalid)."""
+    result.raw_output = tool_input
+    result.plan, result.issues = plan_from_output(tool_input, request)
+    if result.issues:
+        result.error = "the planner's output does not match the plan schema."
+    return result
+
+
+def planning_failed(result: PlanResult, error: str) -> PlanResult:
+    """Mark a planning attempt as failed, with one G01 issue carrying the reason."""
+    result.error = error
+    result.issues = [planner_failure_issue(error)]
+    return result
+
+
+def _elapsed_ms(started: float) -> float:
+    """Milliseconds since `started` (a time.perf_counter() value), to 0.1 ms."""
+    return round((time.perf_counter() - started) * 1000, 1)
+
+
+# ---------------------------------------------------------------------------
+# OpenAI planner (Responses API)
+# ---------------------------------------------------------------------------
+
+
+class OpenAIPlanner:
+    """Plans with an OpenAI model through the official OpenAI SDK (Responses API).
+
+    The plan schema is the `parameters` of a `submit_plan` function tool, so the
+    output arrives as structured JSON. strict=False because strict mode requires
+    closed objects while plan params are free-form maps; tool_choice="auto"
+    plus an explicit instruction, so the same request works on every current
+    model. Schema conformance is enforced by our own Pydantic parse (G01).
+    """
+
+    def __init__(self, settings: Settings, catalog: Catalog, client: Any = None) -> None:
+        """Args:
+        settings: model, effort, token and timeout settings.
+        catalog: dataset catalog (for the metadata shown to the LLM).
+        client: an OpenAI client; injected by tests, created lazily otherwise.
+        """
+        self.settings = settings
+        self.catalog = catalog
+        self.client = client
+
+    def generate_plan(self, request: str, dataset_ids: list[str]) -> PlanResult:
+        """Ask the LLM for a plan.
+
+        Args:
+            request: the user's request (treated as data, inside <user_request> tags).
+            dataset_ids: datasets the user selected.
+
+        Returns:
+            A PlanResult; on any failure `plan` is None and `issues` explains why.
+        """
+        result = PlanResult(
+            plan=None,
+            provider="openai",
+            model=self.settings.planner_model,
+            prompt_version=PROMPT_VERSION,
+            mode="live",
+        )
+        tool = {
+            "type": "function",
+            "name": TOOL_NAME,
+            "description": "Submit the analysis plan, or a refusal, for validation.",
+            "parameters": plan_tool_schema(),
+            "strict": False,
+        }
+        started = time.perf_counter()
+        try:
+            client = self.client or make_openai_client(self.settings)
+            response = client.responses.create(
+                model=self.settings.planner_model,
+                instructions=build_system_prompt(self.catalog, dataset_ids),
+                input=[{"role": "user", "content": build_user_message(request, dataset_ids)}],
+                tools=[tool],
+                tool_choice="auto",
+                reasoning={"effort": self.settings.planner_effort},
+                # The cap covers reasoning tokens as well as the visible answer.
+                max_output_tokens=self.settings.planner_max_tokens,
+            )
+        except Exception as exc:  # the SDK raises many error types; all become a G01
+            result.latency_ms = _elapsed_ms(started)
+            return planning_failed(result, api_error_message(exc, self.settings))
+
+        result.latency_ms = _elapsed_ms(started)
+        result.served_model = response.model
+        if response.usage is not None:
+            result.input_tokens = response.usage.input_tokens
+            result.output_tokens = response.usage.output_tokens
+
+        if response.status != "completed":
+            # e.g. "incomplete" with reason "max_output_tokens": possibly no output at all.
+            details = response.incomplete_details
+            reason = details.reason if details is not None else response.status
+            return planning_failed(result, f"the model's response did not complete ({reason}).")
+        calls = [
+            item
+            for item in response.output
+            if item.type == "function_call" and item.name == TOOL_NAME
+        ]
+        if calls:
+            try:
+                tool_input = json.loads(calls[0].arguments)  # arguments arrive as a JSON string
+            except json.JSONDecodeError:
+                result.raw_output = calls[0].arguments
+                return planning_failed(result, "the submit_plan arguments are not valid JSON.")
+            return accept_tool_input(result, tool_input, request)
+        result.raw_output = response.output_text
+        return planning_failed(result, "the model did not call submit_plan.")
+
+
+# ---------------------------------------------------------------------------
+# Anthropic planner (Messages API)
+# ---------------------------------------------------------------------------
 
 
 class AnthropicPlanner:
@@ -269,18 +420,14 @@ class AnthropicPlanner:
             "description": "Submit the analysis plan, or a refusal, for validation.",
             "input_schema": plan_tool_schema(),
         }
-        user_message = (
-            f"<user_request>\n{request}\n</user_request>\n"
-            f"Selected datasets: {', '.join(dataset_ids) or 'none'}"
-        )
         started = time.perf_counter()
         try:
-            client = self.client or make_client(self.settings)
+            client = self.client or make_anthropic_client(self.settings)
             response = client.beta.messages.create(
                 model=self.settings.planner_model,
                 max_tokens=self.settings.planner_max_tokens,
                 system=build_system_prompt(self.catalog, dataset_ids),
-                messages=[{"role": "user", "content": user_message}],
+                messages=[{"role": "user", "content": build_user_message(request, dataset_ids)}],
                 tools=[tool],
                 tool_choice={"type": "auto"},
                 output_config={"effort": self.settings.planner_effort},
@@ -288,37 +435,27 @@ class AnthropicPlanner:
                 fallbacks="default",
             )
         except Exception as exc:  # the SDK raises many error types; all become a G01
-            result.latency_ms = round((time.perf_counter() - started) * 1000, 1)
-            result.error = api_error_message(exc, self.settings)
-            result.issues = [planner_failure_issue(result.error)]
-            return result
+            result.latency_ms = _elapsed_ms(started)
+            return planning_failed(result, api_error_message(exc, self.settings))
 
-        result.latency_ms = round((time.perf_counter() - started) * 1000, 1)
+        result.latency_ms = _elapsed_ms(started)
         result.served_model = response.model
         result.input_tokens = response.usage.input_tokens
         result.output_tokens = response.usage.output_tokens
 
         if response.stop_reason == "refusal":
-            result.error = "the model declined to plan this request."
-        elif response.stop_reason == "max_tokens":
-            result.error = "the model's output was cut off (max_tokens reached)."
-        else:
-            tool_inputs = [
-                block.input
-                for block in response.content
-                if block.type == "tool_use" and block.name == TOOL_NAME
-            ]
-            if tool_inputs:
-                result.raw_output = tool_inputs[0]
-                result.plan, result.issues = plan_from_output(tool_inputs[0], request)
-                if result.issues:
-                    result.error = "the planner's output does not match the plan schema."
-                return result
-            text = " ".join(b.text for b in response.content if b.type == "text")
-            result.raw_output = text
-            result.error = "the model answered in text instead of calling submit_plan."
-        result.issues = [planner_failure_issue(result.error)]
-        return result
+            return planning_failed(result, "the model declined to plan this request.")
+        if response.stop_reason == "max_tokens":
+            return planning_failed(result, "the model's output was cut off (max_tokens reached).")
+        tool_inputs = [
+            block.input
+            for block in response.content
+            if block.type == "tool_use" and block.name == TOOL_NAME
+        ]
+        if tool_inputs:
+            return accept_tool_input(result, tool_inputs[0], request)
+        result.raw_output = " ".join(b.text for b in response.content if b.type == "text")
+        return planning_failed(result, "the model did not call submit_plan.")
 
 
 # ---------------------------------------------------------------------------
@@ -355,7 +492,7 @@ def load_cached_plan(cache_dir: Path, key: str, request: str) -> PlanResult | No
         plan=plan,
         issues=issues,
         raw_output=entry["raw_output"],
-        provider="anthropic",
+        provider=entry["provider"],
         model=entry["model"],
         served_model=entry.get("served_model"),
         prompt_version=entry["prompt_version"],
@@ -373,6 +510,7 @@ def save_cached_plan(cache_dir: Path, key: str, request: str, result: PlanResult
         "key": key,
         "created_at": datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ"),
         "request": request,
+        "provider": result.provider,
         "model": result.model,
         "served_model": result.served_model,
         "prompt_version": result.prompt_version,
@@ -398,9 +536,9 @@ def generate_plan(
         request: the user's request.
         dataset_ids: datasets the user selected.
         mode: "live", "cached" or "mock".
-        settings: settings (model, cache folder...).
+        settings: settings (provider, model, cache folder...).
         catalog: dataset catalog.
-        client: optional Anthropic client (tests inject a fake one).
+        client: optional OpenAI or Anthropic client (tests inject a fake one).
 
     Returns:
         A PlanResult (never raises for LLM problems).
@@ -414,7 +552,11 @@ def generate_plan(
         if cached is not None:
             return cached
 
-    result = AnthropicPlanner(settings, catalog, client).generate_plan(request, dataset_ids)
+    if settings.llm_provider == "openai":
+        planner: Planner = OpenAIPlanner(settings, catalog, client)
+    else:
+        planner = AnthropicPlanner(settings, catalog, client)
+    result = planner.generate_plan(request, dataset_ids)
     result.mode = mode
     if result.plan is not None:
         save_cached_plan(settings.cache_dir, key, request, result)
