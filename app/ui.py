@@ -93,30 +93,23 @@ def dataset_caption(catalog: Catalog, dataset_id: str) -> str:
 
 # Header styling: sizes and spacing only. Colours are inherited from the active
 # Streamlit theme, so the header reads correctly in both light and dark mode.
+# The negative top margin pulls the description up under the title; the bottom
+# margin is zero because Streamlit already spaces consecutive elements.
 HEADER_CSS = """
 <style>
-.ql-lead { font-size: 1.2rem; font-weight: 600; line-height: 1.45; margin: -0.6rem 0 0.3rem 0; }
-.ql-sub { font-size: 1rem; line-height: 1.5; opacity: 0.8; margin: 0 0 0.6rem 0; }
+.ql-lead { font-size: 1.2rem; font-weight: 600; line-height: 1.45; margin: -0.6rem 0 0 0; }
 </style>
 """
 
 
 def render_header() -> None:
-    """Title, product description, trust badges and the "how it works" line."""
+    """Title, product description and the "how it works" line."""
     st.markdown(HEADER_CSS, unsafe_allow_html=True)
     st.title(":material/query_stats: QuantLab", anchor=False)
     st.markdown(
         '<p class="ql-lead">Ask a market question in plain English and get a validated, '
-        "fully traceable quantitative answer in seconds.</p>"
-        '<p class="ql-sub">Every analysis is built only from approved, tested capabilities, '
-        "every number comes from a deterministic engine and is checked in the narrative, and "
-        "every run can be replayed exactly, down to the source data.</p>",
+        "fully traceable quantitative answer in seconds.</p>",
         unsafe_allow_html=True,
-    )
-    st.markdown(
-        ":blue-badge[:material/rule: Validated before it runs] "
-        ":green-badge[:material/fact_check: Every number verified] "
-        ":violet-badge[:material/history: Replayable and traceable]"
     )
     st.caption(
         "**How it works:** The LLM proposes a plan made only of approved capabilities; the "

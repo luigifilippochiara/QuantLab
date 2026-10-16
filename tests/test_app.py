@@ -70,6 +70,7 @@ def test_header_describes_the_product(app_env: Settings) -> None:
     app = open_page("analysis.py")
     assert app.title[0].value.endswith("QuantLab")
     assert any("validated, fully traceable" in m.value for m in app.markdown)
+    assert not any("badge[" in m.value or "replayed exactly" in m.value for m in app.markdown)
     assert any(c.value.startswith("**How it works:**") for c in app.caption)
     assert not any("Audit trail" in c.value for c in app.sidebar.caption)
 
