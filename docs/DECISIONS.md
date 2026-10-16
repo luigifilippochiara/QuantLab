@@ -478,3 +478,56 @@ scenario id, status, issue codes and run id plus a `check` column used for the
 exit code, then prints scenario 1's trace chain as scenario 6. The trace panel in
 the app moved directly under the results, labelled "Trace a result", with the
 final step selected by default.
+
+## In-plan parameter editing
+
+**Editing is a first-class part of the plan view.** Each step is a bordered
+block with widgets generated from its `ParamSpec` (choices -> select box,
+int/float -> number input bounded by min/max with step 1 / 0.01, bool ->
+checkbox), prefilled with the plan's value. Plain widgets rather than a form, so
+the page can tell that a change is not applied yet and disable Execute with a
+reason. Widget and approval-checkbox keys include the plan version, so after an
+edit or a reset every widget restarts from the plan's values and every approval
+box is unticked.
+
+**The structure is locked in the engine, with G03.** `check_edits` accepts only
+`{step_id: {param: value}}` for parameters of the step's registered capability.
+Anything else (a new step id, `capability`, `inputs`, `id`, an invented field, a
+non-mapping) is rejected as a G03 INVALID_PARAM BLOCK whose message starts with
+"Edit rejected", and nothing is applied; the plan stays blocked until a valid
+edit or a reset. Values are not judged there: they are applied to a copy of the
+plan and the validator judges them, so an out-of-range value is a G03 BLOCK even
+though the widgets are bounded. Alternative: a new guardrail code for rejected
+edits, rejected as one more code for what is, in effect, an invalid parameter.
+
+**G14 WINDOW_UNITS_CHANGED (WARN) compares the edited plan with the planner's
+proposal.** `validate_plan` takes an optional `baseline` (the proposal with
+defaults filled); the engine passes it for every validation of a session. For
+each step whose input frequency differs between the two dry runs, every
+parameter flagged `counted_in_periods` (rolling_volatility.window,
+flag_regime.min_periods) that still has the proposal's value raises G14, with a
+suggestion using 5 trading days per week and 21 per month ("Consider 60 for
+roughly 12 weeks"), clamped to the parameter's range. The executor and replay
+validate without a baseline: G14 is a warning and cannot change the outcome.
+Alternative: compare with the previous applied version, rejected because the
+proposal is a fixed reference and the warning then cannot appear and disappear
+depending on the order of edits.
+
+**`resample` accepts D as a pass-through.** `freq="D"` returns the business-day
+series unchanged, never `pandas.resample("D")`, which would insert weekend NaNs;
+weekly or monthly data to D is still refused as upsampling. The dry run already
+maps D to daily, and volatility is then annualised with 252. A user can switch
+scenario 1 to daily by changing one parameter.
+
+**Approvals belong to one plan version.** `plan.plan_hash` hashes the plan's
+content (datasets, steps, refusal fields; not the plan id or request). Each
+approval stores the hash it was given for, only approvals with the current hash
+count, and any applied edit clears them anyway. The run record stores
+`plan_hash`, the edit history (`edits`) and `param_diff`: for each parameter whose
+final value differs from the proposal, the proposed value, the final value and
+the time of the last edit. The trace marks those parameters ("edited, was 12"),
+the Run history page lists them, and replay runs `plan_final`, so an edited run
+replays with identical hashes.
+
+**"Reset to planner's proposal" is an edit back to the proposal's values**, so it
+goes through the same path (re-validation, approvals cleared, history recorded).

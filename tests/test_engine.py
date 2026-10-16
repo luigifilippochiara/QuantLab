@@ -80,8 +80,8 @@ def test_only_open_approval_issues_can_be_approved(settings: Settings) -> None:
     session = start(settings)
     with pytest.raises(ValueError):
         session.approve(["G10:s5"])  # only scenario 2 raises it
-    with pytest.raises(ValueError):
-        session.apply_param_edits({"s99": {"window": 3}})
+    # An edit to a step that does not exist is rejected (see test_editing.py).
+    assert session.apply_param_edits({"s99": {"window": 3}}).is_blocked
 
 
 def test_blocked_scenario_is_recorded(settings: Settings) -> None:

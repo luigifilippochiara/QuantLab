@@ -59,6 +59,21 @@ with st.container(border=True):
         f"approvals {len(record.approvals)} · edits {len(record.edits)} · "
         f"warnings {len(record.warnings)}"
     )
+    if record.param_diff:
+        st.markdown("**User edits** (planner-proposed value → value that ran)")
+        st.dataframe(
+            pd.DataFrame(
+                [
+                    {"step": c.step_id, "parameter": c.param, "planner proposed": str(c.original),
+                     "ran with": str(c.final), "edited at (UTC)": c.edited_at}
+                    for c in record.param_diff
+                ]
+            ),
+            hide_index=True,
+            alt="User edits",
+        )  # fmt: skip
+    else:
+        st.caption("No user edits: every parameter is as the planner proposed it.")
     with st.expander("Manifest (JSON)", icon=":material/data_object:"):
         st.json(record.model_dump(mode="json"), expanded=False)
 

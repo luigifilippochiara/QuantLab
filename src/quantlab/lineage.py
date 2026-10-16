@@ -104,6 +104,7 @@ class Approval(BaseModel):
         message: the exact issue text that was approved.
         approved_at: UTC timestamp.
         approved_by: who approved (v1 has no authentication: "user" or "cli").
+        plan_hash: version hash of the plan the approval was given for.
     """
 
     issue_id: str
@@ -112,6 +113,7 @@ class Approval(BaseModel):
     message: str
     approved_at: str
     approved_by: str = "user"
+    plan_hash: str = ""
 
 
 class ParamEdit(BaseModel):
@@ -132,6 +134,24 @@ class ParamEdit(BaseModel):
     edited_at: str
 
 
+class ParamChange(BaseModel):
+    """One parameter whose final value differs from the planner's proposal.
+
+    Fields:
+        step_id: the step.
+        param: parameter name.
+        original: the value the planner proposed (defaults filled in).
+        final: the value that ran.
+        edited_at: UTC timestamp of the last edit to this parameter.
+    """
+
+    step_id: str
+    param: str
+    original: Any
+    final: Any
+    edited_at: str
+
+
 class RunRecord(BaseModel):
     """The manifest of one run (saved as runs/<run_id>/manifest.json).
 
@@ -144,7 +164,9 @@ class RunRecord(BaseModel):
         llm: how the plan was produced.
         plan_original: the plan exactly as the planner returned it.
         plan_final: the plan that was validated / executed (defaults filled, user edits applied).
-        edits: parameter-level diff between the original and final plan.
+        plan_hash: version hash of plan_final (approvals store the hash they were given for).
+        edits: every parameter edit, in order (including edits later undone).
+        param_diff: planner-proposed vs final value of each user-edited parameter.
         validation: the final static validation report.
         approvals: approvals granted, with timestamps.
         datasets: exact dataset versions used.
@@ -166,7 +188,9 @@ class RunRecord(BaseModel):
     llm: LLMInfo | None = None
     plan_original: dict[str, Any] | None = None
     plan_final: dict[str, Any] | None = None
+    plan_hash: str = ""
     edits: list[ParamEdit] = Field(default_factory=list)
+    param_diff: list[ParamChange] = Field(default_factory=list)
     validation: ValidationReport | None = None
     approvals: list[Approval] = Field(default_factory=list)
     datasets: list[DatasetVersion] = Field(default_factory=list)
@@ -249,6 +273,32 @@ def dataset_versions(steps: list[StepRecord], catalog: Catalog) -> list[DatasetV
             ),
         )
     return list(versions.values())
+
+
+def param_changes(proposal: Plan, final: Plan, edits: list[ParamEdit]) -> list[ParamChange]:
+    """Parameter-level diff between the planner's proposal and the plan that ran.
+
+    Args:
+        proposal: the planner's plan with defaults filled in.
+        final: the current plan (same steps; only values can differ).
+        edits: the edit history, for the time of the last edit to each parameter.
+
+    Returns:
+        One ParamChange per parameter whose final value differs, in plan order.
+    """
+    proposed = {step.id: step.params for step in proposal.steps}
+    last_edit = {(e.step_id, e.param): e.edited_at for e in edits}
+    changes = []
+    for step in final.steps:
+        for name, value in step.params.items():
+            original = proposed.get(step.id, {}).get(name)
+            if value == original and type(value) is type(original):
+                continue
+            changes.append(
+                ParamChange(step_id=step.id, param=name, original=original, final=value,
+                            edited_at=last_edit.get((step.id, name), ""))
+            )  # fmt: skip
+    return changes
 
 
 def output_filename(step_id: str, capability: str, data_type: DataType) -> str:
@@ -486,12 +536,17 @@ def _replay_report(
 
 
 class TraceStep(BaseModel):
-    """One step in a lineage chain."""
+    """One step in a lineage chain.
+
+    `edited` maps each user-edited parameter to the value the planner proposed;
+    the other parameters are exactly as the planner proposed them.
+    """
 
     step_id: str
     capability: str
     library_calls: str
     params: dict[str, Any]
+    edited: dict[str, Any] = Field(default_factory=dict)
     inputs: dict[str, str]
     output_hash: str | None
     n_obs: int | None
@@ -545,12 +600,16 @@ def trace(record: RunRecord, step_id: str) -> TraceResult:
 
     # Present the chain from the traced step back towards the data (reverse plan order).
     ordered = [step for step in reversed(record.steps) if step.step_id in needed]
+    edited: dict[str, dict[str, Any]] = {}
+    for change in record.param_diff:
+        edited.setdefault(change.step_id, {})[change.param] = change.original
     chain = [
         TraceStep(
             step_id=step.step_id,
             capability=step.capability,
             library_calls=step.library_calls,
             params=step.params,
+            edited=edited.get(step.step_id, {}),
             inputs=step.input_step_ids,
             output_hash=step.output_hash,
             n_obs=step.n_obs,

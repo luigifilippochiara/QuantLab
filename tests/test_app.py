@@ -75,3 +75,51 @@ def test_blocked_scenario_cannot_execute(scenario_id: str, app_env: Settings) ->
 @pytest.mark.parametrize("page", ["run_history.py", "monitoring.py", "registry.py"])
 def test_other_pages_render(page: str, app_env: Settings) -> None:
     open_page(page)
+
+
+def issue_codes(app: AppTest) -> set[str]:
+    """Guardrail codes shown in the validation panel (from the issue headers)."""
+    return {m.value.split("**")[1].split()[0] for m in app.markdown if "badge[" in m.value
+            and "**" in m.value}  # fmt: skip
+
+
+def plan_scenario_1(app_env: Settings) -> AppTest:
+    """The analysis page with scenario 1's plan generated."""
+    app = open_page("analysis.py")
+    app.sidebar.button(key="scenario-volatility_flag_success").click().run()
+    button(app, "Generate plan").click().run()
+    return app
+
+
+def test_weekly_to_daily_edit_warns_and_runs_after_re_approval(app_env: Settings) -> None:
+    app = plan_scenario_1(app_env)
+    assert any("adjust parameters below" in i.value for i in app.info)
+    window = next(n for n in app.number_input if n.key.endswith("-s4-window"))
+    assert window.label == "window (in periods of the series frequency)" and window.value == 12
+
+    next(s for s in app.selectbox if s.key.endswith("-s2-freq")).select("D").run()
+    assert button(app, "Execute").disabled  # the change is not applied yet
+    assert any(c.value == "Apply or reset your parameter changes to continue." for c in app.caption)
+
+    button(app, "Apply changes").click().run()
+    assert issue_codes(app) == {"G12", "G14"}
+    assert any("Approvals were reset" in i.value for i in app.info)
+    assert any("edited (was W)" in c.value for c in app.caption)
+
+    app.checkbox(key=next(c.key for c in app.checkbox if c.key.startswith("approve-"))).check()
+    app.run()
+    button(app, "Execute").click().run()
+    assert not app.exception, app.exception
+    trace = next(d.value for d in app.dataframe if "library call" in d.value.columns)
+    params = dict(zip(trace["step"], trace["params"], strict=True))
+    assert "freq=D (edited, was W)" in params["s2"]
+    assert "(edited" not in params["s4"]  # planner-proposed values are not marked
+
+
+def test_full_sample_edit_raises_g10_and_reset_clears_it(app_env: Settings) -> None:
+    app = plan_scenario_1(app_env)
+    next(s for s in app.selectbox if s.key.endswith("-s5-method")).select("full_sample").run()
+    button(app, "Apply changes").click().run()
+    assert issue_codes(app) == {"G10", "G12"}
+    button(app, "Reset to planner").click().run()
+    assert issue_codes(app) == {"G12"}

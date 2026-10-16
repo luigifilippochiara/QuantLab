@@ -1,4 +1,4 @@
-"""Static plan validation: guardrails G01-G13, checked before anything runs.
+"""Static plan validation: guardrails G01-G14, checked before anything runs.
 
 Role in the architecture: the validator is the "system disposes" half of
 "the LLM proposes, the system disposes". It takes a plan (inert data) and,
@@ -15,7 +15,10 @@ That is how it can tell, before running, that step 3 would compute returns of
 a yield or take the spread of a daily and a weekly series.
 
 The same `validate_plan` function is used for the planner's plan, for every
-user edit, by the executor (defence in depth) and by replay.
+user edit, by the executor (defence in depth) and by replay. For an edited plan
+the engine also passes the planner's proposal as `baseline`, which enables G14
+(an edit changed a frequency but left the windows measured in its periods).
+`check_edits` locks the plan's structure: users may change parameter values only.
 
 The runtime guardrails R01-R04 (which need data) live in executor.py, but all
 guardrail codes are described in the single GUARDRAILS table below. G11 is not
@@ -131,6 +134,11 @@ GUARDRAILS: dict[str, Guardrail] = {
             "G13", "PLANNER_REFUSED", BLOCK, "static",
             "Without an explicit refusal path the LLM is pushed to invent capabilities "
             "to satisfy any request.",
+        ),
+        Guardrail(
+            "G14", "WINDOW_UNITS_CHANGED", WARN, "static",
+            "After a frequency edit, an unchanged window silently changes its span "
+            "(12 weeks becomes 12 trading days).",
         ),
         Guardrail(
             "R01", "DATASET_HASH_MISMATCH", BLOCK, "runtime",
@@ -825,6 +833,108 @@ def check_material_assumptions(
 
 
 # ---------------------------------------------------------------------------
+# User edits: structure lock and window units (G03, G14)
+# ---------------------------------------------------------------------------
+
+# Approximate trading days per period, to suggest an equivalent window after a
+# frequency change (12 weeks ~ 60 trading days, 1 month ~ 21 trading days).
+TRADING_DAYS_PER_PERIOD = {Frequency.D: 1, Frequency.W: 5, Frequency.M: 21}
+PERIOD_UNITS = {Frequency.D: "trading days", Frequency.W: "weeks", Frequency.M: "months"}
+
+
+def check_edits(plan: Plan, edits: Any) -> list[Issue]:
+    """G03 INVALID_PARAM (edit rejected): users may change parameter VALUES only.
+
+    Without it, an edit could add, remove or reorder steps, change a step's
+    capability or input references, or smuggle in a field that becomes code,
+    and the plan the human approved would no longer be the plan the LLM and the
+    validator saw. Values themselves are not judged here: they are applied and
+    then checked by the validator (G03 for out-of-range values, G07 for datasets...).
+
+    Args:
+        plan: the current plan.
+        edits: the requested edits; must be {step_id: {param_name: value}}.
+
+    Returns:
+        One BLOCK issue per rejected edit (empty if every edit is a parameter value).
+    """
+
+    def rejected(message: str, key: str) -> Issue:
+        suggestion = "Only parameter values can be edited; regenerate the plan to change its steps."
+        return make_issue("G03", None, f"Edit rejected: {message}", suggestion, key=f"edit:{key}")
+
+    if not isinstance(edits, dict):
+        return [rejected("edits must be {step_id: {parameter: value}}.", "shape")]
+    steps = {step.id: step for step in plan.steps}
+    issues = []
+    for step_id, params in edits.items():
+        step = steps.get(step_id)
+        if step is None:
+            issues.append(rejected(f"step '{step_id}' does not exist; steps cannot be added.",
+                                   str(step_id)))  # fmt: skip
+            continue
+        if not isinstance(params, dict):
+            issues.append(rejected(f"edits for {step_id} must be {{parameter: value}}.", step_id))
+            continue
+        spec = REGISTRY.get(step.capability)
+        for name in params:
+            if spec is None or spec.param(name) is None:
+                # Covers "capability", "inputs", "id" and any invented field.
+                issues.append(rejected(f"'{name}' is not a parameter of {step_id} "
+                                       f"({step.capability}).", f"{step_id}.{name}"))  # fmt: skip
+    return issues
+
+
+def check_window_units(
+    plan: Plan,
+    baseline: Plan,
+    dry_run: dict[str, dict[str, Any]],
+    baseline_dry_run: dict[str, dict[str, Any]],
+) -> list[Issue]:
+    """G14 WINDOW_UNITS_CHANGED: a frequency edit left a window counted in periods unchanged.
+
+    Window-type parameters (rolling_volatility.window, flag_regime.min_periods)
+    count periods of the frequency feeding the step. If an edit changes that
+    frequency (e.g. resample W -> D) but not the window, "12" silently changes
+    meaning from 12 weeks to 12 trading days. The plan is still valid, so this is
+    a warning with a suggested equivalent value.
+
+    Args:
+        plan: the edited plan.
+        baseline: the planner's proposal (defaults filled), same step ids.
+        dry_run: predicted metadata of the edited plan.
+        baseline_dry_run: predicted metadata of the proposal.
+    """
+    original_steps = {step.id: step for step in baseline.steps}
+    issues = []
+    for step in plan.steps:
+        spec, original = REGISTRY.get(step.capability), original_steps.get(step.id)
+        if spec is None or original is None:
+            continue
+        for ref in step.inputs.values():
+            new = dry_run.get(ref, {}).get("frequency")
+            old = baseline_dry_run.get(ref, {}).get("frequency")
+            if not new or not old or new == old:
+                continue
+            for p in spec.params:
+                value = step.params.get(p.name)
+                if not p.counted_in_periods or value != original.params.get(p.name):
+                    continue
+                old_f, new_f = Frequency(old), Frequency(new)
+                # Same calendar span in the new units, kept inside the allowed range.
+                span = value * TRADING_DAYS_PER_PERIOD[old_f] / TRADING_DAYS_PER_PERIOD[new_f]
+                suggested = int(min(max(round(span), p.min), p.max))
+                message = (
+                    f"Frequency changed from {FREQUENCY_NAMES[old_f]} to "
+                    f"{FREQUENCY_NAMES[new_f]}: {p.name} {value} now means {value} "
+                    f"{PERIOD_UNITS[new_f]}, not {value} {PERIOD_UNITS[old_f]}."
+                )
+                suggestion = f"Consider {suggested} for roughly {value} {PERIOD_UNITS[old_f]}."
+                issues.append(make_issue("G14", step.id, message, suggestion, key=p.name))
+    return issues
+
+
+# ---------------------------------------------------------------------------
 # Dry run: predict output metadata without data
 # ---------------------------------------------------------------------------
 
@@ -891,6 +1001,7 @@ def validate_plan(
     plan: Plan,
     catalog: Catalog,
     *,
+    baseline: Plan | None = None,
     max_steps: int = 15,
     max_datasets: int = 5,
     max_request_chars: int = 2000,
@@ -900,6 +1011,9 @@ def validate_plan(
     Args:
         plan: the plan to check (defaults may or may not be filled in).
         catalog: the dataset catalog.
+        baseline: the planner's proposal, when `plan` is a user-edited version of
+            it; enables G14. None for a fresh plan (and in the executor and replay,
+            where G14 is a warning that cannot change the outcome).
         max_steps: budget for G06.
         max_datasets: budget for G06.
         max_request_chars: budget for G06.
@@ -939,4 +1053,7 @@ def validate_plan(
         metas[step.id] = infer_output_meta(spec, params, input_metas, catalog)
 
     dry_run = {step_id: meta.to_dict() for step_id, meta in metas.items() if meta is not None}
+    if baseline is not None:
+        baseline_dry_run = validate_plan(baseline, catalog).dry_run
+        issues += check_window_units(plan, baseline, dry_run, baseline_dry_run)
     return ValidationReport(issues=issues, dry_run=dry_run)

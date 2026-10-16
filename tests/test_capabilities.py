@@ -230,6 +230,18 @@ def test_resample_drops_incomplete_last_period() -> None:
     assert out.value.index.strftime("%Y-%m-%d").tolist() == ["2024-01-05"]
 
 
+def test_resample_daily_is_a_pass_through() -> None:
+    # Mon 2024-01-01 .. Fri 2024-01-12: ten business days, no weekends.
+    daily = make_artifact(np.arange(1.0, 11.0), freq=Frequency.D, start="2024-01-01")
+    out = cap.resample(daily, freq="D")
+    # Unchanged: no weekend rows inserted, no NaN (unlike pandas resample("D")).
+    pd.testing.assert_series_equal(out.value, daily.value)
+    assert out.meta.frequency == Frequency.D and out.meta.n_obs == 10
+    weekly = make_artifact([1.0, 2.0, 3.0])
+    with pytest.raises(ValueError, match="higher frequency"):
+        cap.resample(weekly, freq="D")  # weekly -> daily would invent data
+
+
 def test_resample_refuses_upsampling() -> None:
     monthly = make_artifact([1.0, 2.0, 3.0], freq=Frequency.M, start="2024-01-31")
     with pytest.raises(ValueError, match="higher frequency"):

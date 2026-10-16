@@ -185,6 +185,8 @@ def print_trace(result: TraceResult) -> None:
         inputs = ", ".join(f"{k}<-{v}" for k, v in step.inputs.items()) or "-"
         print(f"{step.step_id} {step.capability}  inputs: {inputs}")
         print(f"    params:  {step.params}")
+        if step.edited:
+            print(f"    edited by the user (planner proposed): {step.edited}")
         print(f"    library: {step.library_calls}")
         print(f"    output:  {step.n_obs} obs {step.start}..{step.end}  sha256 {step.output_hash}")
     print("\nSources:")

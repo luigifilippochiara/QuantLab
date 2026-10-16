@@ -123,6 +123,10 @@ A 15-minute path through the app (the six demo scenarios, one analyst's workflow
 2. **Scenario 1, it works**: the five-step weekly volatility plan, the single G12
    approval (return method) that gates Execute, the volatility chart with the
    flagged weeks shaded, and the narrative with its "all numbers verified" badge.
+   Before executing, edit a parameter: switch `resample.freq` from W to D and
+   **Apply changes & re-validate** (G14 warns that window 12 now means 12 trading
+   days, approvals reset), or switch `flag_regime.method` to `full_sample` (G10
+   appears); **Reset to planner's proposal** undoes it.
 3. **Scenario 2, it is smart**: the same plan with a full-sample threshold; G10
    explains in plain English that it judges past weeks with future information,
    and Execute needs both approvals.
@@ -143,7 +147,7 @@ flowchart LR
     U[User request] --> P["Planner LLM<br/>planner.py"]
     R[("Capability registry<br/>registry.py")] -. generated summary .-> P
     C[("Dataset catalog<br/>metadata only")] -. id, kind, frequency, dates .-> P
-    P -->|"plan: inert JSON"| V["Validator G01-G13<br/>validation.py"]
+    P -->|"plan: inert JSON"| V["Validator G01-G14<br/>validation.py"]
     V -->|"BLOCK / APPROVAL / WARN"| H["Human review<br/>edit params, approve"]
     H -->|"edits: same validator"| V
     H -->|approved plan| E["Executor R01-R04<br/>executor.py"]
@@ -165,7 +169,7 @@ flowchart LR
 | `capabilities.py` | The 9 quantitative functions: the only code that calls pandas/numpy for analysis |
 | `registry.py` | Capability specs, the `REGISTRY` whitelist, generated LLM summary and registry version |
 | `plan.py` | Pydantic `Plan` / `Step` (extra fields forbidden) and the LLM tool schema |
-| `validation.py` | Static guardrails G01-G13, metadata dry run, `ValidationReport`, the guardrail table |
+| `validation.py` | Static guardrails G01-G14, edit lock, metadata dry run, `ValidationReport`, the guardrail table |
 | `scenarios.py` | Demo scenarios 1-5 with canned plans (used by mock mode, CLI, app, tests) |
 | `executor.py` | Registry dispatch, approval gate, runtime guardrails R01-R04, step records |
 | `planner.py` | OpenAI and Anthropic planners, mock planner, plan cache |
@@ -213,7 +217,7 @@ small and descriptive:
 | Capability | What it does |
 |---|---|
 | `load_series` | Load one dataset from the catalog (hash-verified, missing days dropped) |
-| `resample` | Daily to weekly (Friday) or monthly (month end) |
+| `resample` | Daily to weekly (Friday) or monthly (month end), or keep daily (`D`, unchanged) |
 | `compute_returns` | Simple or log returns of a price or index |
 | `difference` | Changes of a rate or yield, in its own units |
 | `spread` | a - b on the dates both series share |
@@ -261,6 +265,7 @@ meaning and those runs can still be replayed.
 | G10 | `LOOK_AHEAD` | APPROVAL | static | Full-sample thresholds use future data, so results look better than anything achievable in real time. |
 | G12 | `MATERIAL_ASSUMPTION` | APPROVAL | static | Material modelling choices (simple vs log returns) would be made by the LLM without a human noticing. |
 | G13 | `PLANNER_REFUSED` | BLOCK | static | Without an explicit refusal path the LLM is pushed to invent capabilities to satisfy any request. |
+| G14 | `WINDOW_UNITS_CHANGED` | WARN | static | After a frequency edit, an unchanged window silently changes its span (12 weeks becomes 12 trading days). |
 | R01 | `DATASET_HASH_MISMATCH` | BLOCK | runtime | Results would come from data other than the recorded version, breaking reproducibility and audit. |
 | R02 | `INSUFFICIENT_DATA` | BLOCK | runtime | Statistics on too few observations are noise presented as findings. |
 | R03 | `MISSING_DATA` | WARN | runtime | A heavily gappy series can distort resampled values and returns unnoticed. |
@@ -344,6 +349,23 @@ list of unverified numbers; the deterministic facts table is always shown.
   annualisation, the no-look-ahead property of expanding flags, summary
   statistics against textbook formulas, episode counting, every guardrail,
   replay, grounding and a source safety scan.
+
+## Editing a plan before it runs
+
+After a plan is generated, each step is shown as its own block with its
+parameters as widgets generated from the registry (select boxes for choices,
+bounded number inputs, checkboxes), prefilled with the planner's values. Only
+VALUES can change: steps, capabilities and input references are locked, and the
+engine rejects any other edit with a BLOCK. **Apply changes & re-validate** runs
+the exact same validator again, so issues appear and clear (switching
+`flag_regime.method` to `full_sample` raises G10; switching `resample.freq` from
+W to D raises the G14 warning that window 12 now means 12 trading days). Any edit
+resets the approvals, which are recorded with the hash of the plan version they
+were given for; Execute stays disabled with a one-line reason while changes are
+unapplied, a BLOCK remains or an approval is unticked. Edited values are marked
+("edited (was 12)"), **Reset to planner's proposal** undoes them, and the run
+record keeps the parameter-level diff that the trace and Run history display;
+replay re-runs the edited plan with identical hashes.
 
 ## Demo scenarios
 

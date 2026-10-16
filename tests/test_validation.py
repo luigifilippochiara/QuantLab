@@ -1,4 +1,4 @@
-"""Static guardrails G01-G13: each triggers on a crafted plan and stays silent on a clean one."""
+"""Static guardrails G01-G14: each triggers on a crafted plan and stays silent on a clean one."""
 
 import json
 from typing import Any
@@ -267,6 +267,39 @@ def test_g12_message_names_the_chosen_value(catalog: Catalog) -> None:
 def test_g13_refusal(scenario_id: str, catalog: Catalog) -> None:
     report = validate(raw_plan(scenario_id), catalog)
     assert report.codes() == ["G13"] and report.is_blocked
+
+
+# --- G14 WINDOW_UNITS_CHANGED ---------------------------------------------------
+
+
+def edited_plan(changes: dict[str, dict[str, Any]]) -> tuple[Plan, Plan]:
+    """(proposal, edited copy) of scenario 1, with `changes` applied to the copy."""
+    proposal = fill_defaults(Plan(plan_id="p", request="r", **raw_plan(SUCCESS)))
+    edited = proposal.model_copy(deep=True)
+    for step in edited.steps:
+        step.params.update(changes.get(step.id, {}))
+    return proposal, edited
+
+
+def test_g14_weekly_to_daily_keeps_windows_in_the_wrong_units(catalog: Catalog) -> None:
+    proposal, edited = edited_plan({"s2": {"freq": "D"}})
+    report = validate_plan(edited, catalog, baseline=proposal)
+    g14 = [i for i in report.issues if i.code == "G14"]
+    assert [i.issue_id for i in g14] == ["G14:s4:window", "G14:s5:min_periods"]
+    assert all(i.severity == Severity.WARN for i in g14) and not report.is_blocked
+    assert g14[0].message == (
+        "Frequency changed from weekly to daily: window 12 now means 12 trading days, not 12 weeks."
+    )
+    assert g14[0].suggestion == "Consider 60 for roughly 12 weeks."
+    assert report.dry_run["s4"]["frequency"] == "D"  # the dry run follows the edit
+
+
+def test_g14_is_silent_when_the_window_is_adjusted_or_there_is_no_edit(catalog: Catalog) -> None:
+    proposal, edited = edited_plan({"s2": {"freq": "D"}, "s4": {"window": 60}})
+    codes = [i.issue_id for i in validate_plan(edited, catalog, baseline=proposal).issues]
+    assert "G14:s4:window" not in codes and "G14:s5:min_periods" in codes
+    assert "G14" not in validate_plan(edited, catalog).codes()  # no baseline: fresh plan
+    assert "G14" not in validate_plan(proposal, catalog, baseline=proposal).codes()
 
 
 # --- dry run and tool schema ----------------------------------------------------

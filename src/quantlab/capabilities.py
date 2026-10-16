@@ -142,12 +142,13 @@ def load_series(dataset_id: str, catalog: Catalog) -> Artifact:
 
 
 def resample(series: Artifact, freq: str, how: str = "last") -> Artifact:
-    """Convert a series to a lower frequency (weekly or monthly).
+    """Convert a series to a lower frequency (weekly or monthly), or keep it daily.
 
     Args:
         series: SERIES artifact (a level-type series).
-        freq: "W" (week ending Friday) or "M" (month end).
-        how: "last" (last observation in the period, e.g. Friday close) or "mean".
+        freq: "D" (keep daily: pass-through), "W" (week ending Friday) or "M" (month end).
+        how: "last" (last observation in the period, e.g. Friday close) or "mean";
+            ignored for "D".
 
     Returns:
         SERIES artifact with the same kind and the new frequency.
@@ -159,6 +160,16 @@ def resample(series: Artifact, freq: str, how: str = "last") -> Artifact:
     current = series.meta.frequency
     if current is not None and FREQUENCY_ORDER[target] < FREQUENCY_ORDER[current]:
         raise ValueError(f"cannot resample {current} data to the higher frequency {target}.")
+
+    if target == Frequency.D:
+        # Pass-through: the business-day series is kept exactly as loaded. Not
+        # pandas resample("D"), which would insert every calendar day and fill
+        # weekends and holidays with NaN. This lets a user switch a weekly plan to
+        # daily by changing one parameter.
+        meta = derive_meta(
+            series.meta, series.value, notes=["kept at daily frequency (no resampling)"]
+        )
+        return Artifact(value=series.value, data_type=DataType.SERIES, meta=meta)
 
     grouped = series.value.resample(RESAMPLE_RULES[freq])
     # "last" = the value at the end of the period (what you could have traded on);

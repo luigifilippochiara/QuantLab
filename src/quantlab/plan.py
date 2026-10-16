@@ -12,6 +12,8 @@ instead of being silently ignored.
 """
 
 import copy
+import hashlib
+import json
 import uuid
 from typing import Any
 
@@ -85,6 +87,24 @@ SYSTEM_FIELDS = ("plan_id", "request")
 def new_plan_id() -> str:
     """Return a fresh, short, unique plan id like "plan-1a2b3c4d5e"."""
     return f"plan-{uuid.uuid4().hex[:10]}"
+
+
+def plan_hash(plan: Plan) -> str:
+    """Version hash of a plan's content: dataset ids, steps and refusal fields.
+
+    It changes whenever any parameter changes, so an approval stored with the hash
+    of the plan it was given for cannot silently apply to an edited plan. The
+    plan_id and request are excluded: they identify the run, not the computation.
+
+    Args:
+        plan: the plan.
+
+    Returns:
+        64-character hex digest.
+    """
+    content = plan.model_dump(exclude={"plan_id", "request"})
+    text = json.dumps(content, sort_keys=True, default=str)
+    return hashlib.sha256(text.encode("utf-8")).hexdigest()
 
 
 def plan_tool_schema() -> dict[str, Any]:

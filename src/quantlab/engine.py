@@ -5,7 +5,8 @@ through the pipeline, in this order:
 
     Session.start(request, datasets, mode)
       .create_plan()          planner (LLM or mock) -> plan, defaults filled -> validate
-      .apply_param_edits()    user edits -> re-validate with the SAME validator
+      .apply_param_edits()    user edits VALUES only -> re-validate with the SAME validator
+      .reset_to_proposal()    back to the planner's proposal (re-validated)
       .approve(issue_ids)     user approves APPROVAL issues (timestamped)
       .execute()              deterministic executor (refuses if blocked or unapproved)
       .narrate()              narrator + grounding check
@@ -33,18 +34,20 @@ from quantlab.lineage import (
     dataset_versions,
     environment_info,
     new_run_id,
+    param_changes,
     save_run,
     trace,
 )
 from quantlab.monitoring import log_event, utc_now
 from quantlab.narrator import NarrativeResult, narrate
-from quantlab.plan import Plan
+from quantlab.plan import Plan, plan_hash
 from quantlab.planner import PlanResult, generate_plan
 from quantlab.registry import registry_version
 from quantlab.validation import (
     Issue,
     Severity,
     ValidationReport,
+    check_edits,
     check_request_length,
     fill_defaults,
     validate_plan,
@@ -225,6 +228,7 @@ class Session:
         self.report = validate_plan(
             self.plan,
             self.catalog,
+            baseline=self.proposal,  # enables G14 for frequency edits
             max_steps=self.settings.max_steps,
             max_datasets=self.settings.max_datasets,
             max_request_chars=self.settings.max_request_chars,
@@ -248,45 +252,85 @@ class Session:
 
     # ----------------------------------------------------------- human review
 
+    @property
+    def proposal(self) -> Plan | None:
+        """The planner's proposal with defaults filled in: the baseline edits are compared to."""
+        return fill_defaults(self.plan_original) if self.plan_original else None
+
+    @property
+    def plan_hash(self) -> str:
+        """Version hash of the current plan; approvals are tied to it."""
+        return plan_hash(self.plan) if self.plan else ""
+
     def apply_param_edits(self, edits: dict[str, dict[str, Any]]) -> ValidationReport:
-        """Change parameter values, then re-validate. Clears earlier approvals.
+        """Change parameter VALUES, then re-validate with the same validator.
+
+        The plan's structure is locked: an edit that adds, removes or reorders
+        steps, or touches anything but a registered parameter (capability, inputs,
+        ids...), is rejected as a BLOCK and nothing is applied. Values are applied
+        to a copy of the plan and then judged by the validator, so an out-of-range
+        value is a G03 BLOCK even if the UI widgets should have prevented it. Any
+        change clears all approvals: they belong to the previous plan version.
 
         Args:
             edits: step id -> {parameter name: new value}.
 
         Returns:
             The new validation report.
-
-        Raises:
-            ValueError: if there is no plan or a step id does not exist.
         """
         if self.plan is None:
             raise ValueError("there is no plan to edit")
-        steps = {step.id: step for step in self.plan.steps}
-        changed = False
+        rejected = check_edits(self.plan, edits)
+        if rejected:
+            # Nothing is applied; the plan stays blocked until a valid edit or a reset.
+            report = self.validate()
+            self.report = ValidationReport(issues=rejected + report.issues, dry_run=report.dry_run)
+            for issue in rejected:
+                self._log("validation_issue", details=_issue_details(issue))
+            self.status = "blocked"
+            self.save_record()
+            return self.report
+
+        edited = self.plan.model_copy(deep=True)
+        steps = {step.id: step for step in edited.steps}
+        changes = []
         for step_id, params in edits.items():
-            if step_id not in steps:
-                raise ValueError(f"unknown step {step_id!r}")
             for name, value in params.items():
                 old = steps[step_id].params.get(name)
                 # Compare types too: 12 -> 12.0 is a real change for the strict validator.
                 if old == value and type(old) is type(value):
                     continue
                 steps[step_id].params[name] = value
-                self.edits.append(
+                changes.append(
                     ParamEdit(step_id=step_id, param=name, old=old, new=value, edited_at=utc_now())
                 )
-                changed = True
-        if changed:
+        if changes:
+            self.plan = edited
+            self.edits += changes
             # An approval refers to the plan as it was; after any change, ask again.
             self.approvals = []
         return self.validate()
+
+    def reset_to_proposal(self) -> ValidationReport:
+        """Undo every edit: set each parameter back to the planner's proposal, then re-validate."""
+        proposal = {step.id: step.params for step in self.proposal.steps}
+        edits = {
+            step.id: {
+                name: proposal[step.id].get(name)
+                for name, value in step.params.items()
+                if value != proposal[step.id].get(name)
+                or type(value) is not type(proposal[step.id].get(name))
+            }
+            for step in self.plan.steps
+        }
+        return self.apply_param_edits({step_id: p for step_id, p in edits.items() if p})
 
     def unresolved_approvals(self) -> list[Issue]:
         """APPROVAL issues of the current report that have not been approved yet."""
         if self.report is None:
             return []
-        approved = {approval.issue_id for approval in self.approvals}
+        # Only approvals given for THIS plan version count (edits also clear them).
+        approved = {a.issue_id for a in self.approvals if a.plan_hash == self.plan_hash}
         return [i for i in self.report.approvals_required if i.issue_id not in approved]
 
     def approve(self, issue_ids: list[str], approved_by: str = "user") -> None:
@@ -313,6 +357,7 @@ class Session:
                     message=issue.message,
                     approved_at=utc_now(),
                     approved_by=approved_by,
+                    plan_hash=self.plan_hash,
                 )
             )
             self._log(
@@ -356,7 +401,7 @@ class Session:
         result = execute_plan(
             self.plan,
             self.catalog,
-            {approval.issue_id for approval in self.approvals},
+            {a.issue_id for a in self.approvals if a.plan_hash == self.plan_hash},
             max_steps=self.settings.max_steps,
             max_datasets=self.settings.max_datasets,
         )
@@ -471,7 +516,9 @@ class Session:
             llm=llm,
             plan_original=self.plan_original.model_dump() if self.plan_original else None,
             plan_final=self.plan.model_dump() if self.plan else None,
+            plan_hash=self.plan_hash,
             edits=self.edits,
+            param_diff=param_changes(self.proposal, self.plan, self.edits) if self.plan else [],
             validation=self.report,
             approvals=self.approvals,
             datasets=dataset_versions(steps, self.catalog),

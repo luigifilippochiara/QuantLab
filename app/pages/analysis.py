@@ -27,6 +27,7 @@ for key, default in [
     ("dataset_select", ["NASDAQCOM"]),
     ("llm_mode", settings.llm_mode),
     ("replay_report", None),
+    ("flash", None),  # one-off message shown after an edit is applied
 ]:
     st.session_state.setdefault(key, default)
 
@@ -108,6 +109,10 @@ st.divider()
 st.markdown(f"Run `{session.run_id}` · {ui.STATUS_BADGE.get(session.status, session.status)}")
 plan = session.plan
 result = session.plan_result
+finished = session.status == "completed"
+# step id -> {param: value} for widget values that differ from the plan: changes
+# the user has made but not applied (and re-validated) yet.
+pending: dict[str, dict] = {}
 
 st.subheader("Plan")
 if plan is None:
@@ -115,28 +120,85 @@ if plan is None:
 elif plan.cannot_fulfill:
     st.error(ui.escape_md(plan.refusal_reason or ""), title="The planner declined this request")
 else:
-    dry_run = session.report.dry_run if session.report else {}
-    st.dataframe(
-        pd.DataFrame(
-            [
-                {
-                    "step": step.id,
-                    "capability": step.capability,
-                    "inputs": ", ".join(f"{k} <- {v}" for k, v in step.inputs.items()) or "-",
-                    "params": ", ".join(f"{k}={v}" for k, v in step.params.items()) or "-",
-                    "output (predicted)": " / ".join(
-                        str(dry_run[step.id][k]) for k in ("data_type", "kind", "frequency")
-                    )
-                    if step.id in dry_run
-                    else "unknown",
-                    "rationale": step.rationale,
-                }
-                for step in plan.steps
-            ]
-        ),
-        hide_index=True,
-        alt="Plan steps",
+    st.info(
+        "You can adjust parameters below. Every change is re-checked against the same "
+        "controls before anything runs.",
+        icon=":material/tune:",
     )
+    if finished:
+        st.caption("This run has completed; generate a new plan to change it.")
+    proposal = {step.id: step.params for step in session.proposal.steps}
+    dry_run = session.report.dry_run if session.report else {}
+    # Widget keys include the plan version, so after an edit is applied (or reset)
+    # every widget starts again from the plan's current values.
+    version = session.plan_hash[:12]
+    for step in plan.steps:
+        spec = REGISTRY.get(step.capability)
+        with st.container(border=True):
+            inputs = ", ".join(f"{name} ← {ref}" for name, ref in step.inputs.items())
+            predicted = dry_run.get(step.id)
+            output = (
+                " / ".join(str(predicted[k]) for k in ("data_type", "kind", "frequency"))
+                if predicted
+                else "unknown"
+            )
+            st.markdown(f"**{step.id} · {step.capability}**")
+            st.caption(
+                f"inputs: {inputs or 'none'} · output (predicted): {output} · "
+                f"{ui.escape_md(step.rationale)}"
+            )
+            if spec is None:
+                st.caption("Not a registered capability: it can be neither run nor edited.")
+                continue
+            if not spec.params:
+                st.caption("No parameters.")
+                continue
+            for spec_param, column in zip(spec.params, st.columns(len(spec.params)), strict=True):
+                with column:
+                    current = step.params.get(spec_param.name)
+                    value = ui.param_widget(
+                        spec_param,
+                        current,
+                        f"param-{session.run_id}-{version}-{step.id}-{spec_param.name}",
+                        catalog.ids(),
+                        disabled=finished,
+                    )
+                    original = proposal.get(step.id, {}).get(spec_param.name)
+                    if not ui.same_value(value, current):
+                        pending.setdefault(step.id, {})[spec_param.name] = value
+                        st.caption(":orange[changed, not applied yet]")
+                    elif not ui.same_value(current, original):
+                        st.caption(f":blue[edited (was {original})]")
+
+    edited = any(
+        not ui.same_value(value, proposal.get(step.id, {}).get(name))
+        for step in plan.steps
+        for name, value in step.params.items()
+    )
+    left, right = st.columns(2)
+    if left.button(
+        "Apply changes & re-validate",
+        type="primary",
+        icon=":material/rule:",
+        disabled=finished or not pending,
+        width="stretch",
+    ):
+        session.apply_param_edits(pending)
+        st.session_state.flash = (
+            "Changes applied and re-validated. Approvals were reset: they belong to the "
+            "previous plan version, so approve this one again."
+        )
+        st.rerun()
+    if right.button(
+        "Reset to planner's proposal",
+        icon=":material/undo:",
+        disabled=finished or not edited,
+        width="stretch",
+    ):
+        session.reset_to_proposal()
+        st.session_state.flash = "Back to the planner's proposal; approvals were reset."
+        st.rerun()
+
 if plan is not None and plan.planner_notes:
     st.caption(
         f"Planner notes (shown for context, never trusted): {ui.escape_md(plan.planner_notes)}"
@@ -149,68 +211,13 @@ with st.expander("Raw JSON", icon=":material/data_object:"):
     st.markdown("Raw planner output:")
     st.code(json.dumps(result.raw_output if result else None, indent=2, default=str), "json")
 
-finished = session.status == "completed"
-
-# ---------------------------------------------------------------- edits
-
-if plan is not None and plan.steps and not plan.cannot_fulfill:
-    with st.expander("Edit parameters", icon=":material/tune:", expanded=False):
-        if finished:
-            st.caption("This run has completed; generate a new plan to change it.")
-        with st.form(f"edit-{session.run_id}"):
-            chosen: dict[str, dict] = {}
-            for step in plan.steps:
-                spec = REGISTRY.get(step.capability)
-                if spec is None or not spec.params:
-                    continue
-                st.markdown(f"**{step.id} · {step.capability}**")
-                columns = st.columns(len(spec.params))
-                chosen[step.id] = {}
-                for spec_param, column in zip(spec.params, columns, strict=True):
-                    with column:
-                        chosen[step.id][spec_param.name] = ui.param_widget(
-                            spec_param,
-                            step.params.get(spec_param.name),
-                            f"edit-{session.run_id}-{step.id}-{spec_param.name}",
-                            catalog.ids(),
-                        )
-            submitted = st.form_submit_button(
-                "Apply edits and re-validate", icon=":material/rule:", disabled=finished
-            )
-        if submitted:
-            steps = {step.id: step for step in plan.steps}
-            changes = {
-                step_id: {
-                    name: value
-                    for name, value in values.items()
-                    if not (
-                        steps[step_id].params.get(name) == value
-                        and type(steps[step_id].params.get(name)) is type(value)
-                    )
-                }
-                for step_id, values in chosen.items()
-            }
-            changes = {step_id: params for step_id, params in changes.items() if params}
-            if changes:
-                session.apply_param_edits(changes)
-                # The engine cleared earlier approvals; untick the boxes too, so the
-                # user approves the plan as it now stands.
-                for key in [k for k in st.session_state if str(k).startswith("approve-")]:
-                    del st.session_state[key]
-                st.rerun()
-            else:
-                st.caption("No parameter changed.")
-        if session.edits:
-            st.caption(
-                "Edits so far: "
-                + "; ".join(f"{e.step_id}.{e.param}: {e.old} -> {e.new}" for e in session.edits)
-            )
-
 # ---------------------------------------------------------------- validation
 
 st.subheader("Validation")
+if st.session_state.get("flash"):
+    st.info(st.session_state.flash, icon=":material/info:")
+    st.session_state.flash = None
 report = session.report
-approved_ids = {approval.issue_id for approval in session.approvals}
 ticked: list[str] = []
 if report is not None:
     if not report.issues:
@@ -220,35 +227,50 @@ if report is not None:
             with st.container(border=True):
                 ui.render_issue(issue)
                 if severity == Severity.APPROVAL:
+                    # Keyed by plan version: an edited plan starts with every box unticked.
                     is_ticked = st.checkbox(
                         "I approve this",
-                        key=f"approve-{session.run_id}-{issue.issue_id}",
-                        value=issue.issue_id in approved_ids,
+                        key=f"approve-{session.run_id}-{session.plan_hash[:12]}-{issue.issue_id}",
+                        value=any(a.issue_id == issue.issue_id for a in session.approvals),
                         disabled=finished,
                     )
                     if is_ticked:
                         ticked.append(issue.issue_id)
     for approval in session.approvals:
         st.caption(
-            f"Approved {approval.issue_id} at {approval.approved_at} by {approval.approved_by}"
+            f"Approved {approval.issue_id} at {approval.approved_at} by {approval.approved_by} "
+            f"for plan version {approval.plan_hash[:12]}"
         )
 
-all_ticked = report is not None and all(
-    issue.issue_id in ticked for issue in report.approvals_required
-)
-can_run = report is not None and not report.is_blocked and all_ticked and not finished
-if st.button("Execute", type="primary", icon=":material/play_arrow:", disabled=not can_run):
-    session.approve([issue_id for issue_id in ticked if issue_id not in approved_ids])
+# Execute is allowed only for an applied, unblocked, fully approved plan; say why not.
+blocking = report.blocks if report else []
+unticked = [i for i in report.approvals_required if i.issue_id not in ticked] if report else []
+reason = ""
+if finished:
+    reason = ""
+elif report is None or plan is None:
+    reason = "There is no plan to execute."
+elif plan.cannot_fulfill:
+    reason = "The planner declined this request, so there is nothing to run."
+elif pending:
+    reason = "Apply or reset your parameter changes to continue."
+elif blocking:
+    reason = f"Resolve {len(blocking)} blocking issue{'' if len(blocking) == 1 else 's'} first."
+elif unticked:
+    reason = f"Resolve {len(unticked)} approval{'' if len(unticked) == 1 else 's'} to continue."
+already_approved = {a.issue_id for a in session.approvals}
+if st.button(
+    "Execute", type="primary", icon=":material/play_arrow:", disabled=finished or bool(reason)
+):
+    session.approve([issue_id for issue_id in ticked if issue_id not in already_approved])
     with st.spinner("Executing and writing the narrative..."):
         session.execute()
         if session.status == "completed":
             session.narrate()
             session.save_record()
     st.rerun()
-if report is not None and report.is_blocked:
-    st.caption("Execution is disabled while any BLOCK issue remains.")
-elif report is not None and not all_ticked and not finished:
-    st.caption("Tick every approval to enable execution.")
+if reason:
+    st.caption(reason)
 
 # ---------------------------------------------------------------- results
 

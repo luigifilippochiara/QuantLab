@@ -59,6 +59,9 @@ class ParamSpec:
         min: smallest allowed value (numbers only, inclusive).
         max: largest allowed value (numbers only, inclusive).
         choices: allowed values (strings only).
+        counted_in_periods: True for window-type parameters counted in periods of
+            the input's frequency (12 means 12 weeks on weekly data, 12 days on
+            daily data); used by G14 and to label the edit widget.
     """
 
     name: str
@@ -69,6 +72,7 @@ class ParamSpec:
     min: float | None = None
     max: float | None = None
     choices: tuple[str, ...] | None = None
+    counted_in_periods: bool = False
 
 
 @dataclass(frozen=True)
@@ -189,13 +193,17 @@ RESAMPLE = CapabilitySpec(
     name="resample",
     description=(
         "Convert a level series to weekly (week ending Friday) or monthly (month end) "
-        "frequency. Resample levels BEFORE computing returns or changes."
+        "frequency, or keep it daily (D, unchanged). Resample levels BEFORE computing "
+        "returns or changes."
     ),
     func=capabilities.resample,
     inputs=(InputSpec("series", (DataType.SERIES,), "Level series to aggregate.", LEVEL_KINDS),),
     params=(
         ParamSpec(
-            "freq", "str", "Target frequency: W (weekly) or M (monthly).", choices=("W", "M")
+            "freq",
+            "str",
+            "Target frequency: D (keep the daily business-day series), W (weekly) or M (monthly).",
+            choices=("D", "W", "M"),
         ),
         ParamSpec(
             "how",
@@ -331,7 +339,15 @@ ROLLING_VOLATILITY = CapabilitySpec(
         ),
     ),
     params=(
-        ParamSpec("window", "int", "Observations per rolling window.", min=4, max=260),
+        ParamSpec(
+            "window",
+            "int",
+            "Observations per rolling window, in periods of the input frequency "
+            "(12 = 12 weeks on weekly data, 12 trading days on daily data).",
+            min=4,
+            max=260,
+            counted_in_periods=True,
+        ),
         ParamSpec(
             "annualize",
             "bool",
@@ -391,11 +407,13 @@ FLAG_REGIME = CapabilitySpec(
         ParamSpec(
             "min_periods",
             "int",
-            "Expanding method: past observations required before flagging starts.",
+            "Expanding method: past observations required before flagging starts, in "
+            "periods of the input frequency.",
             required=False,
             default=52,
             min=20,
             max=520,
+            counted_in_periods=True,
         ),
     ),
     output_type=DataType.FLAGS,
@@ -499,6 +517,8 @@ def describe_capability(spec: CapabilitySpec) -> dict[str, Any]:
             described["max"] = p.max
         if p.choices is not None:
             described["choices"] = list(p.choices)
+        if p.counted_in_periods:
+            described["unit"] = "periods of the input frequency"
         described["description"] = p.description
         params.append(described)
 

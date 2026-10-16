@@ -11,8 +11,9 @@ paragraph: what, why, alternatives).
 The LLM proposes, the system disposes.
 
 1. The planner LLM writes a plan: inert JSON naming registered capabilities.
-2. `validation.py` checks it (G01-G13, G11 retired: BLOCK / APPROVAL / WARN).
-3. A human reviews, edits parameters (re-validated by the same validator) and approves.
+2. `validation.py` checks it (G01-G14, G11 retired: BLOCK / APPROVAL / WARN).
+3. A human reviews, edits parameter VALUES only (structure locked in the engine,
+   re-validated by the same validator, approvals reset) and approves.
 4. `executor.py` runs it by dict lookup in `REGISTRY`, with runtime guardrails R01-R04.
 5. The narrator LLM summarises using only the facts sheet; `check_grounding` verifies every number.
 6. Every run is saved (`lineage.py`) and can be replayed without the LLM with matching hashes.

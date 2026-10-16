@@ -64,6 +64,11 @@ def escape_md(text: str) -> str:
     return text
 
 
+def same_value(a: Any, b: Any) -> bool:
+    """Equal value AND type: 12 -> 12.0 counts as a change for the strict validator."""
+    return a == b and type(a) is type(b)
+
+
 def load_scenario(scenario_id: str) -> None:
     """Button callback: put a demo scenario's request and datasets into the form."""
     scenario = SCENARIOS_BY_ID[scenario_id]
@@ -291,15 +296,23 @@ def render_artifact(step_id: str, capability: str, artifact: Artifact, flags: pd
         st.caption("Recorded assumptions: " + escape_md("; ".join(meta.notes)))
 
 
+def describe_params(params: dict[str, Any], edited: dict[str, Any]) -> str:
+    """Parameters as text, marking user-edited ones, e.g. "window=60 (edited, was 12)"."""
+    return ", ".join(
+        f"{name}={value}" + (f" (edited, was {edited[name]})" if name in edited else "")
+        for name, value in params.items()
+    )
+
+
 def render_trace(result: TraceResult) -> None:
-    """Show the lineage chain of a step and its source files."""
+    """Show the lineage chain of a step and its source files; user-edited params are marked."""
     chain = pd.DataFrame(
         [
             {
                 "step": s.step_id,
                 "capability": s.capability,
                 "inputs": ", ".join(f"{k} <- {v}" for k, v in s.inputs.items()) or "-",
-                "params": ", ".join(f"{k}={v}" for k, v in s.params.items()),
+                "params": describe_params(s.params, s.edited) or "-",
                 "library call": s.library_calls,
                 "rows": s.n_obs,
                 "range": f"{s.start} to {s.end}",
@@ -378,7 +391,9 @@ def _clamp(value: Any, low: float, high: float, fallback: float) -> float:
     return min(max(value, low), high)
 
 
-def param_widget(spec_param: ParamSpec, current: Any, key: str, dataset_ids: list[str]) -> Any:
+def param_widget(
+    spec_param: ParamSpec, current: Any, key: str, dataset_ids: list[str], disabled: bool = False
+) -> Any:
     """Render an input widget for one parameter, limited to what the registry allows.
 
     Choices become select boxes, numbers become number inputs with the registry's
@@ -386,34 +401,38 @@ def param_widget(spec_param: ParamSpec, current: Any, key: str, dataset_ids: lis
 
     Args:
         spec_param: the parameter's registry spec.
-        current: the value in the plan now.
+        current: the value in the plan now (the widget starts from it).
         key: unique widget key.
         dataset_ids: catalog dataset ids (for dataset_id).
+        disabled: show the value without allowing changes (e.g. after execution).
 
     Returns:
         The value chosen in the widget.
     """
     label, help_text = spec_param.name, spec_param.description
+    if spec_param.counted_in_periods:
+        # The same number means a different span at another frequency (see G14).
+        label = f"{spec_param.name} (in periods of the series frequency)"
     if spec_param.name == "dataset_id":
         options = dataset_ids
         index = options.index(current) if current in options else 0
-        return st.selectbox(label, options, index=index, key=key, help=help_text)
+        return st.selectbox(label, options, index=index, key=key, help=help_text, disabled=disabled)
     if spec_param.choices is not None:
         options = list(spec_param.choices)
         index = options.index(current) if current in options else 0
-        return st.selectbox(label, options, index=index, key=key, help=help_text)
+        return st.selectbox(label, options, index=index, key=key, help=help_text, disabled=disabled)
     if spec_param.type == "bool":
         start = current if isinstance(current, bool) else bool(spec_param.default)
-        return st.checkbox(label, value=start, key=key, help=help_text)
+        return st.checkbox(label, value=start, key=key, help=help_text, disabled=disabled)
     low, high = spec_param.min, spec_param.max
     if spec_param.type == "int":
         start = int(_clamp(current, low, high, low))
         return st.number_input(
             label, min_value=int(low), max_value=int(high), value=start, step=1, key=key,
-            help=help_text,
+            help=help_text, disabled=disabled,
         )  # fmt: skip
     start = float(_clamp(current, low, high, low))
     return st.number_input(
         label, min_value=float(low), max_value=float(high), value=start, step=0.01,
-        format="%.2f", key=key, help=help_text,
+        format="%.2f", key=key, help=help_text, disabled=disabled,
     )  # fmt: skip
