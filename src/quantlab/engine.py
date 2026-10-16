@@ -25,6 +25,15 @@ from typing import Any
 from quantlab.config import Settings, load_settings
 from quantlab.data import Catalog, load_catalog
 from quantlab.executor import ExecutionResult, execute_plan
+from quantlab.guardrails import (
+    Issue,
+    Severity,
+    ValidationReport,
+    check_edits,
+    check_request_length,
+    fill_defaults,
+    validate_plan,
+)
 from quantlab.lineage import (
     Approval,
     LLMInfo,
@@ -43,15 +52,6 @@ from quantlab.narrator import NarrativeResult, narrate
 from quantlab.plan import Plan, plan_hash
 from quantlab.planner import PlanResult, generate_plan
 from quantlab.registry import registry_version
-from quantlab.validation import (
-    Issue,
-    Severity,
-    ValidationReport,
-    check_edits,
-    check_request_length,
-    fill_defaults,
-    validate_plan,
-)
 
 
 class ExecutionRefusedError(Exception):

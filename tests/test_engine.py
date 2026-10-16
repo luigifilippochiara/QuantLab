@@ -5,8 +5,8 @@ import pytest
 from quantlab.config import Settings
 from quantlab.engine import ExecutionRefusedError, Session, run_request
 from quantlab.lineage import load_run, replay
+from quantlab.mock_scenarios import SCENARIOS_BY_ID
 from quantlab.monitoring import kpis, read_events
-from quantlab.scenarios import SCENARIOS_BY_ID
 
 from conftest import RETURN_METHOD_APPROVAL
 from fakes import FakeAnthropicClient

@@ -10,8 +10,7 @@ from typing import Any
 import pytest
 
 from quantlab.data import Catalog
-from quantlab.plan import Plan, plan_tool_schema
-from quantlab.validation import (
+from quantlab.guardrails import (
     GUARDRAILS,
     Severity,
     ValidationReport,
@@ -20,6 +19,7 @@ from quantlab.validation import (
     planner_failure_issue,
     validate_plan,
 )
+from quantlab.plan import Plan, plan_tool_schema
 
 from conftest import RETURN_METHOD_APPROVAL, SARIMA_PLAN, SPREAD_PLAN, canned_plan, raw_plan
 

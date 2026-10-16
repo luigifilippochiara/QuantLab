@@ -18,9 +18,9 @@ import pytest
 
 from quantlab.config import Settings
 from quantlab.data import Catalog, file_sha256, load_catalog, read_fred_csv
+from quantlab.guardrails import fill_defaults
+from quantlab.mock_scenarios import CANNED_REQUESTS_BY_ID, SCENARIOS_BY_ID
 from quantlab.plan import Plan
-from quantlab.scenarios import CANNED_REQUESTS_BY_ID, SCENARIOS_BY_ID
-from quantlab.validation import fill_defaults
 
 # 30 years of business days: long enough for every scenario and for weekly and
 # monthly variations of them (e.g. a 52-week window needs 3 x 52 weeks of returns).

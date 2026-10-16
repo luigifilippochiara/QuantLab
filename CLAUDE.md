@@ -11,7 +11,7 @@ paragraph: what, why, alternatives).
 The LLM proposes, the system disposes.
 
 1. The planner LLM writes a plan: inert JSON naming registered capabilities.
-2. `validation.py` checks it (G01-G14, G11 retired: BLOCK / APPROVAL / WARN).
+2. `guardrails.py` checks it (G01-G14, G11 retired: BLOCK / APPROVAL / WARN).
 3. A human reviews, edits parameter VALUES only (structure locked in the engine,
    re-validated by the same validator, approvals reset) and approves.
 4. `executor.py` runs it by dict lookup in `REGISTRY`, with runtime guardrails R01-R04.
@@ -34,8 +34,8 @@ Hard rules:
 `config` (settings) -> `types` (enums, Artifact, hashing) -> `data` (catalog,
 hash-verified snapshots) -> `capabilities` (the 11 quant functions, descriptive
 only; the ONLY code calling pandas/numpy for analysis) -> `registry` (specs,
-REGISTRY, LLM summary, version) -> `plan` (Pydantic Plan/Step) -> `validation`
-(static guardrails, dry run, GUARDRAILS table) -> `scenarios` (example workflows) ->
+REGISTRY, LLM summary, version) -> `plan` (Pydantic Plan/Step) -> `guardrails`
+(static guardrails, dry run, GUARDRAILS table) -> `mock_scenarios` (example workflows) ->
 `executor` (dispatch, runtime guardrails, step records) -> `planner` /
 `narrator` (the only LLM code; OpenAI and Anthropic) -> `lineage` (manifest, replay, trace) ->
 `monitoring` (events.jsonl) -> `engine` (Session orchestrator used by app, CLI

@@ -1,8 +1,8 @@
 """Documentation stays in sync with the code it describes."""
 
 from quantlab.config import PROJECT_ROOT
+from quantlab.guardrails import GUARDRAILS
 from quantlab.registry import REGISTRY
-from quantlab.validation import GUARDRAILS
 
 README = (PROJECT_ROOT / "README.md").read_text(encoding="utf-8")
 

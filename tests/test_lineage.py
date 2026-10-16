@@ -7,6 +7,7 @@ from quantlab.config import Settings
 from quantlab.data import Catalog
 from quantlab.engine import run_request
 from quantlab.executor import execute_plan
+from quantlab.guardrails import validate_plan
 from quantlab.lineage import (
     Approval,
     RunRecord,
@@ -19,10 +20,9 @@ from quantlab.lineage import (
     save_run,
     trace,
 )
+from quantlab.mock_scenarios import CANNED_REQUESTS_BY_ID
 from quantlab.monitoring import read_events
 from quantlab.registry import registry_version
-from quantlab.scenarios import CANNED_REQUESTS_BY_ID
-from quantlab.validation import validate_plan
 
 from conftest import RETURN_METHOD_APPROVAL, SPREAD_PLAN, as_plan, raw_plan
 

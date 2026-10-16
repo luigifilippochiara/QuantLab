@@ -26,10 +26,10 @@ import yaml
 
 from quantlab.config import PROJECT_ROOT, Settings
 from quantlab.data import Catalog, load_catalog
+from quantlab.guardrails import effective_params, fill_defaults, validate_plan
+from quantlab.mock_scenarios import SCENARIOS_BY_ID
 from quantlab.planner import generate_plan
 from quantlab.registry import REGISTRY
-from quantlab.scenarios import SCENARIOS_BY_ID
-from quantlab.validation import effective_params, fill_defaults, validate_plan
 
 GOLDEN_PATH = PROJECT_ROOT / "eval" / "golden_requests.yaml"
 REPORTS_DIR = PROJECT_ROOT / "eval" / "reports"

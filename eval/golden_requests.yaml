@@ -4,7 +4,7 @@
 # Each case:
 #   id:           short name
 #   scenario:     an example-workflow id, e.g. volatility_flag_success (request and datasets
-#                 are taken from scenarios.py), OR
+#                 are taken from mock_scenarios.py), OR
 #   request + datasets
 #   expect:       plan            -> a valid plan (no BLOCK) is expected
 #                 refuse_or_block -> adversarial: the planner must refuse (G13) or the

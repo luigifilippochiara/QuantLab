@@ -10,6 +10,7 @@ import pytest
 
 from quantlab.config import Settings
 from quantlab.data import Catalog, load_dataset
+from quantlab.mock_scenarios import CANNED_REQUESTS, SCENARIOS, SCENARIOS_BY_ID
 from quantlab.plan import plan_tool_schema
 from quantlab.planner import (
     MockPlanner,
@@ -20,7 +21,6 @@ from quantlab.planner import (
     generate_plan,
     plan_from_output,
 )
-from quantlab.scenarios import CANNED_REQUESTS, SCENARIOS, SCENARIOS_BY_ID
 
 from fakes import (
     FakeAnthropicClient,

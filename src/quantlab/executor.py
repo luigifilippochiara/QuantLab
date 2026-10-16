@@ -30,10 +30,10 @@ from pydantic import BaseModel, Field
 
 from quantlab.capabilities import inner_join
 from quantlab.data import Catalog, verify_dataset_hash
+from quantlab.guardrails import Issue, Severity, effective_params, make_issue, validate_plan
 from quantlab.plan import Plan, Step
 from quantlab.registry import REGISTRY, CapabilitySpec
 from quantlab.types import Artifact, artifact_hash
-from quantlab.validation import Issue, Severity, effective_params, make_issue, validate_plan
 
 # Runtime guardrail thresholds.
 MISSING_DATA_THRESHOLD = 0.05  # R03: warn if more than 5% of a raw series is missing

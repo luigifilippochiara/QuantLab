@@ -6,7 +6,7 @@ from pathlib import Path
 from quantlab.config import Settings
 from quantlab.data import Catalog
 from quantlab.evaluation import load_golden, run_evaluation, score_case, write_report
-from quantlab.scenarios import SCENARIOS_BY_ID
+from quantlab.mock_scenarios import SCENARIOS_BY_ID
 
 from fakes import FakeAnthropicClient, tool_response
 

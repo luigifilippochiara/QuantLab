@@ -11,7 +11,7 @@ import pytest
 from quantlab.config import Settings
 from quantlab.engine import ExecutionRefusedError, Session
 from quantlab.lineage import Approval, load_run, replay
-from quantlab.scenarios import CANNED_REQUESTS_BY_ID, SCENARIOS_BY_ID
+from quantlab.mock_scenarios import CANNED_REQUESTS_BY_ID, SCENARIOS_BY_ID
 
 from conftest import RETURN_METHOD_APPROVAL
 

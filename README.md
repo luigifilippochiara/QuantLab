@@ -135,7 +135,7 @@ In mock mode the sidebar offers five ready-made requests; in live and cached
 mode the sidebar hides them and you type the request. Together they cover one
 realistic task, a market-risk analyst identifying periods of unusual market
 behaviour, and the protections QuantLab applies along the way. They run with
-canned plans in mock mode (`scenarios.py`) or with the live planner, from the
+canned plans in mock mode (`mock_scenarios.py`) or with the live planner, from the
 app or with `cli demo`.
 
 1. **High-volatility weeks** (`volatility_flag_success`): "Using the NASDAQ,
@@ -227,7 +227,7 @@ flowchart LR
     U[User request] --> P["Planner LLM<br/>planner.py"]
     R[("Capability registry<br/>registry.py")] -. generated summary .-> P
     C[("Dataset catalog<br/>metadata only")] -. id, kind, frequency, dates .-> P
-    P -->|"plan: inert JSON"| V["Validator G01-G14<br/>validation.py"]
+    P -->|"plan: inert JSON"| V["Validator G01-G14<br/>guardrails.py"]
     V -->|"BLOCK / APPROVAL / WARN"| H["Human review<br/>edit params, approve"]
     H -->|"edits: same validator"| V
     H -->|approved plan| E["Executor R01-R04<br/>executor.py"]
@@ -249,8 +249,8 @@ flowchart LR
 | `capabilities.py` | The 11 quantitative functions: the only code that calls pandas/numpy for analysis |
 | `registry.py` | Capability specs, the `REGISTRY` whitelist, generated LLM summary and registry version |
 | `plan.py` | Pydantic `Plan` / `Step` (extra fields forbidden), plan version hash, the LLM tool schema |
-| `validation.py` | Static guardrails G01-G14, edit lock, metadata dry run, `ValidationReport`, the guardrail table |
-| `scenarios.py` | Example workflows 1-5 and further canned requests, with plans (mock mode, CLI, app, tests) |
+| `guardrails.py` | Static guardrails G01-G14, edit lock, metadata dry run, `ValidationReport`, the guardrail table |
+| `mock_scenarios.py` | Example workflows 1-5 and further canned requests, with plans (mock mode, CLI, app, tests) |
 | `executor.py` | Registry dispatch, approval gate, runtime guardrails R01-R04, step records |
 | `planner.py` | OpenAI and Anthropic planners, mock planner, plan cache |
 | `narrator.py` | Facts sheet, LLM narrator, template fallback, numeric grounding check |
@@ -343,7 +343,7 @@ audit). Fewer libraries means fewer versions to pin, record and explain.
 Each guardrail is a small named function whose docstring explains what goes
 wrong without it. Static guardrails run on the plan alone (the planner's plan and
 every user edit, through the same validator); runtime guardrails need data and
-run in the executor. The table is generated from `validation.GUARDRAILS`. G11
+run in the executor. The table is generated from `guardrails.GUARDRAILS`. G11
 (overlapping observations in a t-test) was retired together with the statistical
 tests; codes are never reused, so the issue ids in older run records keep their
 meaning and those runs can still be replayed.

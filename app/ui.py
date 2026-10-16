@@ -20,12 +20,12 @@ import streamlit as st
 
 from quantlab.config import Settings, load_settings
 from quantlab.data import Catalog, load_catalog
+from quantlab.guardrails import Issue, Severity, parse_date
 from quantlab.lineage import ReplayReport, TraceResult
+from quantlab.mock_scenarios import SCENARIOS_BY_ID
 from quantlab.narrator import format_number
 from quantlab.registry import ParamSpec
-from quantlab.scenarios import SCENARIOS_BY_ID
 from quantlab.types import Artifact, DataType
-from quantlab.validation import Issue, Severity, parse_date
 
 SERIES_COLOR = "#3987e5"  # blue: the series itself
 REGIME_COLOR = "#d95926"  # orange: flagged regimes, and the second measure in grouped bars

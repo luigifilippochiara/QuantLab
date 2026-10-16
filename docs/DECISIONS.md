@@ -133,7 +133,7 @@ and checks the prediction equals what the capability functions actually produced
 recorded against these ids. Any parameter edit re-validates the plan and clears
 earlier approvals, so an approval always refers to the plan as it will run.
 
-**A `scenarios.py` module (not in the spec's layout)** holds the example
+**A `mock_scenarios.py` module (not in the spec's layout)** holds the example
 workflows and their canned plans as plain data. The MockPlanner, `cli demo`, the
 app sidebar, the tests and the golden set all need them, so they live in one
 place instead of inside planner.py. See "Example workflows" below for the current set.
@@ -259,7 +259,7 @@ package without dynamic imports (which the safety rules forbid). `eval/run_eval.
 is a three-line wrapper around the same code.
 
 **The golden set references example workflows by id** (`scenario: volatility_flag_success`)
-instead of repeating their request text, so it cannot drift from `scenarios.py`.
+instead of repeating their request text, so it cannot drift from `mock_scenarios.py`.
 In mock mode only the five canned examples can match, so the mock report is a harness
 check (the report says so); `--mode live` measures the real planner. A
 parameter counts as correct only if EVERY step using that capability has the
@@ -440,7 +440,7 @@ the audit trail. They replace the earlier examples everywhere (sidebar,
 `cli demo`, golden set); the ids are kept as stable identifiers for the tests,
 the golden set and the CLI. Tests that need a clean rates plan or a misbehaving
 planner keep their own plans in `tests/conftest.py` (`SPREAD_PLAN`,
-`SARIMA_PLAN`) rather than in `scenarios.py`, so the app shows only the
+`SARIMA_PLAN`) rather than in `mock_scenarios.py`, so the app shows only the
 example set. Examples are matched by exact text, id, number ("1".."5") or keywords.
 
 **`compare_groups` is back, as a descriptive capability.** Example 5's plan ends
@@ -636,7 +636,7 @@ must still lie within the data range. The narrator prompt (narrator-v3) asks for
 dates exactly as displayed.
 
 **Further canned requests, kept apart from the example workflows.** Four requests
-using the new capabilities have canned plans (`scenarios.CANNED_REQUESTS`), matched
+using the new capabilities have canned plans (`mock_scenarios.CANNED_REQUESTS`), matched
 by exact text or id only, before the examples' keywords: "Show weekly volatility
 for NASDAQ since 2020..." contains example 1's keywords but gets its own plan. They
 are golden cases too, so the mock evaluation scores them, but they are not sidebar
@@ -646,3 +646,14 @@ planner-v3 (the plan cache invalidates), the canned set to canned-scenarios-v5.
 **Synthetic test data now runs from 1996 to 2025.** The same 7,800 business days,
 values and Monday start, shifted six years, so tests can filter periods such as
 "since 2020"; weekly bars are unchanged and no existing test depended on the dates.
+
+## Module names
+
+**`validation.py` became `guardrails.py`, and `scenarios.py` became `mock_scenarios.py`.**
+The file names now say what the modules contain: the static guardrails G01-G14
+with the guardrail table, and the canned plans the mock planner answers with
+(the example workflows and the further canned requests). Only the files changed
+(moved with `git mv`, tests renamed to match): functions, classes and concepts
+keep their names (`validate_plan`, `ValidationReport`, the "validation" stage in
+monitoring, the guardrail codes). No compatibility shim was left under the old
+names, so a stale import fails loudly instead of silently working.

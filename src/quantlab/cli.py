@@ -18,8 +18,8 @@ from quantlab.config import LLM_MODES, Settings, load_settings
 from quantlab.engine import Session, run_request
 from quantlab.evaluation import run_evaluation, write_report
 from quantlab.lineage import TraceResult, load_run, replay, trace
+from quantlab.mock_scenarios import SCENARIOS
 from quantlab.plan import describe_plan
-from quantlab.scenarios import SCENARIOS
 
 
 def print_table(headers: Sequence[str], rows: Sequence[Sequence[object]]) -> None:

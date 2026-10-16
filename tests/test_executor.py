@@ -9,10 +9,10 @@ import pytest
 
 from quantlab.data import Catalog, file_sha256, load_catalog
 from quantlab.executor import CapabilityRefusedError, check_alignment_loss, dispatch, execute_plan
+from quantlab.guardrails import fill_defaults, validate_plan
 from quantlab.plan import Plan, Step
 from quantlab.registry import REGISTRY
 from quantlab.types import Artifact, ArtifactMeta, DataType, Frequency, SeriesKind
-from quantlab.validation import fill_defaults, validate_plan
 
 from conftest import (
     RETURN_METHOD_APPROVAL,

@@ -35,10 +35,10 @@ import openai
 
 from quantlab.config import Settings
 from quantlab.data import Catalog, describe_datasets
+from quantlab.guardrails import Issue, check_schema, planner_failure_issue
+from quantlab.mock_scenarios import match_canned_request, match_scenario
 from quantlab.plan import Plan, new_plan_id, plan_tool_schema
 from quantlab.registry import llm_summary, registry_version
-from quantlab.scenarios import match_canned_request, match_scenario
-from quantlab.validation import Issue, check_schema, planner_failure_issue
 
 # Bump whenever SYSTEM_PROMPT changes: it is part of the plan-cache key and of
 # every run record, so old cached plans are not reused with a new prompt.
@@ -167,9 +167,9 @@ def plan_from_output(raw: Any, request: str) -> tuple[Plan | None, list[Issue]]:
 class MockPlanner:
     """Returns the hand-written plan of the matching request; never calls an LLM.
 
-    A canned request matches by its exact text or id (scenarios.match_canned_request);
+    A canned request matches by its exact text or id (mock_scenarios.match_canned_request);
     otherwise a demo scenario matches by its exact text, its id or number, or its
-    keywords (scenarios.match_scenario).
+    keywords (mock_scenarios.match_scenario).
     """
 
     def generate_plan(self, request: str, dataset_ids: list[str]) -> PlanResult:

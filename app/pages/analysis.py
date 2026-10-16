@@ -11,10 +11,10 @@ import streamlit as st
 
 from quantlab.config import LLM_MODES
 from quantlab.engine import Session
+from quantlab.guardrails import Severity
 from quantlab.lineage import replay
+from quantlab.mock_scenarios import SCENARIOS
 from quantlab.registry import REGISTRY
-from quantlab.scenarios import SCENARIOS
-from quantlab.validation import Severity
 
 import ui
 

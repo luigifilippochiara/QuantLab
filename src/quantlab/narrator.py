@@ -28,6 +28,7 @@ from pydantic import BaseModel, Field
 
 from quantlab.capabilities import count_episodes
 from quantlab.config import Settings
+from quantlab.guardrails import Issue
 from quantlab.plan import Plan, describe_plan
 from quantlab.planner import (
     FALLBACK_BETA,
@@ -36,7 +37,6 @@ from quantlab.planner import (
     make_openai_client,
 )
 from quantlab.types import ANNUALISATION_FACTORS, Artifact, DataType
-from quantlab.validation import Issue
 
 NARRATOR_PROMPT_VERSION = "narrator-v3"
 

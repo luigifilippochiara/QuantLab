@@ -7,6 +7,7 @@ import pytest
 from quantlab.config import Settings
 from quantlab.data import Catalog
 from quantlab.executor import execute_plan
+from quantlab.guardrails import validate_plan
 from quantlab.narrator import (
     Fact,
     build_facts_sheet,
@@ -15,7 +16,6 @@ from quantlab.narrator import (
     narrate,
 )
 from quantlab.plan import Plan
-from quantlab.validation import validate_plan
 
 from conftest import SPREAD_PLAN, as_plan, canned_plan, raw_plan
 from fakes import FakeAnthropicClient, FakeOpenAIClient, openai_text_response, text_response

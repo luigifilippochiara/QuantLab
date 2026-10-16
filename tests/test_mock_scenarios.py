@@ -12,7 +12,13 @@ import pytest
 
 from quantlab.config import Settings
 from quantlab.engine import ExecutionRefusedError, Session, run_request
-from quantlab.scenarios import CANNED_REQUESTS, SCENARIOS, SCENARIOS_BY_ID, CannedRequest, Scenario
+from quantlab.mock_scenarios import (
+    CANNED_REQUESTS,
+    SCENARIOS,
+    SCENARIOS_BY_ID,
+    CannedRequest,
+    Scenario,
+)
 
 from conftest import RETURN_METHOD_APPROVAL, SARIMA_PLAN
 from fakes import FakeAnthropicClient, tool_response

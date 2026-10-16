@@ -27,10 +27,10 @@ from pydantic import BaseModel, Field
 from quantlab.config import PROJECT_ROOT, Settings
 from quantlab.data import Catalog, file_sha256, load_catalog
 from quantlab.executor import StepRecord, execute_plan
+from quantlab.guardrails import Issue, ValidationReport
 from quantlab.monitoring import log_event
 from quantlab.plan import Plan
 from quantlab.types import Artifact, DataType, canonical_text
-from quantlab.validation import Issue, ValidationReport
 
 # Library versions recorded in every manifest (fixed names, never user input).
 RECORDED_PACKAGES = (

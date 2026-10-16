@@ -1,14 +1,14 @@
 """Capability registry page: the approved menu, plus the guardrail table.
 
-Everything shown is generated from quantlab.registry and quantlab.validation,
+Everything shown is generated from quantlab.registry and quantlab.guardrails,
 so this page cannot drift from what the validator and executor enforce.
 """
 
 import pandas as pd
 import streamlit as st
 
+from quantlab.guardrails import GUARDRAILS
 from quantlab.registry import REGISTRY, ParamSpec, llm_summary, registry_version
-from quantlab.validation import GUARDRAILS
 
 import ui
 

@@ -11,7 +11,7 @@ import pytest
 from streamlit.testing.v1 import AppTest
 
 from quantlab.config import PROJECT_ROOT, Settings
-from quantlab.scenarios import CANNED_REQUESTS_BY_ID, SCENARIOS_BY_ID
+from quantlab.mock_scenarios import CANNED_REQUESTS_BY_ID, SCENARIOS_BY_ID
 
 PAGES = PROJECT_ROOT / "app" / "pages"
 SCENARIO_1_REQUEST = SCENARIOS_BY_ID["volatility_flag_success"].request
