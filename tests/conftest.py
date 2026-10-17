@@ -180,15 +180,15 @@ SPREAD_PLAN: dict[str, Any] = {
 
 # Test-only variant of scenario 3: what a MISBEHAVING planner might emit instead
 # of refusing. The validator must block it on its own (G02).
-SARIMA_PLAN: dict[str, Any] = {
+ARIMA_PLAN: dict[str, Any] = {
     "dataset_ids": ["NASDAQCOM"],
     "steps": [
         {"id": "s1", "capability": "load_series", "params": {"dataset_id": "NASDAQCOM"}},
         {
             "id": "s2",
-            "capability": "sarima",
+            "capability": "arima",
             "inputs": {"series": "s1"},
-            "params": {"order": [1, 1, 1], "seasonal_order": [1, 0, 1, 52], "steps_ahead": 1},
+            "params": {"order": [1, 0, 1], "steps_ahead": 1},
         },
     ],  # fmt: skip
     "cannot_fulfill": False,
@@ -216,8 +216,11 @@ PERIOD_PLAN: dict[str, Any] = {
     "cannot_fulfill": False,
 }
 
-# The approval scenario 1 needs: the return-method assumption of step s3.
+# The approvals scenario 1 needs: the return-method assumption of compute_returns
+# (s3, also scenario 2's) and of forward_return (s6).
 RETURN_METHOD_APPROVAL = "G12:s3:return_method"
+FORWARD_METHOD_APPROVAL = "G12:s6:return_method"
+SCENARIO_1_APPROVALS = [RETURN_METHOD_APPROVAL, FORWARD_METHOD_APPROVAL]
 
 
 def raw_plan(scenario_id: str) -> dict[str, Any]:

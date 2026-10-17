@@ -23,11 +23,11 @@ def test_demo_behaves_as_expected(cli_env: Settings, capsys: pytest.CaptureFixtu
     assert len(list_runs(cli_env.runs_dir)) == 5
     for scenario_id in ["volatility_flag_success", "frequency_mismatch_block"]:
         assert scenario_id in output
-    # Scenario 6: the trace of scenario 1's flag_regime step, down to the NASDAQ file.
+    # Scenario 6: the trace of scenario 1's significance test, down to the NASDAQ file.
     trace = output.split("Scenario 6 (traceability)")[1]
-    for line in ["s5 C07 flag_regime", "s4 C06 rolling_volatility", "s3 C03 compute_returns",
-                 "s2 C02 resample", "s1 C01 load_series",
-                 "NASDAQCOM (FRED NASDAQCOM) sha256"]:  # fmt: skip
+    for line in ["s8 C13 hac_mean_difference", "s6 C12 forward_return", "s5 C07 flag_regime",
+                 "s4 C06 rolling_volatility", "s3 C03 compute_returns", "s2 C02 resample",
+                 "s1 C01 load_series", "NASDAQCOM (FRED NASDAQCOM) sha256"]:  # fmt: skip
         assert line in trace
 
 
@@ -36,10 +36,10 @@ def test_run_replay_and_trace(cli_env: Settings, capsys: pytest.CaptureFixture) 
     run_id = list_runs(cli_env.runs_dir)[0]["run_id"]
     assert main(["replay", run_id]) == 0
     replayed = capsys.readouterr().out
-    assert "ALL HASHES MATCH" in replayed and "C07" in replayed
-    assert main(["trace", run_id, "s5"]) == 0
+    assert "ALL HASHES MATCH" in replayed and "C13" in replayed
+    assert main(["trace", run_id, "s8"]) == 0
     output = capsys.readouterr().out
-    assert "s5 C07 flag_regime" in output and "NASDAQCOM (FRED NASDAQCOM)" in output
+    assert "s8 C13 hac_mean_difference" in output and "NASDAQCOM (FRED NASDAQCOM)" in output
 
 
 def test_run_without_approval_exits_nonzero(cli_env: Settings, capsys) -> None:

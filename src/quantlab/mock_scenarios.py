@@ -3,9 +3,10 @@
 The five examples follow one realistic task, a market-risk analyst identifying
 periods of unusual market behaviour, and the protections QuantLab applies along
 the way:
-1. flag high-volatility weeks (the core analysis);
+1. flag high-volatility weeks and test whether the following week's returns
+   differ from normal weeks (the core analysis);
 2. look-ahead protection: a full-sample threshold needs explicit approval;
-3. a request outside the registry (a SARIMA forecast) is declined;
+3. a request outside the registry (an ARIMA forecast) is declined;
 4. instructions embedded in a request are treated as data and declined;
 5. combining series of different frequencies is blocked before anything runs.
 The audit trail of a result (the trace) is shown on example 1's output.
@@ -99,15 +100,19 @@ def _refusal(reason: str) -> dict[str, Any]:
     }
 
 
-def _weekly_volatility_flag_steps(flag_params: dict[str, Any]) -> list[dict[str, Any]]:
-    """The steps of scenarios 1 and 2, which differ only in the flag threshold."""
+def _weekly_volatility_flag_steps(
+    return_method: str, flag_params: dict[str, Any]
+) -> list[dict[str, Any]]:
+    """Steps s1-s5 of scenarios 1 and 2, which differ in the return method and the threshold."""
+    returns_rationale = {"simple": "Simple weekly returns of the index.",
+                         "log": "Weekly log returns of the index."}[return_method]  # fmt: skip
     return [
         _step("s1", "load_series", params={"dataset_id": "NASDAQCOM"},
               rationale="Load the NASDAQ Composite daily closes."),
         _step("s2", "resample", {"series": "s1"}, {"freq": "W", "how": "last"},
               rationale="Weekly Friday closes, as requested."),
-        _step("s3", "compute_returns", {"series": "s2"}, {"method": "simple", "periods": 1},
-              rationale="Simple weekly returns of the index."),
+        _step("s3", "compute_returns", {"series": "s2"}, {"method": return_method, "periods": 1},
+              rationale=returns_rationale),
         _step("s4", "rolling_volatility", {"series": "s3"}, {"window": 12, "annualize": True},
               rationale="12-week rolling annualised volatility."),
         _step("s5", "flag_regime", {"series": "s4"}, flag_params,
@@ -115,15 +120,27 @@ def _weekly_volatility_flag_steps(flag_params: dict[str, Any]) -> list[dict[str,
     ]  # fmt: skip
 
 
+# Scenario 1 continues after the flags: the following week's return, stamped on the
+# flag week, compared descriptively and then tested.
+NEXT_WEEK_COMPARISON_STEPS = [
+    _step("s6", "forward_return", {"series": "s2"}, {"horizon": 1, "method": "log"},
+          rationale="Log return from each Friday close to the next, stamped on the first week."),
+    _step("s7", "compare_groups", {"values": "s6", "flags": "s5"},
+          rationale="Describe next-week returns after flagged and after normal weeks."),
+    _step("s8", "hac_mean_difference", {"outcome": "s6", "flags": "s5"}, {"maxlags": None},
+          rationale="Test the difference with Newey-West standard errors (default lags)."),
+]  # fmt: skip
+
+
 SCENARIOS: list[Scenario] = [
     Scenario(
         id="volatility_flag_success",
         number=1,
-        label="1 · High-volatility weeks",
+        label="1 · High-volatility weeks and what follows",
         request=(
-            "Using the NASDAQ, compute weekly returns and 12-week rolling annualised "
-            "volatility, and flag the weeks where volatility was unusually high versus "
-            "its own history."
+            "Calculate weekly returns for NASDAQ, estimate 12-week rolling volatility, "
+            "identify unusually volatile weeks, and test whether returns in the following "
+            "week differ from normal weeks."
         ),
         dataset_ids=("NASDAQCOM",),
         expected_status="completed",
@@ -133,10 +150,15 @@ SCENARIOS: list[Scenario] = [
         plan=_plan(
             ["NASDAQCOM"],
             _weekly_volatility_flag_steps(
-                {"method": "expanding", "quantile": 0.90, "min_periods": 52}
-            ),
-            "'Unusually high' = above the 90th percentile of past volatility only "
-            "(expanding window, so no future data is used).",
+                "log", {"method": "expanding", "quantile": 0.90, "min_periods": 52}
+            )
+            + NEXT_WEEK_COMPARISON_STEPS,
+            "'Unusually volatile' = 12-week annualised volatility above the 90th percentile "
+            "of its own past only (expanding window, so no future data is used). 'Returns in "
+            "the following week' = the log return from each week's Friday close to the next "
+            "(forward_return, horizon 1), stamped on the week it follows: the flag uses data "
+            "up to that Friday, the outcome only data after it. compare_groups describes both "
+            "groups; hac_mean_difference tests the difference with Newey-West standard errors.",
         ),
     ),
     Scenario(
@@ -154,26 +176,27 @@ SCENARIOS: list[Scenario] = [
         keywords=(("nasdaq",), ("full-sample", "full sample")),
         plan=_plan(
             ["NASDAQCOM"],
-            _weekly_volatility_flag_steps({"method": "full_sample", "quantile": 0.95}),
+            _weekly_volatility_flag_steps("simple", {"method": "full_sample", "quantile": 0.95}),
             "Full-sample threshold used because the request asks for it explicitly.",
         ),
     ),
     Scenario(
-        id="sarima_forecast_block",
+        id="arima_forecast_block",
         number=3,
         label="3 · Out-of-scope forecast request",
-        request="Fit SARIMA to predict next week's NASDAQ return.",
+        request="Fit an ARIMA model to forecast next week's NASDAQ return.",
         dataset_ids=("NASDAQCOM",),
         expected_status="blocked",
         expected_codes=("G13",),
         auto_approve=False,
-        keywords=(("sarima", "arima", "predict", "forecast"),),
+        keywords=(("arima", "predict", "forecast"),),
         plan=_refusal(
             "There is no registered capability for model fitting or prediction (such as "
-            "a SARIMA forecast). The registry can instead: load a dataset, resample it to "
-            "weekly or monthly, compute returns or differences, take a spread, compute "
-            "rolling volatility, flag high-volatility periods, summarise a series, and "
-            "compare a series between flagged and normal periods."
+            "an ARIMA forecast). The registry can instead: load a dataset, resample it to "
+            "weekly or monthly, compute returns, forward returns or differences, take a "
+            "spread, compute rolling volatility, flag high-volatility periods, summarise a "
+            "series, compare a series between flagged and normal periods, and test whether "
+            "that difference is statistically significant."
         ),
     ),
     Scenario(
@@ -265,7 +288,7 @@ SCENARIOS_BY_ID: dict[str, Scenario] = {s.id: s for s in SCENARIOS}
 # full-sample variant (2) wins over the plain volatility flag (1).
 MATCH_ORDER = (
     "prompt_injection_block",
-    "sarima_forecast_block",
+    "arima_forecast_block",
     "frequency_mismatch_block",
     "volatility_flag_lookahead",
     "volatility_flag_success",

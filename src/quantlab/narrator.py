@@ -8,8 +8,9 @@ to use only those numbers, exactly as displayed, and to do no arithmetic.
 Then `check_grounding` verifies that claim deterministically: it extracts every
 number from the narrative and checks that each one is a correct rounding of a
 computed fact (or its x100 percentage form), a plan parameter, a number from the
-request or a warning, or an annualisation factor. Dates are facts too: every
-date in the narrative must be a date of the facts sheet.
+request or a warning, an annualisation factor, or (only when a significance test
+ran) the 5% significance level and 95% confidence level. Dates are facts too:
+every date in the narrative must be a date of the facts sheet.
 The UI shows "all numbers verified" or lists the ungrounded numbers. The
 deterministic results table is always shown as the source of truth.
 
@@ -38,7 +39,7 @@ from quantlab.planner import (
 )
 from quantlab.types import ANNUALISATION_FACTORS, Artifact, DataType
 
-NARRATOR_PROMPT_VERSION = "narrator-v3"
+NARRATOR_PROMPT_VERSION = "narrator-v4"
 
 SYSTEM_PROMPT = """\
 You write short, plain-English summaries of quantitative analysis results for a bank's \
@@ -52,8 +53,14 @@ write a decimal as a percentage (0.1275 as 12.75%).
 4. Dates are facts too: mention only dates from the FACTS SHEET, written exactly as displayed \
 (YYYY-MM-DD).
 5. Mention every warning and approved assumption that affects how the results should be read.
-6. Describe what was computed; do not claim causes, forecasts or statistical significance.
-7. Write 3 to 6 sentences as one paragraph. No headings, no bullet points.
+6. Describe what was computed; do not claim causes or forecasts. Never say that a flag causes \
+or predicts returns: a comparison or test shows an association in this sample, nothing more.
+7. Claim statistical significance only from a significance test (hac_mean_difference); \
+compare_groups is descriptive. For a test, state the difference in means and its p-value, and \
+always the number of distinct flagged episodes. If the p-value is 0.05 or more, write "no \
+statistically significant difference" (never "no difference"); below 0.05, write "a \
+statistically significant difference at the 5% level".
+8. Write 3 to 6 sentences as one paragraph. No headings, no bullet points.
 """
 
 # A number in text: digits with optional thousands separators and decimals.
@@ -71,6 +78,11 @@ MONTH = (
 )
 MONTHS = {"jan": 1, "feb": 2, "mar": 3, "apr": 4, "may": 5, "jun": 6,
           "jul": 7, "aug": 8, "sep": 9, "oct": 10, "nov": 11, "dec": 12}  # fmt: skip
+# The conventional significance level used to read p-values, and the matching
+# confidence level of the reported interval (hac_mean_difference's ci_low/ci_high).
+SIGNIFICANCE_LEVEL = 0.05
+CONFIDENCE_LEVEL = 0.95
+
 DAY_MONTH_YEAR = re.compile(rf"\b(\d{{1,2}})(?:st|nd|rd|th)?\s+{MONTH}\s*,?\s+(\d{{4}})\b", re.I)
 MONTH_DAY_YEAR = re.compile(rf"\b{MONTH}\s+(\d{{1,2}})(?:st|nd|rd|th)?\s*,?\s+(\d{{4}})\b", re.I)
 MONTH_YEAR = re.compile(rf"\b{MONTH}\s+(\d{{4}})\b", re.I)
@@ -262,10 +274,12 @@ def check_grounding(
     its last digit of an allowed value, i.e. it is a correct rounding of it.
     Allowed values: each fact's value and its x100 form (percentages), numbers
     in the facts' display strings, numeric plan parameters (and x100), numbers in
-    `extra_texts` (the request, warning messages, dataset titles) and the
-    annualisation factors. Dates are facts: a date (YYYY-MM-DD, or written in
-    words such as "19 November 2021") is grounded only if it is a date of the
-    facts sheet, and a month ("November 2021") only if a fact date falls in it.
+    `extra_texts` (the request, warning messages, dataset titles), the
+    annualisation factors and, when the facts include a p-value, the significance
+    and confidence levels (0.05 and 0.95, and 5 and 95). Dates are facts: a date
+    (YYYY-MM-DD, or written in words such as "19 November 2021") is grounded only
+    if it is a date of the facts sheet, and a month ("November 2021") only if a
+    fact date falls in it.
     A year on its own is grounded if it lies within the date range of the facts.
 
     Limitation: this proves each number is a correct rounding of SOME allowed
@@ -281,6 +295,11 @@ def check_grounding(
         A GroundingResult.
     """
     allowed: list[float] = [float(factor) for factor in ANNUALISATION_FACTORS.values()]
+    if any(fact.fact_id.endswith(".p_value") for fact in facts):
+        # "Not significant at the 5% level", "95% confidence interval": accepted only
+        # when a test ran, so they cannot slip into a descriptive narrative.
+        allowed += [SIGNIFICANCE_LEVEL, SIGNIFICANCE_LEVEL * 100]
+        allowed += [CONFIDENCE_LEVEL, CONFIDENCE_LEVEL * 100]
     dates: list[str] = []
     for fact in facts:
         if isinstance(fact.value, str):
@@ -391,9 +410,33 @@ def template_narrative(
         elif cap == "compare_groups":
             sentences.append(
                 f"Comparing flagged with normal periods ({sid}), the mean is "
-                f"{d['mean_flagged']} versus {d['mean_normal']} (difference {d['diff_means']}), "
-                f"over {d['n_flagged']} flagged and {d['n_normal']} normal observations; this "
-                "is descriptive, not a statistical test."
+                f"{d['mean_flagged']} versus {d['mean_normal']} (difference {d['diff_means']}; "
+                f"standard deviation {d['std_flagged']} versus {d['std_normal']}), over "
+                f"{d['n_flagged']} flagged observations in {d['n_episodes_flagged']} distinct "
+                f"episodes and {d['n_normal']} normal observations; this is descriptive, not a "
+                "statistical test."
+            )
+        elif cap == "hac_mean_difference":
+            # Read the p-value from the exact computed value, not its rounded display.
+            significant = artifacts[sid].value["p_value"] < SIGNIFICANCE_LEVEL
+            verdict = (
+                "a statistically significant difference at the 5% level"
+                if significant
+                else "no statistically significant difference at the 5% level"
+            )
+            outcome = f"{d['horizon']}-period forward returns" if "horizon" in d else "returns"
+            sentences.append(
+                f"The significance test ({sid}) finds {verdict} in {outcome} between flagged "
+                f"and normal periods: the difference in means is {d['diff_means']} (normal "
+                f"periods {d['mean_normal']}), with a Newey-West standard error of "
+                f"{d['se_hac']} ({d['maxlags_used']} lags), a p-value of {d['p_value']} and a "
+                f"95% confidence interval from {d['ci_low']} to {d['ci_high']}."
+            )
+            sentences.append(
+                f"The {d['n_flagged']} flagged observations form {d['n_episodes_flagged']} "
+                "distinct episodes, the real measure of independent evidence because flagged "
+                "periods cluster; the test describes an association in this sample, not a "
+                "cause or a forecast."
             )
         elif cap == "filter_period":
             sentences.append(
@@ -427,9 +470,15 @@ def template_narrative(
             + "."
         )
     if approved:
+        # The step id tells apart the same assumption approved on two steps (e.g. the
+        # return method of compute_returns and of forward_return).
         sentences.append(
             "Approved assumptions: "
-            + "; ".join(f"{i.name.replace('_', ' ').lower()} ({i.code})" for i in approved)
+            + "; ".join(
+                f"{i.name.replace('_', ' ').lower()} ({i.code}"
+                + (f", {i.step_id})" if i.step_id else ")")
+                for i in approved
+            )
             + "."
         )
     return " ".join(sentences)

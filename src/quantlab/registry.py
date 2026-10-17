@@ -485,13 +485,16 @@ COMPARE_GROUPS = CapabilitySpec(
     code="C09",
     name="compare_groups",
     description=(
-        "Average of a series in flagged versus normal periods (e.g. returns in "
-        "high-volatility weeks vs other weeks). Descriptive: no statistical test. "
-        "Values and flags must have the same frequency."
+        "Average and standard deviation of a series in flagged versus normal periods (e.g. "
+        "returns in high-volatility weeks vs other weeks), with the number of distinct "
+        "flagged episodes. Descriptive: no statistical test (use hac_mean_difference for "
+        "one). Values and flags must have the same frequency."
     ),
     func=capabilities.compare_groups,
     inputs=(
-        InputSpec("values", (DataType.SERIES,), "Series to average, e.g. returns."),
+        InputSpec(
+            "values", (DataType.SERIES,), "Series to average, e.g. returns or forward returns."
+        ),
         InputSpec("flags", (DataType.FLAGS,), "Regime flags with the same frequency."),
     ),
     params=(),
@@ -504,8 +507,15 @@ COMPARE_GROUPS = CapabilitySpec(
             "descriptive",
             "The difference in means describes the sample; it is not a test of significance.",
         ),
+        Assumption(
+            "episodes",
+            "Flagged periods are counted as distinct episodes (runs of consecutive flags) as "
+            "well as periods: flags cluster, so episodes measure the independent evidence.",
+        ),
     ),
-    library_calls="pandas.concat([values, flags], join='inner'); .mean() per group",
+    library_calls=(
+        "pandas.concat([values, flags], join='inner'); .mean() and .std(ddof=1) per group"
+    ),
 )
 
 FILTER_PERIOD = CapabilitySpec(
@@ -589,6 +599,132 @@ FIND_EXTREMES = CapabilitySpec(
 )
 
 
+FORWARD_RETURN = CapabilitySpec(
+    code="C12",
+    name="forward_return",
+    description=(
+        "Return over the NEXT h periods, stamped at the date it starts from: the return from "
+        "the close of t to the close of t+h, from a price or index level (resample first). "
+        "Future information: use it ONLY as the outcome (values of compare_groups, outcome "
+        "of hac_mean_difference), never as the input of anything else."
+    ),
+    func=capabilities.forward_return,
+    inputs=(
+        InputSpec(
+            "series",
+            (DataType.SERIES,),
+            "Price or index level series, at the frequency of the flags.",
+            (SeriesKind.PRICE_LEVEL, SeriesKind.INDEX_LEVEL),
+        ),
+    ),
+    params=(
+        ParamSpec(
+            "method",
+            "str",
+            "simple = P_{t+h}/P_t - 1; log = ln(P_{t+h}/P_t).",
+            choices=("simple", "log"),
+        ),
+        ParamSpec(
+            "horizon",
+            "int",
+            "h, the number of periods ahead, in periods of the input frequency "
+            "(1 = the following week on weekly data).",
+            required=False,
+            default=1,
+            min=1,
+            max=13,
+            counted_in_periods=True,
+        ),
+    ),
+    output_type=DataType.SERIES,
+    output_kind=SeriesKind.FORWARD_RETURNS,
+    min_obs=MinObsRule(
+        "at least 2 x horizon observations", min_obs=2, window_param="horizon", window_multiple=2
+    ),
+    assumptions=(
+        Assumption(
+            "return_method",
+            "The return method is a material modelling choice: simple returns compound "
+            "multiplicatively, log returns add up over time, and the two give different "
+            "averages.",
+            requires_approval=True,
+            param="method",
+        ),
+        Assumption(
+            "outcome_only",
+            "Forward returns are not known at t: they are only an outcome, compared across "
+            "periods defined by information known at t. The last h observations have no "
+            "future price yet and are dropped, not filled.",
+        ),
+    ),
+    library_calls="P.shift(-h) / P - 1 (pandas) | numpy.log(P.shift(-h) / P)",
+    meta_from_params={"return_method": "method", "horizon": "horizon"},
+    summary_params=("horizon", "method"),
+)
+
+HAC_MEAN_DIFFERENCE = CapabilitySpec(
+    code="C13",
+    name="hac_mean_difference",
+    description=(
+        "Significance test of the difference in mean outcome between flagged and normal "
+        "periods: OLS of the outcome on a constant and the flag, with Newey-West (HAC) "
+        "standard errors. The outcome must be returns or forward returns (forward_return, "
+        "to test what follows a flag). Reports the difference, its p-value and 95% "
+        "confidence interval, and the number of distinct flagged episodes. Outcome and "
+        "flags must have the same frequency."
+    ),
+    func=capabilities.hac_mean_difference,
+    inputs=(
+        InputSpec(
+            "outcome",
+            (DataType.SERIES,),
+            "Returns or forward returns to compare between the groups.",
+            (SeriesKind.RETURNS, SeriesKind.FORWARD_RETURNS),
+        ),
+        InputSpec(
+            "flags",
+            (DataType.FLAGS,),
+            "Regime flags with the same frequency, known at t (e.g. an expanding threshold).",
+        ),
+    ),
+    params=(
+        ParamSpec(
+            "maxlags",
+            "int",
+            "Newey-West lag truncation; null = floor(4*(T/100)^(2/9)) for T observations, "
+            "raised to at least h-1 for h-period forward returns.",
+            required=False,
+            default=None,
+            min=0,
+            max=52,
+            nullable=True,
+        ),
+    ),
+    output_type=DataType.TABLE,
+    output_kind=None,
+    min_obs=MinObsRule("at least 30 common observations", min_obs=30),
+    assumptions=(
+        Assumption("inner_join", "Only dates present in both inputs are kept."),
+        Assumption(
+            "hac",
+            "Newey-West standard errors (Bartlett kernel) allow for clustered volatility and "
+            "for the overlap of multi-period forward returns; p-values and the 95% interval "
+            "use the normal distribution (valid in large samples).",
+        ),
+        Assumption(
+            "validity",
+            "Valid for a stationary outcome and flags known before the outcome; it measures "
+            "an association, not a cause or a forecast.",
+        ),
+    ),
+    library_calls=(
+        "statsmodels OLS(outcome, [const, flag]).fit(cov_type='HAC', "
+        "cov_kwds={'maxlags': L, 'kernel': 'bartlett'})"
+    ),
+    summary_params=("maxlags",),
+)
+
+
 # The registry itself: capability name -> spec. Built from a list so each key is
 # guaranteed to equal the spec's own name. This dict IS the whitelist.
 #
@@ -610,6 +746,8 @@ REGISTRY: dict[str, CapabilitySpec] = {
         COMPARE_GROUPS,
         FILTER_PERIOD,
         FIND_EXTREMES,
+        FORWARD_RETURN,
+        HAC_MEAN_DIFFERENCE,
     ]
 }
 

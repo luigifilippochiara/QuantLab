@@ -26,6 +26,8 @@ ASSIGNED_CODES = {
     "C09": "compare_groups",
     "C10": "filter_period",
     "C11": "find_extremes",
+    "C12": "forward_return",
+    "C13": "hac_mean_difference",
 }
 RETIRED_CODES: dict[str, str] = {}
 
@@ -56,8 +58,8 @@ def test_codes_are_never_renumbered_or_reused() -> None:
 
 def test_capability_code_looks_names_up() -> None:
     assert capability_code("rolling_volatility") == "C06"
-    assert capability_code("forward_return") is None  # retired before codes existed
-    assert capability_code("sarima") is None  # never registered
+    assert capability_code("ols_hac") is None  # retired before codes existed
+    assert capability_code("arima") is None  # never registered
 
 
 def test_function_signatures_match_specs() -> None:

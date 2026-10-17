@@ -520,16 +520,16 @@ cached before the change are never reused.
 
 **Five ready-made requests and the audit trail.** The example workflows follow
 one realistic task, a market-risk analyst identifying periods of unusual market
-behaviour: the core analysis (1, high-volatility weeks, `volatility_flag_success`)
-and four built-in protections, against look-ahead (2,
-`volatility_flag_lookahead`), out-of-scope requests (3, `sarima_forecast_block`),
+behaviour: the core analysis (1, high-volatility weeks and what follows them,
+`volatility_flag_success`) and four built-in protections, against look-ahead (2,
+`volatility_flag_lookahead`), out-of-scope requests (3, `arima_forecast_block`),
 prompt injection (4, `prompt_injection_block`) and misaligned frequencies (5,
-`frequency_mismatch_block`). The trace of example 1's `flag_regime` step shows
-the audit trail. They replace the earlier examples everywhere (sidebar,
+`frequency_mismatch_block`). The trace of example 1's last step (the significance
+test) shows the audit trail. They replace the earlier examples everywhere (sidebar,
 `cli demo`, golden set); the ids are kept as stable identifiers for the tests,
 the golden set and the CLI. Tests that need a clean rates plan or a misbehaving
 planner keep their own plans in `tests/conftest.py` (`SPREAD_PLAN`,
-`SARIMA_PLAN`) rather than in `mock_scenarios.py`, so the app shows only the
+`ARIMA_PLAN`) rather than in `mock_scenarios.py`, so the app shows only the
 example set. Examples are matched by exact text, id, number ("1".."5") or keywords.
 
 **`compare_groups` is back, as a descriptive capability.** Example 5's plan ends
@@ -545,7 +545,7 @@ returns across VIX regimes.
 
 **Example 3 is a planner refusal; the G02 check is tested separately.** The canned
 plan refuses (G13) and lists what the registry can do, as a well-behaved LLM
-should. A test feeds a misbehaving planner's plan with a `sarima` step
+should. A test feeds a misbehaving planner's plan with an `arima` step
 through the engine (live mode, fake client) and asserts the validator blocks it
 with G02 and nothing runs.
 
@@ -649,13 +649,17 @@ analyst types the request (a request picked in mock mode stays in the box after
 switching). The "Audit trail" hint under the examples is gone; Trace a result
 itself is unchanged.
 
-**Example 3 asks for a SARIMA forecast** (`sarima_forecast_block`, replacing the
-earlier model-fitting request). A forecast request is typical for a market-risk
-analyst and still has no registered capability, so the outcome is unchanged: the
-planner refuses (G13), and the misbehaving-planner test emits a `sarima` step
-that G02 blocks. `MOCK_PROMPT_VERSION` moved to `canned-scenarios-v4`; the plan
-cache key includes the request text, so plans cached for the old request are
-never reused.
+**Example 3 asks for an ARIMA forecast** (`arima_forecast_block`: "Fit an ARIMA
+model to forecast next week's NASDAQ return.", replacing earlier model-fitting
+requests, the last of them a seasonal variant of the same model). A forecast
+request is typical for a market-risk analyst and still has no registered
+capability, so the outcome is unchanged: the planner refuses (G13), and the
+misbehaving-planner test emits an `arima` step that G02 blocks. The scenario id,
+the golden case (`s3_arima_forecast`) and the test plan (`ARIMA_PLAN`) were
+renamed with the request, and the refusal now also lists forward returns and the
+significance test among the things the registry can do. The plan cache key
+includes the request text, the prompt version and the registry version, so plans
+cached for the old request are never reused.
 
 ## Period filtering and extremes
 
@@ -781,3 +785,131 @@ period, and nothing is resolved out of sight. The canned "last 5 years" request 
 its golden case were removed; the remaining canned requests and tests use explicit
 dates. Alternative: decline relative periods and ask for explicit dates (G13),
 rejected as needlessly unhelpful when the dataset's last date is known.
+
+## The flagship analysis: what follows high-volatility weeks
+
+This section partly reverses "Descriptive capabilities only" above: QuantLab
+again has one significance test, built to answer the brief's core question.
+
+**Example 1 answers the brief end to end.** Its request is now "Calculate weekly
+returns for NASDAQ, estimate 12-week rolling volatility, identify unusually
+volatile weeks, and test whether returns in the following week differ from
+normal weeks." The canned plan: weekly Friday closes, log returns, 12-week
+annualised volatility, flags above the expanding 90th percentile (52 weeks of
+history first), next-week forward returns from the weekly closes, `compare_groups`
+and `hac_mean_difference` on the forward returns and the flags. Its only issues
+are the two G12 approvals of the return method (of `compute_returns` and of
+`forward_return`). Log returns, because they add up over time, so a multi-week
+forward return is the sum of the weekly ones. Example 2 keeps its five steps
+unchanged (simple returns, full-sample threshold, no test), so the look-ahead
+protection is still shown on its own; the first five steps of both come from
+one helper that takes the return method. The canned plans' version is now
+`canned-scenarios-v7`.
+
+**`forward_return` is back, redefined, and only ever an outcome (C12).** From a
+price or index level, the value at t is the return from the close of t to the
+close of t+h, stamped at t, as log or simple return with the same semantics and
+the same G12 approval as `compute_returns`. The last h observations have no
+future price yet and are dropped, never filled. h runs from 1 to 13 periods (a
+quarter on weekly data), is counted in periods of the input (so G14 warns after
+a frequency edit) and, with the method, is recorded in the artifact metadata
+(`meta.horizon`, `meta.return_method`) and in each step record of the manifest.
+Unlike the retired version, it starts from prices and at the close of t: a flag
+dated t uses data up to that close, so the outcome never reuses the data behind
+the flag. It never had a code, so it gets the next free one. Forward returns
+contain future information, so G15 FORWARD_DATA_AS_SIGNAL (BLOCK) allows them
+only as the outcome input of `compare_groups` (`values`) or `hac_mean_difference`
+(`outcome`), listed in one table, `guardrails.OUTCOME_INPUTS`; G05 is skipped for
+those inputs so the specific message replaces the generic one. Alternative: let
+each capability's allowed input kinds exclude forward returns, rejected because
+`flag_regime`, `summary_stats` or `filter_period` accept any kind, and the reason
+(future information) deserves its own message.
+
+**`hac_mean_difference` (C13): OLS on the flag with Newey-West standard errors.**
+It regresses the outcome on a constant and the 0/1 flag: the flag's coefficient
+is exactly mean(flagged) - mean(normal) and the constant is mean(normal), so the
+test answers the question `compare_groups` describes, and the regression adds a
+standard error. Newey-West (HAC) errors, because weeks are not independent:
+volatility clusters, and overlapping forward returns are autocorrelated by
+construction, so ordinary (or Welch) errors would overstate the confidence.
+statsmodels' `cov_type="HAC"` with the Bartlett kernel (weights that keep the
+variance positive), no small-sample correction (statsmodels' default) and normal
+rather than Student-t p-values and 95% interval (`use_t=False`): HAC inference
+is asymptotic, which the assumptions state with the other two, a stationary
+outcome (G16 NONSTATIONARY_OUTCOME blocks anything but returns or forward
+returns) and flags known before the outcome (G10's message says a full-sample
+threshold invalidates the test). The output is a table with every number of the
+test, so the narrator's facts sheet and grounding check cover them all; `horizon`
+is included only for forward returns. Alternatives: a Welch t-test on
+non-overlapping subsamples (the retired design), rejected because it discards
+data and still ignores volatility clustering; a block bootstrap, rejected as
+more code and a block-length choice to justify, for no clear gain here.
+
+**Lag rule: floor(4·(T/100)^(2/9)), raised to at least h-1.** Newey and West's
+rule of thumb grows slowly with the sample (8 lags for the 2,841 weekly
+observations of example 1). Overlapping h-period forward returns share h-1
+periods with their neighbours, so they are autocorrelated up to lag h-1 even if
+nothing is predictable; the default is therefore at least h-1. A `maxlags` set in
+the plan (0 to 52) is used as given, and G17 HAC_LAG_TOO_SHORT (WARN) says when it
+is below h-1 that the p-value is too optimistic: the analyst stays in control and
+sees the consequence. Alternative: an automatic bandwidth (Andrews), rejected as
+harder to explain and to check by hand.
+
+**Episodes, not weeks, measure the evidence.** `compare_groups` now also reports
+each group's standard deviation (ddof=1) and, like `hac_mean_difference`,
+`n_episodes_flagged`, the number of distinct runs of consecutive flags (6
+flagged weeks in a row are one episode). Volatility clusters, so weeks within an
+episode are not independent evidence. R05 LOW_EFFECTIVE_SAMPLE (WARN) is back for
+both: it counts flagged episodes on the joined sample, keeps the earlier
+threshold of 5, and its message states both counts ("142 flagged weeks, but only
+3 distinct episodes"). The name follows the existing `_flagged`/`_normal`
+suffixes in both tables. The new fields change `compare_groups`' output, so a
+run made before this change that completed a `compare_groups` step replays with a
+hash mismatch at that step only; no example workflow did (example 5 is blocked
+before it runs).
+
+**G11 and R05 return with their meanings; G15, G16 and G17 are new.** Codes are
+never given a different meaning, which is what makes old records safe; bringing
+a retired code back for the same concept keeps that promise. G11
+OVERLAPPING_OBSERVATIONS (WARN) is now raised on the `forward_return` step when
+h > 1, where the overlap is created, and its suggestion points to the test's
+default lags. The new codes follow the highest existing one, and the Guardrails
+page, the README table and the drift test pick them up from `GUARDRAILS`. G10's
+message mentions the significance test only when its flags feed a
+`hac_mean_difference` step (`validate_plan` maps each flag step to the tests that
+use it), because in example 2, which has no test, the sentence would be false;
+its issue id is unchanged, so approvals recorded earlier still apply.
+
+**statsmodels is back in the dependencies, pinned at 0.15.0 (the version used
+before).** This reverses "scipy and statsmodels removed": OLS with HAC errors is
+exactly what statsmodels provides, it is the implementation reviewers know, and
+a hand-written Newey-West estimator would be one more thing to verify. Only
+statsmodels is a direct dependency; scipy, patsy and formulaic come with it and
+are pinned by `uv.lock`, and QuantLab imports only
+`statsmodels.regression.linear_model.OLS`, in `capabilities.py`. Its version is
+recorded in every manifest. The tests check the capability against a direct
+statsmodels fit and the coefficients against hand-computed group means.
+
+**Narrator rules for the test, and significance levels grounded only with a
+test.** The narrator prompt (`narrator-v4`) now says: claim significance only from
+`hac_mean_difference`; state the difference and its p-value and always the number
+of distinct episodes; write "no statistically significant difference" when the
+p-value is 0.05 or more, never "no difference"; never say that the flag causes or
+predicts returns. The template follows the same rules and decides significance
+from the exact p-value, not its rounded display. The grounding check accepts the
+5% significance and 95% confidence levels (0.05, 5, 0.95, 95) only when the facts
+include a p-value, so "significant at the 5% level" still fails in a descriptive
+narrative. The template's list of approved assumptions now names each step,
+since example 1 approves the same assumption on two steps.
+
+**Planner prompt `planner-v5`.** A new rule: to compare or test what follows
+flagged periods, compute `forward_return` from the same resampled level as the
+flags and use it only as the outcome; build signals only from data known at each
+date; use `hac_mean_difference` when the user asks whether a difference is
+significant, leaving `maxlags` unset unless given; such a comparison is not a
+forecast. The refusal rule now excepts `hac_mean_difference` from "statistical
+tests". With the new registry version as well, no plan cached before is reused.
+
+**Step titles write HAC in capitals.** Titles are generated from the capability
+name; a small word table (`ui.TITLE_ACRONYMS`) makes `hac_mean_difference` read
+"HAC mean difference" instead of "Hac mean difference".

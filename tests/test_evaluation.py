@@ -34,10 +34,10 @@ def test_mock_evaluation_scores_and_report(settings: Settings, tmp_path: Path) -
         assert scores[case_id].params_hit == scores[case_id].params_total, case_id
     # ...but free-form requests fail in mock mode: by design.
     assert not scores["vix_summary"].valid
-    # A scenario-1-like variation gets scenario 1's canned plan: close in shape,
-    # wrong parameters.
+    # A scenario-1-like variation gets scenario 1's canned plan: every expected step
+    # and as many more (Jaccard 0.5), but not the requested window.
     variation = scores["nasdaq_weekly_log_vol"]
-    assert variation.jaccard == 0.8 and variation.params_hit < variation.params_total
+    assert variation.jaccard == 0.5 and variation.params_hit < variation.params_total
 
     path = write_report(report, tmp_path)
     text = path.read_text()

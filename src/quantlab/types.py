@@ -2,11 +2,12 @@
 
 Role in the architecture: every step of a plan produces one `Artifact`, a value
 plus explicit metadata. The metadata (data type, series kind, frequency, return
-method...) is what lets the validator reject nonsense *before* running
-(e.g. "returns of a yield", "a spread of daily and weekly series") and lets the
-capability functions do the right thing at run time (e.g. annualise volatility
-with the right number of periods per year). Metadata travels in the Artifact, never in
-pandas `.attrs`, so it is always visible and never silently dropped.
+method, horizon...) is what lets the validator reject nonsense *before* running
+(e.g. "returns of a yield", "a spread of daily and weekly series", "flags built
+on forward returns") and lets the capability functions do the right thing at run
+time (e.g. annualise volatility with the right number of periods per year).
+Metadata travels in the Artifact, never in pandas `.attrs`, so it is always
+visible and never silently dropped.
 """
 
 import hashlib
@@ -36,6 +37,8 @@ class SeriesKind(StrEnum):
     INDEX_LEVEL = "index_level"  # an index that is a level, not an investable price (e.g. VIX)
     RATE_LEVEL = "rate_level"  # an interest rate or yield in percent (use changes, not returns)
     RETURNS = "returns"  # period-on-period returns of a price
+    # The return from t to t+h, stamped at t: future information, so only ever an outcome
+    FORWARD_RETURNS = "forward_returns"
     CHANGES = "changes"  # period-on-period differences (the right transform for rates)
     VOLATILITY = "volatility"  # a rolling volatility estimate
     SPREAD = "spread"  # the difference between two series
@@ -68,6 +71,8 @@ class ArtifactMeta:
         end: last date as ISO string.
         return_method: "simple" or "log" for returns and anything derived from them.
         periods: the lag used by compute_returns / difference (1 = one-period changes).
+        horizon: forward_return's h, the number of periods ahead (also inherited by
+            the tables computed from forward returns).
         n_dropped_missing: load_series only, missing values dropped from the raw file.
         notes: human-readable assumptions recorded at run time (e.g. annualisation factor).
         period_start: filter_period only, first date of the resolved interval (inclusive).
@@ -82,6 +87,7 @@ class ArtifactMeta:
     end: str | None
     return_method: str | None = None
     periods: int | None = None
+    horizon: int | None = None
     n_dropped_missing: int | None = None
     notes: list[str] = field(default_factory=list)
     period_start: str | None = None

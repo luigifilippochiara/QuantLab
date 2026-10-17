@@ -332,7 +332,7 @@ if executed:
     chosen_step = st.selectbox(
         "Step to trace",
         executed,
-        index=len(executed) - 1,  # the final result by default (e.g. flag_regime)
+        index=len(executed) - 1,  # the final result by default (e.g. the test)
         format_func=lambda s: (
             f"{s} · {ui.capability_label(records[s].capability, records[s].capability_code)}"
         ),

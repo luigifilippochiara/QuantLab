@@ -37,6 +37,7 @@ from quantlab.types import Artifact, DataType, canonical_text
 RECORDED_PACKAGES = (
     "pandas",
     "numpy",
+    "statsmodels",
     "pydantic",
     "openai",
     "anthropic",

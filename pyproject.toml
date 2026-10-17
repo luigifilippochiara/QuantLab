@@ -6,8 +6,9 @@ readme = "README.md"
 requires-python = ">=3.12"
 # Direct dependencies are pinned to exact versions so a run record's
 # "environment" section can be reproduced; uv.lock pins everything else.
-# The library surface is deliberately small (no scipy, statsmodels, scikit-learn,
-# arch, LangChain).
+# The library surface is deliberately small: statsmodels only for the significance
+# test (it installs scipy, which QuantLab never imports); no scikit-learn, arch,
+# LangChain.
 dependencies = [
     "anthropic==1.14.0",
     "numpy==2.5.4",
@@ -17,6 +18,7 @@ dependencies = [
     "pydantic==2.14.1",
     "python-dotenv==1.2.4",
     "pyyaml==6.0.3",
+    "statsmodels==0.15.0",
     "streamlit==1.66.0",
 ]
 

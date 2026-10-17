@@ -17,6 +17,7 @@ While running it applies the runtime guardrails that need data:
                                         filter_period (the selected period)
     R03 MISSING_DATA          (WARN)    after load_series
     R04 ALIGNMENT_LOSS        (WARN)    before two-input steps
+    R05 LOW_EFFECTIVE_SAMPLE  (WARN)    before compare_groups / hac_mean_difference
 A BLOCK stops the run cleanly; the step records and issues so far are kept.
 Each step produces a StepRecord: what ran, with which parameters, on which
 inputs (by hash), what came out (by hash), how long it took.
@@ -28,9 +29,17 @@ from typing import Any
 
 from pydantic import BaseModel, Field
 
-from quantlab.capabilities import inner_join
+from quantlab.capabilities import count_episodes, inner_join
 from quantlab.data import Catalog, verify_dataset_hash
-from quantlab.guardrails import Issue, Severity, effective_params, make_issue, validate_plan
+from quantlab.guardrails import (
+    OUTCOME_INPUTS,
+    PERIOD_NAMES,
+    Issue,
+    Severity,
+    effective_params,
+    make_issue,
+    validate_plan,
+)
 from quantlab.plan import Plan, Step
 from quantlab.registry import REGISTRY, CapabilitySpec
 from quantlab.types import Artifact, artifact_hash
@@ -38,6 +47,7 @@ from quantlab.types import Artifact, artifact_hash
 # Runtime guardrail thresholds.
 MISSING_DATA_THRESHOLD = 0.05  # R03: warn if more than 5% of a raw series is missing
 ALIGNMENT_LOSS_THRESHOLD = 0.10  # R04: warn if a join drops more than 10% of an input
+MIN_FLAGGED_EPISODES = 5  # R05: warn if the flagged group has fewer distinct episodes
 
 
 class CapabilityRefusedError(Exception):
@@ -280,6 +290,41 @@ def check_alignment_loss(
     return issues
 
 
+def check_low_effective_sample(
+    step: Step, spec: CapabilitySpec, inputs: dict[str, Artifact]
+) -> list[Issue]:
+    """R05 LOW_EFFECTIVE_SAMPLE: warn when the flagged group has fewer than 5 distinct episodes.
+
+    Episodes, not flagged periods, are counted: an episode is a run of consecutive
+    flags. Without it, 60 flagged weeks that are really 3 long episodes would look
+    like a large sample; volatility clusters, so weeks within one episode are not
+    independent, and the comparison (or test) rests on far less evidence than its
+    n suggests.
+    """
+    outcome_input = OUTCOME_INPUTS.get(spec.name)
+    if outcome_input is None:
+        return []
+    flags = inputs["flags"]
+    joined = inner_join(inputs[outcome_input].value, flags.value, ("outcome", "flag"))
+    is_flagged = joined["flag"].astype(bool)
+    episodes = count_episodes(is_flagged)
+    if episodes >= MIN_FLAGGED_EPISODES:
+        return []
+    period = PERIOD_NAMES.get(flags.meta.frequency, "period")
+    n_flagged = int(is_flagged.sum())
+    return [
+        make_issue(
+            "R05",
+            step.id,
+            f"{n_flagged} flagged {period}s, but only {episodes} distinct episode(s): flagged "
+            f"{period}s within one episode are not independent, so the comparison rests on "
+            f"{episodes} episode(s), fewer than the {MIN_FLAGGED_EPISODES} needed to read it "
+            "as more than anecdotal.",
+            "Treat the result as anecdotal; use a longer history or a lower flag quantile.",
+        )
+    ]
+
+
 # ---------------------------------------------------------------------------
 # Plan execution
 # ---------------------------------------------------------------------------
@@ -357,6 +402,7 @@ def execute_plan(
             record.issues += check_dataset_hash(step, catalog)
         record.issues += check_insufficient_data(step, spec, params, inputs)
         record.issues += check_alignment_loss(step, spec, inputs)
+        record.issues += check_low_effective_sample(step, spec, inputs)
         blocking = [i for i in record.issues if i.severity == Severity.BLOCK]
         if blocking:
             record.status = "blocked"
@@ -404,6 +450,7 @@ def execute_plan(
             "frequency": output.meta.frequency,
             "return_method": output.meta.return_method,
             "periods": output.meta.periods,
+            "horizon": output.meta.horizon,  # forward_return's h (and tables built on it)
             "source_dataset_ids": output.meta.source_dataset_ids,
             "notes": output.meta.notes,
             # filter_period's resolved interval, kept in the run manifest.

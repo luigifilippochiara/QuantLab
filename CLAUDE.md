@@ -32,8 +32,9 @@ Hard rules:
 ## Architecture (src/quantlab/)
 
 `config` (settings) -> `types` (enums, Artifact, hashing) -> `data` (catalog,
-hash-verified snapshots) -> `capabilities` (the quant functions, descriptive
-only; the ONLY code calling pandas/numpy for analysis) -> `registry` (specs,
+hash-verified snapshots) -> `capabilities` (the quant functions: descriptive
+building blocks and one significance test; the ONLY code calling
+pandas/numpy/statsmodels for analysis) -> `registry` (specs,
 REGISTRY, LLM summary, version) -> `plan` (Pydantic Plan/Step) -> `guardrails`
 (static guardrails, dry run, GUARDRAILS table) -> `mock_scenarios` (example workflows) ->
 `executor` (dispatch, runtime guardrails, step records) -> `planner` /
@@ -44,8 +45,9 @@ and notebooks) -> `evaluation`, `cli`. The Streamlit app is in `app/`
 
 ## Adding a capability
 
-Keep the menu small and simple: the capabilities are descriptive on purpose
-(no statistical tests or forecasts yet; see `docs/DECISIONS.md`).
+Keep the menu small and simple: descriptive building blocks plus one
+significance test (`hac_mean_difference`), and no forecasts or models (see
+`docs/DECISIONS.md`).
 
 1. Write the function in `capabilities.py`: Artifacts in, a new Artifact out,
    metadata set explicitly, comments explaining every quantitative choice.
@@ -64,8 +66,9 @@ Keep the menu small and simple: the capabilities are descriptive on purpose
 
 - Python 3.12+, managed with uv. Direct dependencies pinned exactly in
   `pyproject.toml`; do not add libraries without a recorded decision
-  (deliberately excluded: scipy, statsmodels, scikit-learn, arch, LangChain and
-  other frameworks).
+  (deliberately excluded: scikit-learn, arch, LangChain and other frameworks;
+  statsmodels is used only for the significance test, and scipy, which it
+  installs, is never imported directly).
 - Clear, explicit code: plain functions, Pydantic models (for untrusted input
   and records) and dataclasses (for specs). No metaprogramming, no
   registration decorators, no deep class hierarchies.

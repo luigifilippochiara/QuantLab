@@ -20,7 +20,7 @@ from quantlab.mock_scenarios import (
     Scenario,
 )
 
-from conftest import RETURN_METHOD_APPROVAL, SARIMA_PLAN
+from conftest import ARIMA_PLAN, RETURN_METHOD_APPROVAL, SCENARIO_1_APPROVALS
 from fakes import FakeAnthropicClient, tool_response
 
 
@@ -61,14 +61,45 @@ def test_canned_request_end_to_end(canned: CannedRequest, settings: Settings) ->
     assert session.narrative.grounding.grounded, session.narrative.grounding.ungrounded
 
 
-def test_scenario_1_needs_one_approval_then_flags_weeks(settings: Settings) -> None:
+def test_scenario_1_needs_the_return_method_approvals_then_tests(settings: Settings) -> None:
     session = start("volatility_flag_success", settings)
-    assert not session.report.is_blocked
-    assert [i.issue_id for i in session.report.approvals_required] == [RETURN_METHOD_APPROVAL]
-    session.approve([RETURN_METHOD_APPROVAL])
+    assert not session.report.is_blocked and session.report.warnings == []
+    assert [i.issue_id for i in session.report.approvals_required] == SCENARIO_1_APPROVALS
+    session.approve(SCENARIO_1_APPROVALS)
     session.execute()
     flags = session.execution.artifacts["s5"]
     assert flags.meta.frequency == "W" and flags.value.any()  # flagged weeks to shade
+    test = session.execution.artifacts["s8"].value
+    assert 0 < test["p_value"] < 1 and test["horizon"] == 1
+    assert test["maxlags_used"] >= 1  # the Newey-West rule for this sample size
+    narrative = session.narrate()
+    assert "statistically significant difference" in narrative.text
+    assert f"form {test['n_episodes_flagged']} distinct episodes" in narrative.text
+    assert narrative.grounding.grounded
+
+
+def test_scenario_1_demo_edit_four_week_horizon_warns_g11(settings: Settings) -> None:
+    session = start("volatility_flag_success", settings)
+    report = session.apply_param_edits({"s6": {"horizon": 4}})
+    assert [i.issue_id for i in report.warnings] == ["G11:s6"] and not report.is_blocked
+    session.approve(SCENARIO_1_APPROVALS)
+    assert session.execute().status == "completed"
+    test = session.execution.artifacts["s8"].value
+    assert test["horizon"] == 4 and test["maxlags_used"] >= 3  # covers the 3-week overlap
+    narrative = session.narrate()
+    assert "(G11)" in narrative.text and narrative.grounding.grounded
+
+
+def test_scenario_1_demo_edit_full_sample_raises_g10_for_the_test(settings: Settings) -> None:
+    session = start("volatility_flag_success", settings)
+    report = session.apply_param_edits({"s5": {"method": "full_sample"}})
+    g10 = next(i for i in report.approvals_required if i.code == "G10")
+    assert "invalidates the significance test in s8" in g10.message
+    session.approve(SCENARIO_1_APPROVALS)
+    with pytest.raises(ExecutionRefusedError, match="G10:s5"):
+        session.execute()
+    session.approve(["G10:s5"])
+    assert session.execute().status == "completed"
 
 
 def test_scenario_2_needs_both_approvals(settings: Settings) -> None:
@@ -84,17 +115,18 @@ def test_scenario_2_needs_both_approvals(settings: Settings) -> None:
 
 
 def test_scenario_3_refusal_explains_what_is_possible(settings: Settings) -> None:
-    session = start("sarima_forecast_block", settings)
+    session = start("arima_forecast_block", settings)
     reason = session.plan.refusal_reason
     assert "no registered capability for model fitting or prediction" in reason
+    assert "an ARIMA forecast" in reason
     assert "rolling volatility" in reason  # what the registry can do instead
     assert session.status == "blocked" and session.execution is None
 
 
 def test_scenario_3_wall_holds_even_if_the_planner_misbehaves(settings: Settings) -> None:
-    """A planner that emits a 'sarima' step instead of refusing is still blocked."""
-    request = SCENARIOS_BY_ID["sarima_forecast_block"].request
-    client = FakeAnthropicClient(tool_response(SARIMA_PLAN))
+    """A planner that emits an 'arima' step instead of refusing is still blocked."""
+    request = SCENARIOS_BY_ID["arima_forecast_block"].request
+    client = FakeAnthropicClient(tool_response(ARIMA_PLAN))
     session = run_request(request, ["NASDAQCOM"], "live", settings=settings, client=client)
     assert session.report.codes() == ["G02"]
     assert session.status == "blocked" and session.execution is None

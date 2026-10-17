@@ -25,9 +25,9 @@ from quantlab.mock_scenarios import CANNED_REQUESTS_BY_ID
 from quantlab.monitoring import read_events
 from quantlab.registry import REGISTRY, registry_version
 
-from conftest import RETURN_METHOD_APPROVAL, SPREAD_PLAN, as_plan, raw_plan
+from conftest import SCENARIO_1_APPROVALS, SPREAD_PLAN, as_plan, raw_plan
 
-APPROVALS = {RETURN_METHOD_APPROVAL}
+APPROVALS = set(SCENARIO_1_APPROVALS)
 SCENARIO_1 = raw_plan("volatility_flag_success")
 
 
@@ -72,7 +72,8 @@ def test_replay_reproduces_every_hash(settings: Settings, catalog: Catalog) -> N
     record = run_and_save(SCENARIO_1, settings, catalog)
     report = replay(record.run_id, settings)
     assert report.all_match, report.message
-    assert len(report.steps) == 5 and all(step.match for step in report.steps)
+    assert len(report.steps) == len(SCENARIO_1["steps"])
+    assert all(step.match for step in report.steps)
     assert read_events(settings.events_path)[-1]["event_type"] == "replay_completed"
 
 
@@ -105,12 +106,17 @@ def test_list_runs_newest_first(settings: Settings, catalog: Catalog) -> None:
     assert rows[0]["run_id"] >= rows[1]["run_id"]
 
 
-def test_scenario_6_trace_from_the_flags_back_to_the_nasdaq_file(
+def test_scenario_6_trace_from_the_test_back_to_the_nasdaq_file(
     settings: Settings, catalog: Catalog
 ) -> None:
     record = run_and_save(SCENARIO_1, settings, catalog)
-    result = trace(record, "s5")  # the final flag_regime step
+    result = trace(record, "s8")  # the final step: the significance test and its p-value
+    # Both inputs are traced: the forward returns (s6) and the flags (s5) behind them,
+    # down to the one weekly price series (s2) they share. compare_groups (s7) is not
+    # an ancestor of the test.
     assert [(s.step_id, s.capability) for s in result.chain] == [
+        ("s8", "hac_mean_difference"),
+        ("s6", "forward_return"),
         ("s5", "flag_regime"),
         ("s4", "rolling_volatility"),
         ("s3", "compute_returns"),
@@ -155,6 +161,23 @@ def test_manifest_records_each_steps_capability_code(settings: Settings, catalog
     assert manifest["steps"][3]["capability_code"] == "C06"  # rolling_volatility
 
 
+def test_manifest_records_the_forward_horizon_and_method(
+    settings: Settings, catalog: Catalog
+) -> None:
+    record = run_and_save(SCENARIO_1, settings, catalog)
+    manifest = json.loads((settings.runs_dir / record.run_id / "manifest.json").read_text())
+    forward = manifest["steps"][5]
+    assert forward["capability"] == "forward_return"
+    assert forward["params"] == {"method": "log", "horizon": 1}
+    assert (forward["meta"]["horizon"], forward["meta"]["return_method"]) == (1, "log")
+    assert manifest["steps"][7]["meta"]["horizon"] == 1  # inherited by the test's table
+    test = settings.runs_dir / record.run_id / "outputs" / "s8_hac_mean_difference.json"
+    assert {"p_value", "se_hac", "maxlags_used", "n_episodes_flagged"} <= set(
+        json.loads(test.read_text())
+    )
+    assert manifest["environment"]["packages"]["statsmodels"]
+
+
 def test_manifests_from_before_codes_still_replay_and_trace(
     settings: Settings, catalog: Catalog
 ) -> None:
@@ -170,12 +193,14 @@ def test_manifests_from_before_codes_still_replay_and_trace(
 
     report = replay(record.run_id, settings)
     assert report.all_match, report.message
-    assert [step.capability_code for step in report.steps] == ["C01", "C02", "C03", "C06", "C07"]
+    assert [step.capability_code for step in report.steps] == [
+        "C01", "C02", "C03", "C06", "C07", "C12", "C09", "C13"
+    ]  # fmt: skip
     chain = trace(old, "s5").chain
     assert [step.capability_code for step in chain] == ["C07", "C06", "C03", "C02", "C01"]
 
 
 def test_a_retired_capability_has_no_code() -> None:
-    step = StepRecord(step_id="s4", capability="forward_return", library_calls="pandas",
+    step = StepRecord(step_id="s4", capability="ols_hac", library_calls="statsmodels",
                       params={}, input_step_ids={}, input_hashes={})  # fmt: skip
     assert step_capability_code(step) is None

@@ -51,8 +51,9 @@ In practice this means:
 
 * only pre-approved, tested computations can run;
 * statistically unsound choices are blocked (returns of a yield, mixing daily and
-  weekly data) or require explicit approval (look-ahead thresholds, the return
-  method), each with a written reason;
+  weekly data, a signal built from future returns, a significance test on a price
+  level) or require explicit approval (look-ahead thresholds, the return method),
+  each with a written reason;
 * requests outside the registry (a forecast, a model, running code) are declined,
   never improvised;
 * every number shown comes from the engine, and the narrative is checked against it;
@@ -61,11 +62,14 @@ In practice this means:
 QuantLab also runs fully offline in **mock mode**, which needs no API key.
 
 **Example output.** For example workflow 1 on the 1971-2026 NASDAQ snapshot,
-QuantLab reports that 458 of 2,842 weeks (16.1%) had a 12-week annualised
-volatility above the 90th percentile of their own past, in 42 distinct episodes,
-with a latest volatility of 13.86%. The share exceeds 10% because each week is
-compared only with the history available at the time, so the more volatile
-decades after the 1970s cross the earlier thresholds more often.
+QuantLab reports that 446 of 2,842 weeks (15.7%) had a 12-week annualised
+volatility above the 90th percentile of their own past, in 40 distinct episodes.
+The following week's log return averaged 0.107% after a flagged week and 0.203%
+after a normal week: a difference of -0.096 percentage points, with a Newey-West
+standard error of 0.228 (8 lags) and a p-value of 0.68, so there is no
+statistically significant difference. The share of flagged weeks exceeds 10%
+because each week is compared only with the history available at the time, so
+the more volatile decades after the 1970s cross the earlier thresholds more often.
 
 ## Getting started
 
@@ -97,11 +101,12 @@ The **Analysis** page follows the safety model step by step:
    then type a request, or in mock mode pick one of the example workflows in the
    sidebar, and click **Generate plan**.
 2. Review the plan. Each step is a collapsible block whose header names the step
-   and its main parameters (e.g. "Step 4 · Rolling volatility · window: 12 weeks,
-   annualize: yes"); open it for its inputs, predicted output and editable fields.
-   Steps with a blocking issue or a warning open by default with a badge, and
-   edited steps are marked. Approvals are not shown on the steps: each one is listed
-   in the validation results, naming its step (e.g. "Step 3 · Compute returns").
+   and its main parameters (e.g. "Step 4 · C06 · Rolling volatility · window: 12
+   weeks, annualize: yes"); open it for its inputs, predicted output and editable
+   fields. Steps with a blocking issue or a warning open by default with a badge,
+   and edited steps are marked. Approvals are not shown on the steps: each one is
+   listed in the validation results, naming its step (e.g. "Step 3 · C03 · Compute
+   returns").
 3. Read the validation results. Blocking issues must be resolved, approvals must
    be ticked, and warnings are shown for context.
 4. Click **Execute**. Results appear per step: charts for series (with flagged
@@ -124,8 +129,10 @@ from the registry (select boxes for choices, bounded number inputs, checkboxes),
 prefilled with the planner's values. Only values can change: steps, capabilities
 and input references are locked, and the engine rejects any other edit with a
 BLOCK. **Apply changes & re-validate** runs the same validator again, so issues
-appear and clear as the plan changes: switching `flag_regime.method` to
-`full_sample` raises G10, and switching `resample.freq` from W to D raises the
+appear and clear as the plan changes: in example 1, switching
+`flag_regime.method` to `full_sample` raises G10 (which then also says the
+significance test is invalidated), setting `forward_return.horizon` to 4 raises
+the G11 overlap warning, and switching `resample.freq` from W to D raises the
 G14 warning that window 12 now means 12 trading days. Any edit resets the
 approvals, which are recorded with the hash of the plan version they were given
 for. Execute stays disabled, with a one-line reason, while changes are unapplied,
@@ -143,18 +150,26 @@ behaviour, and the protections QuantLab applies along the way. They run with
 canned plans in mock mode (`mock_scenarios.py`) or with the live planner, from the
 app or with `cli demo`.
 
-1. **High-volatility weeks** (`volatility_flag_success`): "Using the NASDAQ,
-   compute weekly returns and 12-week rolling annualised volatility, and flag the
-   weeks where volatility was unusually high versus its own history." Five steps.
-   The analyst confirms the return method (G12), and the result shows the
-   volatility series with the high-volatility weeks shaded.
-2. **Look-ahead protection** (`volatility_flag_lookahead`): the same analysis
-   with a full-sample 95th-percentile threshold. QuantLab allows it only with
+1. **High-volatility weeks and what follows** (`volatility_flag_success`):
+   "Calculate weekly returns for NASDAQ, estimate 12-week rolling volatility,
+   identify unusually volatile weeks, and test whether returns in the following
+   week differ from normal weeks." Weekly closes, log returns, 12-week rolling
+   annualised volatility, flags above the 90th percentile of past volatility only
+   (expanding), the following week's return stamped on each week
+   (`forward_return`), a descriptive comparison (`compare_groups`) and the
+   significance test (`hac_mean_difference`). The analyst confirms the return
+   method of the returns and of the forward returns (G12). The result shows the
+   volatility with the high-volatility weeks shaded, both groups' means and
+   standard deviations, the number of distinct episodes, and the test's
+   difference, p-value and 95% confidence interval.
+2. **Look-ahead protection** (`volatility_flag_lookahead`): the high-volatility
+   flags of example 1 (without the comparison), with a full-sample
+   95th-percentile threshold. QuantLab allows it only with
    explicit approval (G10), explains that a full-sample threshold judges past
    weeks using information from the future, and recommends the expanding method.
    This protects the analyst from the most common source of overstated backtests.
-3. **Out-of-scope forecast request** (`sarima_forecast_block`): "Fit SARIMA to
-   predict next week's NASDAQ return." The registry has no capability for model
+3. **Out-of-scope forecast request** (`arima_forecast_block`): "Fit an ARIMA
+   model to forecast next week's NASDAQ return." The registry has no capability for model
    fitting or prediction, so the planner declines (G13) and lists what is
    available instead. If a planner ever proposed such a step anyway, the
    validator would block it independently (G02).
@@ -168,11 +183,11 @@ app or with `cli demo`.
    the two share. The validator blocks the comparison (G09) before anything runs
    and states the fix: resample VIX to weekly first.
 
-**Audit trail.** For any executed result, such as example 1's flags, **Trace a
-result** shows the full chain `flag_regime` -> `rolling_volatility` ->
-`compute_returns` -> `resample` -> `load_series` -> the NASDAQ snapshot file,
-with each step's library call, parameters (user edits marked) and output hash.
-`cli demo` prints the same chain.
+**Audit trail.** For any executed result, such as example 1's p-value, **Trace a
+result** shows the full chain `hac_mean_difference` -> `forward_return` and
+`flag_regime` -> `rolling_volatility` -> `compute_returns` -> `resample` ->
+`load_series` -> the NASDAQ snapshot file, with each step's library call,
+parameters (user edits marked) and output hash. `cli demo` prints the same chain.
 
 **More canned requests.** In mock mode the planner also has plans for these
 requests, typed exactly as written (they are not sidebar buttons): "Show weekly
@@ -250,7 +265,7 @@ flowchart LR
 | `config.py` | Settings from `.env`: API key, models, LLM mode, paths, budgets |
 | `types.py` | `DataType`, `SeriesKind`, `Frequency`; `Artifact` (value + explicit metadata); canonical hashing |
 | `data.py` | Catalog, FRED CSV parsing, SHA-256 verification, LLM-safe dataset metadata |
-| `capabilities.py` | The quantitative functions: the only code that calls pandas/numpy for analysis |
+| `capabilities.py` | The quantitative functions: the only code that calls pandas/numpy/statsmodels for analysis |
 | `registry.py` | Capability specs, the `REGISTRY` whitelist, generated LLM summary and registry version |
 | `plan.py` | Pydantic `Plan` / `Step` (extra fields forbidden), plan version hash, the LLM tool schema |
 | `guardrails.py` | Static guardrails (G codes), edit lock, metadata dry run, `ValidationReport`, the guardrail table |
@@ -296,8 +311,8 @@ which is what model-risk governance requires.
 
 ## Capabilities and libraries
 
-The approved menu, deliberately small and descriptive; the **Capability
-registry** page always shows the current list. Each capability has a permanent
+The approved menu, deliberately small: descriptive building blocks and one
+significance test; the **Capability registry** page always shows the current list. Each capability has a permanent
 code (C01, C02, ...) used in the app, run records and traces; plans and the
 planner use its name.
 
@@ -311,9 +326,11 @@ planner use its name.
 | C06 | `rolling_volatility` | Trailing rolling standard deviation, annualised |
 | C07 | `flag_regime` | Flag periods above a quantile threshold (e.g. high volatility) |
 | C08 | `summary_stats` | Count, mean, std, min, max, skew, excess kurtosis |
-| C09 | `compare_groups` | Average of a series in flagged vs normal periods (descriptive, no test) |
+| C09 | `compare_groups` | Mean and standard deviation of a series in flagged vs normal periods, and the number of flagged episodes (descriptive, no test) |
 | C10 | `filter_period` | Keep the observations between a start and/or an end date (inclusive) |
 | C11 | `find_extremes` | When a series reached its maximum and/or minimum, the value, and a tie count |
+| C12 | `forward_return` | The return from the close of t to the close of t+h, stamped at t (an outcome only) |
+| C13 | `hac_mean_difference` | Significance test of the difference in mean outcome between flagged and normal periods (Newey-West standard errors) |
 
 **Periods and peaks.** `filter_period` takes `start` and/or `end` (inclusive ISO
 dates): giving neither is a G03 BLOCK, as are a start not before the end and a
@@ -331,16 +348,35 @@ to show a recent period, unless the calculation itself should be restricted.
 missing values, and on a tie reports the earliest date with the number of tied
 dates, so an answer is never silently ambiguous.
 
-There are no statistical tests, regressions or forecasts: such requests are
-declined or blocked (example 3). Each spec declares named inputs (allowed data
+**What follows a flag, and whether it is significant.** `forward_return` gives,
+at each date t, the return from the close of t to the close of t+h (h from 1 to
+13 periods; the last h dates have no future price yet and are dropped, never
+filled). It is future information at t, so it may only be the outcome of
+`compare_groups` or `hac_mean_difference`: feeding it to anything else, such as
+a volatility or a flag, is blocked (G15). `hac_mean_difference` regresses the
+outcome on a constant and the 0/1 flag, which makes the flag's coefficient
+exactly the difference in means, and uses Newey-West (HAC) standard errors,
+because weeks are not independent: volatility clusters, and h-period forward
+returns overlap. Its default lag count is the Newey-West rule floor(4·(T/100)^(2/9)),
+raised to at least h-1 to cover the overlap (fewer lags set by hand: G17). The
+outcome must be returns or forward returns (a level: G16). The test assumes a
+stationary outcome, a large sample (its p-value is asymptotic) and flags known
+before the outcome; it reports an association, never a cause or a forecast.
+Every comparison also counts the distinct flagged episodes, the real amount of
+independent evidence (fewer than 5: R05).
+
+There are no other statistical tests, no regressions beyond this one and no
+forecasts: such requests are declined or blocked (example 3). Each spec declares named inputs (allowed data
 types and kinds), parameters (type, range, choices, defaults), output type and
 kind, a minimum-observations rule, assumptions (some need approval) and the
 underlying library call.
 
 **A deliberately small library surface:** pandas and numpy (time series),
-pydantic (strict plan parsing), streamlit and plotly (UI), the official `openai`
-and `anthropic` SDKs, python-dotenv and pyyaml. Deliberately excluded: scipy and
-statsmodels (no statistical tests), scikit-learn (no machine-learning models),
+statsmodels (the regression with Newey-West standard errors behind the
+significance test), pydantic (strict plan parsing), streamlit and plotly (UI),
+the official `openai` and `anthropic` SDKs, python-dotenv and pyyaml.
+Deliberately excluded: scipy as a direct dependency (statsmodels installs it;
+QuantLab never calls it), scikit-learn (no machine-learning models),
 `arch` (no GARCH), and LangChain or any agent framework (two structured model
 calls do not need an orchestration layer, and every extra abstraction is more to
 audit). Fewer libraries means fewer versions to pin, record and explain.
@@ -351,10 +387,12 @@ Each guardrail is a small named function whose docstring explains what goes
 wrong without it. Static guardrails run on the plan alone (the planner's plan and
 every user edit, through the same validator); runtime guardrails need data and
 run in the executor. The table is generated from `guardrails.GUARDRAILS`, which
-also feeds the **Guardrails** page and its counts. G11
-(overlapping observations in a t-test) was retired together with the statistical
-tests; codes are never reused, so the issue ids in older run records keep their
-meaning and those runs can still be replayed.
+also feeds the **Guardrails** page and its counts. Codes are permanent: never
+renumbered or given another meaning, so the issue ids in older run records keep
+their meaning and those runs can still be replayed. G11 (overlapping
+observations) and R05 (few flagged episodes) were retired with the first
+statistical tests and came back, with the same meanings, with the significance
+test.
 
 | Code | Name | Severity | Stage | What goes wrong without it |
 |---|---|---|---|---|
@@ -368,13 +406,18 @@ meaning and those runs can still be replayed.
 | G08 | `RETURNS_ON_RATES` | BLOCK | static | 'Returns' of a yield are meaningless (1% -> 2% is not +100%); rates must be differenced. |
 | G09 | `FREQUENCY_MISMATCH` | BLOCK | static | Combining a daily with a weekly series silently keeps only the dates they share and mixes frequencies. |
 | G10 | `LOOK_AHEAD` | APPROVAL | static | Full-sample thresholds use future data, so results look better than anything achievable in real time. |
+| G11 | `OVERLAPPING_OBSERVATIONS` | WARN | static | Overlapping multi-period forward returns are autocorrelated by construction; treated as independent, they overstate the evidence. |
 | G12 | `MATERIAL_ASSUMPTION` | APPROVAL | static | Material modelling choices (simple vs log returns) would be made by the LLM without a human noticing. |
 | G13 | `PLANNER_REFUSED` | BLOCK | static | Without an explicit refusal path the LLM is pushed to invent capabilities to satisfy any request. |
 | G14 | `WINDOW_UNITS_CHANGED` | WARN | static | After a frequency edit, an unchanged window silently changes its span (12 weeks becomes 12 trading days). |
+| G15 | `FORWARD_DATA_AS_SIGNAL` | BLOCK | static | Forward returns contain future information; used to build a signal (a volatility, a flag) they make results look predictive when nothing is. |
+| G16 | `NONSTATIONARY_OUTCOME` | BLOCK | static | A significance test on a trending level (a price, a rate, a volatility) is invalid: non-stationary series make spurious differences look significant. |
+| G17 | `HAC_LAG_TOO_SHORT` | WARN | static | Newey-West lags shorter than the overlap of forward returns ignore part of their autocorrelation, so the p-value looks better than it is. |
 | R01 | `DATASET_HASH_MISMATCH` | BLOCK | runtime | Results would come from data other than the recorded version, breaking reproducibility and audit. |
 | R02 | `INSUFFICIENT_DATA` | BLOCK | runtime | Statistics on too few observations are noise presented as findings. |
 | R03 | `MISSING_DATA` | WARN | runtime | A heavily gappy series can distort resampled values and returns unnoticed. |
 | R04 | `ALIGNMENT_LOSS` | WARN | runtime | An inner join can silently discard a large part of the sample (e.g. series with different start dates). |
+| R05 | `LOW_EFFECTIVE_SAMPLE` | WARN | runtime | Many flagged weeks from a handful of episodes look like a big sample but carry little independent information. |
 
 The executor re-runs the validator itself and refuses to start while any BLOCK
 exists or any APPROVAL issue is unapproved, so calling it directly cannot skip
@@ -416,8 +459,13 @@ plan parameter, a number from the request or a warning, or an annualisation
 factor. Dates are facts too: a date, as `2021-11-19` or in words such as
 "19 November 2021", must be a date of the facts sheet (a month must contain one,
 and a year on its own must lie within the data), so a narrative that names the
-wrong peak date fails the check. The app shows "all numbers verified" or lists
-the unverified numbers; the deterministic facts table is always shown.
+wrong peak date fails the check. For the significance test the narrator must
+state the difference and its p-value, write "no statistically significant
+difference" when the p-value is 0.05 or more (never "no difference"), always
+give the number of distinct episodes and never say that the flag causes or
+predicts returns; only then are the 5% significance and 95% confidence levels
+accepted numbers. The app shows "all numbers verified" or lists the unverified
+numbers; the deterministic facts table is always shown.
 
 ## Reproducibility, lineage and monitoring
 
@@ -462,8 +510,9 @@ Two separate questions, measured separately:
 * **Are the computations right?** Measured by the unit tests, independently of
   any model: returns, differences, spread alignment, rolling volatility and
   annualisation, the no-look-ahead property of expanding flags, summary
-  statistics against textbook formulas, group comparisons, every guardrail,
-  plan editing, replay, grounding and a source safety scan.
+  statistics against textbook formulas, forward returns, group comparisons and
+  episode counts, the Newey-West test against a direct statsmodels fit, every
+  guardrail, plan editing, replay, grounding and a source safety scan.
 
 ## Project layout
 
@@ -496,10 +545,11 @@ runs/                       run records, plan cache, events.jsonl (git-ignored)
   the sentence attaches it to the right concept (a true date described as the
   wrong extreme would pass), and it compares absolute values (sign errors are
   not caught).
-* **Descriptive only.** There are no statistical tests, regressions or forecasts,
-  so QuantLab describes what happened (averages, volatility, high-volatility
-  periods, spreads) but does not judge significance or predict. Such requests
-  are declined or blocked.
+* **One significance test, no forecasts.** QuantLab describes what happened
+  (averages, volatility, high-volatility periods, spreads) and can test one kind
+  of question, whether an outcome differs between flagged and normal periods,
+  with an asymptotic p-value. Other tests, models and forecasts are declined or
+  blocked.
 * **File-based, single-user.** Runs and events live on local disk; approvals are
   recorded as "user", with no authentication or four-eyes approval yet.
 * **`registry_version` covers capability interfaces, not their code**; the git
@@ -515,9 +565,8 @@ Roadmap:
   analysis so users never pull data at runtime. Requests for data that is not available
   are logged as unmet data needs and become the intake queue for this process.
 * **New capabilities.** Further reviewed analysis functions in the registry (drawdowns,
-  correlations, statistical tests such as comparing returns across regimes, regressions
-  with robust errors, GARCH), each added as a code change with tests, never generated at
-  runtime.
+  correlations, further statistical tests and regressions, GARCH), each added as a code
+  change with tests, never generated at runtime.
 * **New guardrails.** Further validation rules as new risks are identified, each with a
   defined severity (BLOCK, APPROVAL or WARN) and test coverage.
 * **Replan loop.** Validator feedback sent back to the planner for a corrected plan.

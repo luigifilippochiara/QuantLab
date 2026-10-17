@@ -8,16 +8,23 @@ import pandas as pd
 import pytest
 
 from quantlab.data import Catalog, file_sha256, load_catalog
-from quantlab.executor import CapabilityRefusedError, check_alignment_loss, dispatch, execute_plan
+from quantlab.executor import (
+    CapabilityRefusedError,
+    check_alignment_loss,
+    check_low_effective_sample,
+    dispatch,
+    execute_plan,
+)
 from quantlab.guardrails import fill_defaults, validate_plan
 from quantlab.plan import Plan, Step
 from quantlab.registry import REGISTRY
 from quantlab.types import Artifact, ArtifactMeta, DataType, Frequency, SeriesKind
 
 from conftest import (
+    ARIMA_PLAN,
     PERIOD_PLAN,
     RETURN_METHOD_APPROVAL,
-    SARIMA_PLAN,
+    SCENARIO_1_APPROVALS,
     SPREAD_PLAN,
     as_plan,
     build_synthetic_data_dir,
@@ -28,12 +35,10 @@ from conftest import (
 SUCCESS = "volatility_flag_success"  # scenario 1
 
 
-def with_comparison() -> dict:
-    """Scenario 1 plus a correctly aligned compare_groups step (weekly returns vs weekly flags)."""
+def with_horizon(horizon: int) -> dict:
+    """Scenario 1 with its forward returns (s6) over `horizon` weeks instead of one."""
     raw = raw_plan(SUCCESS)
-    raw["steps"].append(
-        {"id": "s6", "capability": "compare_groups", "inputs": {"values": "s3", "flags": "s5"}}
-    )
+    raw["steps"][5]["params"]["horizon"] = horizon
     return raw
 
 
@@ -45,13 +50,13 @@ def runtime_codes(result) -> set[str]:
 
 
 def test_dispatch_refuses_unregistered_names(catalog: Catalog) -> None:
-    for name in ["sarima", "eval", "__import__", "os.system", "load_series "]:
+    for name in ["arima", "eval", "__import__", "os.system", "load_series "]:
         with pytest.raises(CapabilityRefusedError):
             dispatch(Step(id="s1", capability=name), {}, catalog)
 
 
 def test_blocked_plan_runs_nothing(catalog: Catalog) -> None:
-    result = execute_plan(as_plan(SARIMA_PLAN), catalog)
+    result = execute_plan(as_plan(ARIMA_PLAN), catalog)
     assert result.status == "blocked"
     assert result.artifacts == {} and result.step_records == []
     assert runtime_codes(result) == {"G02"}
@@ -65,9 +70,9 @@ def test_unapproved_plan_runs_nothing(catalog: Catalog) -> None:
 
 
 def test_scenario_1_flags_high_volatility_weeks(catalog: Catalog) -> None:
-    result = execute_plan(as_plan(raw_plan(SUCCESS)), catalog, {RETURN_METHOD_APPROVAL})
+    result = execute_plan(as_plan(raw_plan(SUCCESS)), catalog, set(SCENARIO_1_APPROVALS))
     assert result.status == "completed", result.error
-    assert [r.step_id for r in result.step_records] == ["s1", "s2", "s3", "s4", "s5"]
+    assert [r.step_id for r in result.step_records] == [f"s{i}" for i in range(1, 9)]
     assert all(r.output_hash and len(r.output_hash) == 64 for r in result.step_records)
     assert not any(c.startswith("R") for c in runtime_codes(result))
     flags = result.artifacts["s5"].value
@@ -79,16 +84,22 @@ def test_scenario_1_flags_high_volatility_weeks(catalog: Catalog) -> None:
     assert load.input_hashes == {"dataset:NASDAQCOM": catalog.entries["NASDAQCOM"].sha256}
 
 
-def test_compare_groups_on_aligned_inputs(catalog: Catalog) -> None:
-    result = execute_plan(as_plan(with_comparison()), catalog, {RETURN_METHOD_APPROVAL})
+def test_compare_groups_and_the_test_on_aligned_inputs(catalog: Catalog) -> None:
+    # Scenario 1: next-week forward returns (s6) against the weekly flags (s5).
+    result = execute_plan(as_plan(raw_plan(SUCCESS)), catalog, set(SCENARIO_1_APPROVALS))
     assert result.status == "completed", result.error
-    table = result.artifacts["s6"].value
-    returns, flags = result.artifacts["s3"].value, result.artifacts["s5"].value
-    common = returns.loc[flags.index]  # flags cover a sub-period of the returns
-    assert table["n_flagged"] == int(flags.sum())
-    assert table["n_flagged"] + table["n_normal"] == len(flags)
-    assert table["mean_flagged"] == pytest.approx(common[flags].mean())
-    assert table["diff_means"] == pytest.approx(table["mean_flagged"] - table["mean_normal"])
+    forward, flags = result.artifacts["s6"].value, result.artifacts["s5"].value
+    # The flags start after the warm-up; the forward returns stop one week early.
+    common = flags.index.intersection(forward.index)
+    flags, outcome = flags[common], forward[common]
+    table, test = result.artifacts["s7"].value, result.artifacts["s8"].value
+    assert table["n_flagged"] == test["n_flagged"] == int(flags.sum())
+    assert table["n_flagged"] + table["n_normal"] == len(common) == test["n_obs"]
+    assert table["mean_flagged"] == pytest.approx(outcome[flags].mean())
+    assert table["std_normal"] == pytest.approx(outcome[~flags].std(ddof=1))
+    assert table["diff_means"] == pytest.approx(test["diff_means"])
+    assert table["n_episodes_flagged"] == test["n_episodes_flagged"]
+    assert test["horizon"] == 1 and result.step_records[5].meta["horizon"] == 1
 
 
 def test_execution_is_deterministic(catalog: Catalog) -> None:
@@ -100,14 +111,14 @@ def test_execution_is_deterministic(catalog: Catalog) -> None:
 
 
 @pytest.mark.parametrize(
-    "name", ["scenario_1", "spread", "comparison", "volatility_since_2020", "returns_2022"]
+    "name", ["scenario_1", "spread", "horizon_4", "volatility_since_2020", "returns_2022"]
 )
 def test_dry_run_metadata_matches_runtime_metadata(name: str, catalog: Catalog) -> None:
     """The validator's predictions must equal what the capability functions produce."""
     raw = {
         "scenario_1": raw_plan(SUCCESS),
         "spread": SPREAD_PLAN,
-        "comparison": with_comparison(),
+        "horizon_4": with_horizon(4),
         "volatility_since_2020": canned_plan("nasdaq_volatility_peak_since_2020"),
         "returns_2022": canned_plan("sp500_returns_2022"),
     }
@@ -123,6 +134,7 @@ def test_dry_run_metadata_matches_runtime_metadata(name: str, catalog: Catalog) 
         assert predicted["frequency"] == meta.frequency, step_id
         assert predicted["return_method"] == meta.return_method, step_id
         assert predicted["periods"] == meta.periods, step_id
+        assert predicted["horizon"] == meta.horizon, step_id
         assert predicted["dataset_ids"] == meta.source_dataset_ids, step_id
 
 
@@ -132,7 +144,7 @@ def test_dry_run_metadata_matches_runtime_metadata(name: str, catalog: Catalog) 
 def test_r01_tampered_snapshot_blocks_cleanly(catalog: Catalog) -> None:
     path = catalog.path_for("NASDAQCOM")
     path.write_text(path.read_text() + "2099-01-01,1.0\n")
-    result = execute_plan(as_plan(raw_plan(SUCCESS)), catalog, {RETURN_METHOD_APPROVAL})
+    result = execute_plan(as_plan(raw_plan(SUCCESS)), catalog, set(SCENARIO_1_APPROVALS))
     assert result.status == "blocked"
     assert "R01" in runtime_codes(result)
     assert result.step_records[0].status == "blocked"
@@ -250,6 +262,39 @@ def test_r04_real_case_different_start_dates(tmp_path: Path, catalog: Catalog) -
     result = execute_plan(as_plan(SPREAD_PLAN), cut)
     assert result.status == "completed"
     assert "R04" in runtime_codes(result)
+
+
+# --- R05 LOW_EFFECTIVE_SAMPLE -----------------------------------------------------
+
+
+def _weekly_flags(pattern: str) -> Artifact:
+    """Weekly flags from a pattern such as "TTFF" (T = flagged)."""
+    index = pd.date_range("2020-01-03", periods=len(pattern), freq="W-FRI")
+    meta = ArtifactMeta(SeriesKind.FLAGS, Frequency.W, ["X"], len(pattern), None, None)
+    return Artifact(pd.Series([c == "T" for c in pattern], index=index), DataType.FLAGS, meta)
+
+
+@pytest.mark.parametrize("capability", ["compare_groups", "hac_mean_difference"])
+def test_r05_counts_episodes_not_flagged_weeks(capability: str) -> None:
+    spec = REGISTRY[capability]
+    outcome_input = spec.inputs[0].name  # "values" or "outcome"
+    step = Step(id="s8", capability=capability)
+    # 3 long episodes: 30 flagged weeks, but only 3 independent stretches.
+    few = _weekly_flags(("T" * 10 + "F" * 20) * 3)
+    outcome = _weekly(len(few.value), "2020-01-03", SeriesKind.RETURNS)
+    issues = check_low_effective_sample(step, spec, {outcome_input: outcome, "flags": few})
+    assert [i.code for i in issues] == ["R05"]
+    assert "30 flagged weeks, but only 3 distinct episode(s)" in issues[0].message
+    # 5 short episodes are enough, even with fewer flagged weeks.
+    many = _weekly_flags(("TT" + "F" * 16) * 5)
+    outcome = _weekly(len(many.value), "2020-01-03", SeriesKind.RETURNS)
+    assert check_low_effective_sample(step, spec, {outcome_input: outcome, "flags": many}) == []
+
+
+def test_r05_only_concerns_flag_comparisons() -> None:
+    step = Step(id="s3", capability="spread")
+    a, b = _weekly(30, "2020-01-03"), _weekly(30, "2020-01-03")
+    assert check_low_effective_sample(step, REGISTRY["spread"], {"a": a, "b": b}) == []
 
 
 def test_failing_capability_stops_the_run_cleanly(catalog: Catalog) -> None:

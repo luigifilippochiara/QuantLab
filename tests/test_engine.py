@@ -8,7 +8,7 @@ from quantlab.lineage import load_run, replay
 from quantlab.mock_scenarios import SCENARIOS_BY_ID
 from quantlab.monitoring import kpis, read_events
 
-from conftest import RETURN_METHOD_APPROVAL
+from conftest import SCENARIO_1_APPROVALS
 from fakes import FakeAnthropicClient
 
 SUCCESS = SCENARIOS_BY_ID["volatility_flag_success"]  # scenario 1
@@ -25,12 +25,12 @@ def start(settings: Settings, scenario_id: str = SUCCESS.id) -> Session:
 def test_end_to_end_scenario_1_with_manifest_and_replay(settings: Settings) -> None:
     session = start(settings)
     assert session.status == "ready"
-    assert [i.issue_id for i in session.unresolved_approvals()] == [RETURN_METHOD_APPROVAL]
+    assert [i.issue_id for i in session.unresolved_approvals()] == SCENARIO_1_APPROVALS
 
     with pytest.raises(ExecutionRefusedError, match="Approval required"):
         session.execute()
 
-    session.approve([RETURN_METHOD_APPROVAL])
+    session.approve(SCENARIO_1_APPROVALS)
     assert session.execute().status == "completed"
     narrative = session.narrate()
     assert narrative.grounding.grounded
@@ -38,7 +38,7 @@ def test_end_to_end_scenario_1_with_manifest_and_replay(settings: Settings) -> N
 
     record = load_run(session.run_id, settings.runs_dir)
     assert manifest.exists() and record.status == "completed"
-    assert record.approvals[0].issue_id == RETURN_METHOD_APPROVAL
+    assert [a.issue_id for a in record.approvals] == SCENARIO_1_APPROVALS
     assert record.llm.provider == "mock" and record.registry_version
     assert record.plan_original["steps"][4]["params"]["quantile"] == 0.9  # as proposed
     assert record.plan_final["steps"] == record.plan_original["steps"]  # no hidden defaults
@@ -50,18 +50,18 @@ def test_end_to_end_scenario_1_with_manifest_and_replay(settings: Settings) -> N
 
 def test_param_edit_revalidates_and_clears_approvals(settings: Settings) -> None:
     session = start(settings)
-    session.approve([RETURN_METHOD_APPROVAL])
-    report = session.apply_param_edits({"s3": {"method": "log"}, "s4": {"window": 26}})
+    session.approve(SCENARIO_1_APPROVALS)
+    report = session.apply_param_edits({"s3": {"method": "simple"}, "s4": {"window": 26}})
     assert not report.is_blocked
     assert session.approvals == []  # the approved plan changed: approve again
-    assert "method='log'" in session.unresolved_approvals()[0].message
+    assert "method='simple'" in session.unresolved_approvals()[0].message
     assert [(e.step_id, e.param, e.old, e.new) for e in session.edits] == [
-        ("s3", "method", "simple", "log"),
+        ("s3", "method", "log", "simple"),
         ("s4", "window", 12, 26),
     ]
-    session.approve([RETURN_METHOD_APPROVAL])
+    session.approve(SCENARIO_1_APPROVALS)
     session.execute()
-    assert session.execution.artifacts["s3"].meta.return_method == "log"
+    assert session.execution.artifacts["s3"].meta.return_method == "simple"
 
 
 def test_invalid_edit_blocks_execution(settings: Settings) -> None:
@@ -85,7 +85,7 @@ def test_only_open_approval_issues_can_be_approved(settings: Settings) -> None:
 
 
 def test_blocked_scenario_is_recorded(settings: Settings) -> None:
-    session = start(settings, "sarima_forecast_block")
+    session = start(settings, "arima_forecast_block")
     assert session.status == "blocked"
     record = load_run(session.run_id, settings.runs_dir)
     assert record.status == "blocked" and "G13" in record.error

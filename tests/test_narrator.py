@@ -14,22 +14,21 @@ from quantlab.narrator import (
     check_grounding,
     format_number,
     narrate,
+    template_narrative,
 )
 from quantlab.plan import Plan
+from quantlab.types import Artifact, ArtifactMeta, DataType, Frequency
 
 from conftest import SPREAD_PLAN, as_plan, canned_plan, raw_plan
 from fakes import FakeAnthropicClient, FakeOpenAIClient, openai_text_response, text_response
 
 SCENARIO_1 = raw_plan("volatility_flag_success")
-WITH_COMPARISON = {
-    **SCENARIO_1,
-    "steps": SCENARIO_1["steps"]
-    + [{"id": "s6", "capability": "compare_groups", "inputs": {"values": "s3", "flags": "s5"}}],
-}
+HORIZON_4 = raw_plan("volatility_flag_success")
+HORIZON_4["steps"][5]["params"]["horizon"] = 4  # 4-week forward returns: G11 warns
 PLANS = {
     "scenario_1": SCENARIO_1,
     "spread": SPREAD_PLAN,
-    "comparison": WITH_COMPARISON,
+    "horizon_4": HORIZON_4,
     "volatility_peak_since_2020": canned_plan("nasdaq_volatility_peak_since_2020"),
     "vix_extremes": canned_plan("vix_extremes"),
 }
@@ -68,12 +67,16 @@ def test_facts_sheet_covers_tables_flags_and_series(catalog: Catalog) -> None:
         assert fact_id in facts
     assert facts["s4.mean"].value == result.artifacts["s4"].value["mean"]
 
-    plan, result, _ = run_scenario("comparison", catalog)
+    plan, result, _ = run_scenario("scenario_1", catalog)
     facts = {f.fact_id: f for f in build_facts_sheet(plan, result.artifacts)}
     for fact_id in ["s4.last_value", "s5.n_flagged", "s5.share_flagged", "s5.n_episodes",
-                    "s6.mean_flagged", "s6.diff_means"]:  # fmt: skip
+                    "s7.mean_flagged", "s7.diff_means", "s7.n_episodes_flagged"]:  # fmt: skip
         assert fact_id in facts
     assert facts["s5.n_flagged"].value == int(result.artifacts["s5"].value.sum())
+    # Every number of the significance test is a fact, so every one can be checked.
+    test = result.artifacts["s8"].value
+    for key, value in test.items():
+        assert facts[f"s8.{key}"].value == value
 
 
 def test_facts_sheet_has_extreme_dates_values_and_the_resolved_period(catalog: Catalog) -> None:
@@ -152,6 +155,13 @@ def test_grounding_rejects_invented_numbers(sentence: str, bad: str) -> None:
     assert not result.grounded and result.ungrounded == [bad]
 
 
+def test_significance_levels_are_grounded_only_when_a_test_ran() -> None:
+    sentence = "There is no statistically significant difference at the 5% level (95% interval)."
+    assert check_grounding(sentence, FACTS, PLAN).ungrounded == ["5", "95"]
+    p_value = Fact(fact_id="s8.p_value", label="p", value=0.4321, display="0.4321")
+    assert check_grounding(sentence, [*FACTS, p_value], PLAN).grounded
+
+
 def test_extra_texts_allow_numbers_from_warnings() -> None:
     sentence = "Aligning the inputs dropped 22% of the rows."
     assert not check_grounding(sentence, FACTS, PLAN).grounded
@@ -206,6 +216,59 @@ def test_llm_narrative_with_a_wrong_date_fails_grounding(
 
     assert narrated(f"Volatility peaked at {value} on {peak}.").grounded
     assert narrated(f"Volatility peaked at {value} on {wrong}.").ungrounded == [wrong]
+
+
+def test_llm_narrative_with_a_wrong_p_value_fails_grounding(
+    settings: Settings, catalog: Catalog
+) -> None:
+    plan, result, issues = run_scenario("scenario_1", catalog)
+    facts = {f.fact_id: f for f in build_facts_sheet(plan, result.artifacts)}
+    p_value = facts["s8.p_value"]
+    wrong = f"{p_value.value + 0.11:.4f}"  # four decimals, like the displayed value
+    episodes = facts["s8.n_episodes_flagged"].display
+
+    def narrated(text: str):
+        client = FakeAnthropicClient(text_response(text))
+        return narrate(plan.request, plan, result.artifacts, issues, "live", settings,
+                       client=client).grounding  # fmt: skip
+
+    right = f"The test gives a p-value of {p_value.display} over {episodes} episodes."
+    assert narrated(right).grounded
+    bad = narrated(f"The test gives a p-value of {wrong} over {episodes} episodes.")
+    assert bad.ungrounded == [wrong]
+
+
+def hac_artifacts(p_value: float) -> tuple[Plan, dict[str, Artifact]]:
+    """A one-step plan and a hand-made hac_mean_difference table with the given p-value."""
+    table = {"diff_means": -0.0012, "mean_normal": 0.0021, "se_hac": 0.0019, "t_stat": -0.63,
+             "p_value": p_value, "ci_low": -0.0049, "ci_high": 0.0025, "n_obs": 1500,
+             "n_flagged": 240, "n_normal": 1260, "n_episodes_flagged": 23, "maxlags_used": 7,
+             "horizon": 1, "start": "1996-12-27", "end": "2025-11-14"}  # fmt: skip
+    meta = ArtifactMeta(None, Frequency.W, ["NASDAQCOM"], 1500, "1996-12-27", "2025-11-14")
+    step = {"id": "s8", "capability": "hac_mean_difference",
+            "inputs": {"outcome": "s6", "flags": "s5"}, "params": {"maxlags": None}}  # fmt: skip
+    plan = Plan(plan_id="p", request="r", steps=[step])
+    return plan, {"s8": Artifact(table, DataType.TABLE, meta)}
+
+
+@pytest.mark.parametrize(
+    ("p_value", "verdict"),
+    [
+        (0.4321, "no statistically significant difference at the 5% level"),
+        (0.05, "no statistically significant difference at the 5% level"),  # p >= 0.05
+        (0.0123, "a statistically significant difference at the 5% level"),
+    ],
+)
+def test_template_reads_the_test_without_overclaiming(p_value: float, verdict: str) -> None:
+    plan, artifacts = hac_artifacts(p_value)
+    facts = build_facts_sheet(plan, artifacts)
+    text = template_narrative(plan, artifacts, facts, [])
+    assert verdict in text
+    assert f"p-value of {format_number(p_value)}" in text and "-0.001200" in text
+    assert "23 distinct episodes" in text  # always the number of episodes
+    assert "no difference" not in text.replace("significant difference", "")
+    assert "causes" not in text and "predicts" not in text
+    assert check_grounding(text, facts, plan).grounded
 
 
 def test_llm_failure_falls_back_to_the_template(settings: Settings, catalog: Catalog) -> None:

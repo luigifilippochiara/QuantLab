@@ -128,8 +128,8 @@ def cmd_demo(args: argparse.Namespace, settings: Settings) -> int:
               "status is checked, the issue codes show how each block happened.)")  # fmt: skip
     print("\nAll scenarios behaved as expected." if all_ok else "\nSome scenarios did NOT.")
 
-    # Scenario 6 is the audit trail of scenario 1: trace its last step (flag_regime)
-    # back to the snapshot file.
+    # Scenario 6 is the audit trail of scenario 1: trace its last step (the
+    # significance test) back to the snapshot file.
     first = sessions["volatility_flag_success"]
     if first.status == "completed":
         print("\nScenario 6 (traceability): ", end="")

@@ -12,7 +12,8 @@ without touching any data values, decides whether it may run:
 It runs a metadata "dry run": walking the steps in order and propagating each
 output's data type, kind and frequency using only the registry and the catalog.
 That is how it can tell, before running, that step 3 would compute returns of
-a yield or take the spread of a daily and a weekly series.
+a yield, take the spread of a daily and a weekly series, or build a flag from
+forward returns.
 
 The same `validate_plan` function is used for the planner's plan, for every
 user edit, by the executor (defence in depth) and by replay. For an edited plan
@@ -21,9 +22,11 @@ the engine also passes the planner's proposal as `baseline`, which enables G14
 `check_edits` locks the plan's structure: users may change parameter values only.
 
 The runtime guardrails (R codes, which need data) live in executor.py, but all
-guardrail codes are described in the single GUARDRAILS table below. G11 is not
-used: it was retired with the statistical tests, and codes are never reused, so
-the issue ids recorded in older run records keep their meaning.
+guardrail codes are described in the single GUARDRAILS table below. Codes are
+permanent: a code is never renumbered or given a different meaning, so the issue
+ids recorded in older run records keep their meaning. (G11 and R05 were retired
+with the first statistical tests and came back, with the same meanings, with the
+significance test.)
 """
 
 import re
@@ -126,7 +129,11 @@ GUARDRAILS: dict[str, Guardrail] = {
             "Full-sample thresholds use future data, so results look better than "
             "anything achievable in real time.",
         ),
-        # G11 (OVERLAPPING_OBSERVATIONS) was retired with the statistical tests.
+        Guardrail(
+            "G11", "OVERLAPPING_OBSERVATIONS", WARN, "static",
+            "Overlapping multi-period forward returns are autocorrelated by construction; "
+            "treated as independent, they overstate the evidence.",
+        ),
         Guardrail(
             "G12", "MATERIAL_ASSUMPTION", APPROVAL, "static",
             "Material modelling choices (simple vs log returns) would be made by the "
@@ -141,6 +148,21 @@ GUARDRAILS: dict[str, Guardrail] = {
             "G14", "WINDOW_UNITS_CHANGED", WARN, "static",
             "After a frequency edit, an unchanged window silently changes its span "
             "(12 weeks becomes 12 trading days).",
+        ),
+        Guardrail(
+            "G15", "FORWARD_DATA_AS_SIGNAL", BLOCK, "static",
+            "Forward returns contain future information; used to build a signal (a "
+            "volatility, a flag) they make results look predictive when nothing is.",
+        ),
+        Guardrail(
+            "G16", "NONSTATIONARY_OUTCOME", BLOCK, "static",
+            "A significance test on a trending level (a price, a rate, a volatility) is "
+            "invalid: non-stationary series make spurious differences look significant.",
+        ),
+        Guardrail(
+            "G17", "HAC_LAG_TOO_SHORT", WARN, "static",
+            "Newey-West lags shorter than the overlap of forward returns ignore part of "
+            "their autocorrelation, so the p-value looks better than it is.",
         ),
         Guardrail(
             "R01", "DATASET_HASH_MISMATCH", BLOCK, "runtime",
@@ -160,8 +182,22 @@ GUARDRAILS: dict[str, Guardrail] = {
             "An inner join can silently discard a large part of the sample (e.g. "
             "series with different start dates).",
         ),
+        Guardrail(
+            "R05", "LOW_EFFECTIVE_SAMPLE", WARN, "runtime",
+            "Many flagged weeks from a handful of episodes look like a big sample but "
+            "carry little independent information.",
+        ),
     ]
 }  # fmt: skip
+
+# The input that holds the OUTCOME in the capabilities that compare an outcome
+# between flagged and normal periods. It is the only place forward returns may
+# go (G15), and where R05 counts the flagged episodes.
+OUTCOME_INPUTS = {"compare_groups": "values", "hac_mean_difference": "outcome"}
+
+# The outcome kinds hac_mean_difference accepts: returns fluctuate around a stable
+# mean (stationary); levels such as prices, rates or volatility do not (G16).
+STATIONARY_OUTCOME_KINDS = (SeriesKind.RETURNS, SeriesKind.FORWARD_RETURNS)
 
 
 class Issue(BaseModel):
@@ -260,7 +296,7 @@ class StaticMeta:
     """Output metadata predicted by the dry run (no data values involved).
 
     Fields mirror ArtifactMeta: data type, kind, frequency, return method,
-    return/difference periods and the source dataset ids.
+    return/difference periods, forward-return horizon and the source dataset ids.
     """
 
     data_type: DataType
@@ -268,6 +304,7 @@ class StaticMeta:
     frequency: Frequency | None
     return_method: str | None = None
     periods: int | None = None
+    horizon: int | None = None
     dataset_ids: list[str] = field(default_factory=list)
 
     def to_dict(self) -> dict[str, Any]:
@@ -718,6 +755,9 @@ def check_input_types(
         meta = input_metas.get(spec_input.name)
         if meta is None:
             continue  # missing or broken reference: already reported by G02/G04
+        is_outcome = OUTCOME_INPUTS.get(spec.name) == spec_input.name
+        if meta.kind == SeriesKind.FORWARD_RETURNS and not is_outcome:
+            continue  # reported by the more specific G15 FORWARD_DATA_AS_SIGNAL
         if meta.data_type not in spec_input.data_types:
             expected = [t.value for t in spec_input.data_types]
             issues.append(
@@ -733,6 +773,8 @@ def check_input_types(
         elif spec_input.kinds is not None and meta.kind not in spec_input.kinds:
             if spec.name == "compute_returns" and meta.kind == SeriesKind.RATE_LEVEL:
                 continue  # reported by the more specific G08 RETURNS_ON_RATES
+            if spec.name == "hac_mean_difference" and is_outcome:
+                continue  # reported by the more specific G16 NONSTATIONARY_OUTCOME
             expected = [k.value for k in spec_input.kinds]
             issues.append(
                 make_issue(
@@ -806,12 +848,14 @@ def check_look_ahead(
     spec: CapabilitySpec,
     params: dict[str, Any],
     input_metas: dict[str, StaticMeta | None],
+    tested_in: list[str],
 ) -> list[Issue]:
     """G10 LOOK_AHEAD: flag_regime with a full-sample threshold (needs approval).
 
     Without it, a threshold computed from the whole sample (including the future)
     would be used silently; flags then use information nobody had at the time,
-    and any backtest looks better than reality.
+    and any backtest looks better than reality. When the flags feed a significance
+    test (`tested_in`), the message says that the test is invalidated too.
     """
     if spec.name != "flag_regime" or params.get("method") != "full_sample":
         return []
@@ -825,11 +869,138 @@ def check_look_ahead(
         f"came later, so a {period} flagged here could not have been flagged at the time "
         "(look-ahead bias). Results will look better than anything achievable in real time."
     )
+    if tested_in:
+        message += (
+            f" It also invalidates the significance test in {', '.join(tested_in)}: the "
+            "test assumes the flag was known at t, and this flag would not have been."
+        )
     suggestion = (
         "Use method='expanding': each threshold then uses only the data before that "
         f"{period}. Keep full_sample only for purely descriptive labelling."
     )
     return [make_issue("G10", step.id, message, suggestion)]
+
+
+def check_overlapping_observations(
+    step: Step,
+    spec: CapabilitySpec,
+    params: dict[str, Any],
+    input_metas: dict[str, StaticMeta | None],
+) -> list[Issue]:
+    """G11 OVERLAPPING_OBSERVATIONS: forward returns over more than one period.
+
+    Without it, h-period forward returns computed every period would look like
+    independent observations. Consecutive values share h-1 periods, so they are
+    autocorrelated by construction, and treating them as independent overstates
+    the evidence (e.g. naive standard errors or t-statistics).
+    """
+    horizon = params.get("horizon")
+    if spec.name != "forward_return" or not isinstance(horizon, int) or horizon <= 1:
+        return []
+    meta = input_metas.get("series")
+    period = PERIOD_NAMES.get(meta.frequency, "period") if meta else "period"
+    message = (
+        f"{horizon}-{period} forward returns are computed every {period}, so consecutive "
+        f"values share {horizon - 1} {period}s: they are autocorrelated by construction, "
+        "and there are far fewer independent observations than values."
+    )
+    suggestion = (
+        "Test with hac_mean_difference and leave maxlags unset: its default covers the "
+        f"overlap (at least {horizon - 1} lags). Read compare_groups' standard deviations as "
+        "descriptive only, or use horizon=1."
+    )
+    return [make_issue("G11", step.id, message, suggestion)]
+
+
+def check_forward_data_as_signal(
+    step: Step, spec: CapabilitySpec, input_metas: dict[str, StaticMeta | None]
+) -> list[Issue]:
+    """G15 FORWARD_DATA_AS_SIGNAL: forward returns used anywhere but as an outcome.
+
+    Without it, a forward return (the return from t to t+h, stamped at t) could
+    feed a volatility, a flag or another transformation. Anything built from it
+    uses information nobody had at t, so a "signal" would look predictive by
+    construction. Forward returns may only be the outcome input of compare_groups
+    or hac_mean_difference.
+    """
+    issues = []
+    for name, meta in input_metas.items():
+        if meta is None or meta.kind != SeriesKind.FORWARD_RETURNS:
+            continue
+        if OUTCOME_INPUTS.get(spec.name) == name:
+            continue
+        issues.append(
+            make_issue(
+                "G15",
+                step.id,
+                f"Input '{name}' of {spec.name} is a forward return: forward returns contain "
+                "future information and can only be used as an outcome, never to build a "
+                "signal.",
+                "Build signals (volatility, flags) from returns known at t (compute_returns); "
+                "use forward_return only as the values of compare_groups or the outcome of "
+                "hac_mean_difference.",
+                key=name,
+            )
+        )
+    return issues
+
+
+def check_nonstationary_outcome(
+    step: Step, spec: CapabilitySpec, input_metas: dict[str, StaticMeta | None]
+) -> list[Issue]:
+    """G16 NONSTATIONARY_OUTCOME: hac_mean_difference on something that is not a return.
+
+    Without it, the test could compare the mean of a price, an index or rate level,
+    or a volatility between groups. Such levels trend and wander instead of
+    fluctuating around a stable mean (they are non-stationary): the difference then
+    mostly reflects WHEN the flagged periods happened, and the p-value is invalid.
+    """
+    meta = input_metas.get("outcome")
+    if spec.name != "hac_mean_difference" or meta is None or meta.data_type != DataType.SERIES:
+        return []
+    if meta.kind in STATIONARY_OUTCOME_KINDS:
+        return []
+    return [
+        make_issue(
+            "G16",
+            step.id,
+            f"The outcome of hac_mean_difference is a series of kind '{meta.kind}'; it must be "
+            "returns or forward returns. Levels such as prices, index levels, rates or "
+            "volatility are non-stationary, which makes the test invalid.",
+            "Compute returns (compute_returns) or forward returns (forward_return) of the "
+            "price level, and test those.",
+        )
+    ]
+
+
+def check_hac_lags(
+    step: Step,
+    spec: CapabilitySpec,
+    params: dict[str, Any],
+    input_metas: dict[str, StaticMeta | None],
+) -> list[Issue]:
+    """G17 HAC_LAG_TOO_SHORT: maxlags set below h-1 for h-period forward returns.
+
+    Without it, a user could set fewer Newey-West lags than the overlap of the
+    forward returns (h-1 periods). The standard errors would then ignore part of
+    the autocorrelation the overlap creates, and the p-value would be too optimistic.
+    """
+    meta = input_metas.get("outcome")
+    maxlags = params.get("maxlags")
+    if spec.name != "hac_mean_difference" or meta is None or meta.horizon is None:
+        return []
+    if not isinstance(maxlags, int) or isinstance(maxlags, bool):
+        return []  # null = the default rule, which covers the overlap; bad types: G03
+    overlap = meta.horizon - 1
+    if maxlags >= overlap:
+        return []
+    message = (
+        f"maxlags={maxlags} is below h-1 = {overlap} for {meta.horizon}-period forward returns: "
+        "the standard errors ignore part of the overlap between consecutive outcomes, so the "
+        "p-value is too optimistic."
+    )
+    suggestion = f"Set maxlags to at least {overlap}, or leave it unset to use the default rule."
+    return [make_issue("G17", step.id, message, suggestion)]
 
 
 def check_period(
@@ -1052,6 +1223,7 @@ def infer_output_meta(
         frequency=first.frequency,
         return_method=first.return_method,
         periods=first.periods,
+        horizon=first.horizon,
         dataset_ids=datasets,
     )
     for meta_field, param_name in spec.meta_from_params.items():
@@ -1102,6 +1274,11 @@ def validate_plan(
     issues += check_duplicate_step_ids(plan)
 
     all_ids = [step.id for step in plan.steps]
+    # Flag step id -> the significance tests that use its flags (for G10's message).
+    tested_in: dict[str, list[str]] = {}
+    for step in plan.steps:
+        if step.capability == "hac_mean_difference" and "flags" in step.inputs:
+            tested_in.setdefault(step.inputs["flags"], []).append(step.id)
     metas: dict[str, StaticMeta | None] = {}
     for step in plan.steps:
         earlier_ids = list(metas)
@@ -1116,10 +1293,14 @@ def validate_plan(
         issues += check_params(step, spec)
         issues += check_references(step, spec, earlier_ids, all_ids)
         issues += check_returns_on_rates(step, spec, input_metas)
+        issues += check_forward_data_as_signal(step, spec, input_metas)
+        issues += check_nonstationary_outcome(step, spec, input_metas)
         issues += check_input_types(step, spec, input_metas)
         issues += check_frequency_mismatch(step, spec, input_metas)
-        issues += check_look_ahead(step, spec, params, input_metas)
+        issues += check_look_ahead(step, spec, params, input_metas, tested_in.get(step.id, []))
+        issues += check_overlapping_observations(step, spec, params, input_metas)
         issues += check_period(step, spec, params, input_metas, catalog)
+        issues += check_hac_lags(step, spec, params, input_metas)
         issues += check_material_assumptions(step, spec, params)
         metas[step.id] = infer_output_meta(spec, params, input_metas, catalog)
 

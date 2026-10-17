@@ -9,6 +9,7 @@ import math
 import numpy as np
 import pandas as pd
 import pytest
+import statsmodels.api as sm
 
 from quantlab import capabilities as cap
 from quantlab.data import Catalog
@@ -277,6 +278,33 @@ def test_compare_groups_averages_each_group_on_common_dates() -> None:
     assert (table["start"], table["end"]) == ("2024-01-12", "2024-02-02")
 
 
+# Hand-built flags with 3 episodes (runs of True) and values chosen for easy sums.
+FLAG_PATTERN = "TTFFTFFFTT"
+PATTERN_VALUES = [1.0, 3.0, 2.0, 4.0, 5.0, 6.0, 8.0, 7.0, 9.0, 11.0]
+
+
+def pattern_inputs(kind: SeriesKind = SeriesKind.RETURNS, **meta: object) -> tuple:
+    """(values, flags) artifacts for FLAG_PATTERN on the same ten weeks."""
+    values = make_artifact(PATTERN_VALUES, kind=kind, **meta)
+    flags = make_artifact(
+        [c == "T" for c in FLAG_PATTERN], kind=SeriesKind.FLAGS, data_type=DataType.FLAGS
+    )
+    return values, flags
+
+
+def test_compare_groups_std_and_episodes_on_a_hand_built_pattern() -> None:
+    table = cap.compare_groups(*pattern_inputs()).value
+    # Flagged: 1, 3, 5, 9, 11 (mean 5.8); normal: 2, 4, 6, 8, 7 (mean 5.4).
+    assert (table["n_flagged"], table["n_normal"]) == (5, 5)
+    assert table["n_episodes_flagged"] == 3  # TT, T, TT: three runs, not five weeks
+    assert table["mean_flagged"] == pytest.approx(5.8)
+    assert table["mean_normal"] == pytest.approx(5.4)
+    # Squared deviations: 23.04+7.84+0.64+10.24+27.04 = 68.8 and
+    # 11.56+1.96+0.36+6.76+2.56 = 23.2, each divided by n-1 = 4.
+    assert table["std_flagged"] == pytest.approx(math.sqrt(68.8 / 4))
+    assert table["std_normal"] == pytest.approx(math.sqrt(23.2 / 4))
+
+
 def test_compare_groups_refuses_an_empty_group() -> None:
     values = make_artifact([0.01, 0.02], kind=SeriesKind.RETURNS)
     flags = make_artifact([False, False], kind=SeriesKind.FLAGS, data_type=DataType.FLAGS)
@@ -365,3 +393,98 @@ def test_find_extremes_reports_the_earliest_tie_and_counts_it() -> None:
 def test_find_extremes_refuses_an_all_missing_series() -> None:
     with pytest.raises(ValueError):
         cap.find_extremes(make_artifact([np.nan, np.nan]))
+
+
+# --- forward returns ----------------------------------------------------------------
+
+
+def test_forward_return_one_period_is_stamped_at_its_start() -> None:
+    prices = make_artifact([100.0, 110.0, 99.0, 121.0])
+    out = cap.forward_return(prices, method="simple", horizon=1)
+    # Value at week t = P_{t+1} / P_t - 1; the last week has no next price and is dropped.
+    assert out.value.tolist() == pytest.approx([0.10, -0.10, 121 / 99 - 1])
+    assert out.value.index.equals(prices.value.index[:3])
+    log = cap.forward_return(prices, method="log", horizon=1)
+    assert log.value.tolist() == pytest.approx([math.log(1.1), math.log(0.9), math.log(121 / 99)])
+    assert (out.meta.kind, out.meta.horizon, log.meta.return_method) == (
+        SeriesKind.FORWARD_RETURNS, 1, "log"
+    )  # fmt: skip
+
+
+def test_forward_return_three_periods_drops_the_last_three() -> None:
+    prices = make_artifact([100.0, 110.0, 99.0, 121.0, 132.0])
+    out = cap.forward_return(prices, method="simple", horizon=3)
+    # 121/100 - 1 at week 0 and 132/110 - 1 at week 1; weeks 2-4 have no price 3 weeks later.
+    assert out.value.tolist() == pytest.approx([0.21, 0.20])
+    assert out.value.index.equals(prices.value.index[:2])
+    assert (out.meta.n_obs, out.meta.horizon, out.meta.return_method) == (2, 3, "simple")
+    assert not out.value.isna().any()
+    log = cap.forward_return(prices, method="log", horizon=3)
+    assert log.value.tolist() == pytest.approx([math.log(1.21), math.log(1.2)])
+
+
+def test_forward_return_rejects_non_positive_levels() -> None:
+    with pytest.raises(ValueError, match="positive"):
+        cap.forward_return(make_artifact([1.0, 0.0, 2.0]), method="log")
+
+
+# --- hac_mean_difference ------------------------------------------------------------
+
+
+def test_newey_west_lag_rule() -> None:
+    # floor(4 * (T/100)^(2/9)): exactly 4 at T=100; 4 * 0.1^(2/9) = 2.40 at T=10;
+    # 4 * 10^(2/9) = 6.67 at T=1000.
+    assert cap.newey_west_lags(100) == 4
+    assert cap.newey_west_lags(10) == 2
+    assert cap.newey_west_lags(1000) == 6
+
+
+def test_hac_coefficients_are_the_group_means() -> None:
+    test = cap.hac_mean_difference(*pattern_inputs()).value
+    # b = mean(flagged) - mean(normal) = 5.8 - 5.4, and a = mean(normal).
+    assert test["diff_means"] == pytest.approx(0.4)
+    assert test["mean_normal"] == pytest.approx(5.4)
+    assert (test["n_obs"], test["n_flagged"], test["n_normal"]) == (10, 5, 5)
+    assert test["n_episodes_flagged"] == 3
+    assert test["maxlags_used"] == 2  # floor(4 * 0.1^(2/9)) for T = 10
+    assert "horizon" not in test  # plain returns have no horizon
+
+
+def test_hac_standard_error_matches_a_direct_statsmodels_fit() -> None:
+    rng = np.random.default_rng(7)
+    returns = rng.normal(0.001, 0.02, 300)
+    flagged = np.repeat(rng.random(30) < 0.3, 10)  # clustered flags: 10-week runs
+    outcome = make_artifact(returns, kind=SeriesKind.RETURNS)
+    flags = make_artifact(flagged, kind=SeriesKind.FLAGS, data_type=DataType.FLAGS)
+    for maxlags in (None, 0, 3):
+        test = cap.hac_mean_difference(outcome, flags, maxlags=maxlags).value
+        lags = cap.newey_west_lags(300) if maxlags is None else maxlags
+        design = sm.add_constant(flagged.astype(float))
+        direct = sm.OLS(returns, design).fit(cov_type="HAC", cov_kwds={"maxlags": lags})
+        assert test["maxlags_used"] == lags
+        assert test["diff_means"] == pytest.approx(direct.params[1])
+        assert test["se_hac"] == pytest.approx(direct.bse[1])
+        assert test["t_stat"] == pytest.approx(direct.tvalues[1])
+        assert test["p_value"] == pytest.approx(direct.pvalues[1])
+        ci_low, ci_high = direct.conf_int(alpha=0.05)[1]
+        assert (test["ci_low"], test["ci_high"]) == pytest.approx((ci_low, ci_high))
+
+
+def test_hac_default_lags_cover_the_forward_return_overlap() -> None:
+    def lags(horizon: int, maxlags: int | None = None) -> int:
+        outcome, flags = pattern_inputs(SeriesKind.FORWARD_RETURNS, horizon=horizon)
+        return cap.hac_mean_difference(outcome, flags, maxlags=maxlags).value["maxlags_used"]
+
+    assert lags(1) == 2  # the rule alone (T = 10)
+    assert lags(3) == 2  # h-1 = 2 is already covered by the rule
+    assert lags(13) == 12  # raised to h-1
+    assert lags(13, maxlags=1) == 1  # a value set in the plan is used as given (G17 warns)
+    outcome, flags = pattern_inputs(SeriesKind.FORWARD_RETURNS, horizon=13)
+    assert cap.hac_mean_difference(outcome, flags).value["horizon"] == 13
+
+
+def test_hac_refuses_an_empty_group() -> None:
+    outcome = make_artifact([0.01, 0.02, 0.03], kind=SeriesKind.RETURNS)
+    flags = make_artifact([True, True, True], kind=SeriesKind.FLAGS, data_type=DataType.FLAGS)
+    with pytest.raises(ValueError, match="both groups"):
+        cap.hac_mean_difference(outcome, flags)

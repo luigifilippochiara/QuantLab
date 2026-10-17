@@ -38,6 +38,9 @@ SEVERITY_BADGE = {
 }
 # Name of the first column for TABLE artifacts made of named rows.
 TABLE_ROW_NAMES = {"find_extremes": "extreme"}
+# Words of a capability name written in capitals in step titles, so
+# hac_mean_difference reads "HAC mean difference" rather than "Hac mean difference".
+TITLE_ACRONYMS = {"hac": "HAC"}
 # Header badges of a plan step: its BLOCK and WARN findings and its edits. Approval
 # findings get no badge: they are handled one by one in the Validation section.
 STEP_BADGES = {
@@ -209,10 +212,11 @@ def step_title(position: int, capability: str) -> str:
     """A step's name in the plan, e.g. "Step 4 · C06 · Rolling volatility".
 
     An unregistered capability (e.g. one a planner invented) has no code, so its
-    title is just "Step 2 · Sarima".
+    title is just "Step 2 · Arima".
     """
     code = capability_code(capability)
-    readable = capability.replace("_", " ").capitalize()
+    readable = " ".join(TITLE_ACRONYMS.get(word, word) for word in capability.split("_"))
+    readable = readable[:1].upper() + readable[1:]  # "rolling volatility" -> "Rolling volatility"
     return f"Step {position} · {code} · {readable}" if code else f"Step {position} · {readable}"
 
 

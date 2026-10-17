@@ -64,7 +64,9 @@ def test_mock_planner_answers_canned_requests_by_exact_text(canned) -> None:
     # The volatility request contains example 1's keywords (nasdaq, volatil), yet
     # its exact text gets its own plan; a variation still matches example 1.
     variation = MockPlanner().generate_plan("nasdaq volatility since 2020, and its peak", [])
-    assert variation.plan.steps[-1].capability == "flag_regime"
+    assert [s.capability for s in variation.plan.steps] == [
+        s["capability"] for s in PLAN_A["steps"]
+    ]
 
 
 def test_system_prompt_explains_filter_period_placement(catalog: Catalog) -> None:
@@ -73,6 +75,15 @@ def test_system_prompt_explains_filter_period_placement(catalog: Catalog) -> Non
     assert "filter AFTER the calculation" in prompt and "BEFORE a rolling" in prompt
     # A relative period ("the last 5 years") becomes an explicit start from the data's end.
     assert "end_date in DATASETS minus that many years" in prompt
+
+
+def test_system_prompt_keeps_forward_returns_as_outcomes(catalog: Catalog) -> None:
+    prompt = build_system_prompt(catalog, ["NASDAQCOM"])
+    assert '"name": "forward_return"' in prompt and '"name": "hac_mean_difference"' in prompt
+    assert "use it ONLY as the values of compare_groups" in prompt
+    assert "never give them to any other capability" in prompt
+    # The one registered test is not refused as a "statistical test".
+    assert "statistical tests other than hac_mean_difference" in prompt
 
 
 def test_mock_planner_refuses_unknown_requests() -> None:

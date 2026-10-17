@@ -15,7 +15,7 @@ from quantlab.lineage import Approval, load_run, replay
 from quantlab.mock_scenarios import SCENARIOS_BY_ID
 from quantlab.narrator import build_facts_sheet, narrate
 
-from conftest import PERIOD_PLAN, RETURN_METHOD_APPROVAL, canned_plan
+from conftest import PERIOD_PLAN, RETURN_METHOD_APPROVAL, SCENARIO_1_APPROVALS, canned_plan
 from fakes import FakeAnthropicClient, text_response, tool_response
 
 
@@ -34,7 +34,7 @@ def start(settings: Settings, scenario_id: str = "volatility_flag_success") -> S
     "edits",
     [
         pytest.param({"s9": {"window": 3}}, id="add a step"),
-        pytest.param({"s4": {"capability": "sarima"}}, id="change the capability"),
+        pytest.param({"s4": {"capability": "arima"}}, id="change the capability"),
         pytest.param({"s4": {"inputs": {"series": "s1"}}}, id="change an input reference"),
         pytest.param({"s4": {"id": "s1"}}, id="change a step id"),
         pytest.param({"s4": {"code": "import os"}}, id="invent a field"),
@@ -80,8 +80,10 @@ def test_switching_to_full_sample_raises_g10_and_switching_back_clears_it(
 def test_weekly_to_daily_warns_g14_and_runs_after_re_approval(settings: Settings) -> None:
     session = start(settings)
     report = session.apply_param_edits({"s2": {"freq": "D"}})
-    assert [i.issue_id for i in report.warnings] == ["G14:s4:window", "G14:s5:min_periods"]
-    session.approve([RETURN_METHOD_APPROVAL])
+    assert [i.issue_id for i in report.warnings] == [
+        "G14:s4:window", "G14:s5:min_periods", "G14:s6:horizon"
+    ]  # fmt: skip
+    session.approve(SCENARIO_1_APPROVALS)
     assert session.execute().status == "completed"
     assert session.execution.artifacts["s4"].meta.frequency == "D"
     assert session.execution.artifacts["s4"].meta.notes[0].endswith("sqrt(252)")
@@ -114,12 +116,12 @@ def test_editing_filter_period_dates(settings: Settings) -> None:
 def test_any_edit_resets_approvals_and_approvals_record_the_plan_hash(settings: Settings) -> None:
     session = start(settings)
     first_version = session.plan_hash
-    session.approve([RETURN_METHOD_APPROVAL])
-    assert session.approvals[0].plan_hash == first_version
+    session.approve(SCENARIO_1_APPROVALS)
+    assert {a.plan_hash for a in session.approvals} == {first_version}
     session.apply_param_edits({"s4": {"window": 26}})
     assert session.plan_hash != first_version
     assert session.approvals == []
-    assert [i.issue_id for i in session.unresolved_approvals()] == [RETURN_METHOD_APPROVAL]
+    assert [i.issue_id for i in session.unresolved_approvals()] == SCENARIO_1_APPROVALS
 
 
 def test_an_approval_for_another_plan_version_does_not_count(settings: Settings) -> None:
@@ -127,7 +129,7 @@ def test_an_approval_for_another_plan_version_does_not_count(settings: Settings)
     stale = Approval(issue_id=RETURN_METHOD_APPROVAL, code="G12", step_id="s3",
                      message="m", approved_at="t", plan_hash="another-version")  # fmt: skip
     session.approvals.append(stale)
-    assert [i.issue_id for i in session.unresolved_approvals()] == [RETURN_METHOD_APPROVAL]
+    assert [i.issue_id for i in session.unresolved_approvals()] == SCENARIO_1_APPROVALS
     with pytest.raises(ExecutionRefusedError):
         session.execute()
 
@@ -150,7 +152,7 @@ def test_edited_run_records_the_diff_traces_it_and_replays_identically(
 ) -> None:
     session = start(settings)
     session.apply_param_edits({"s4": {"window": 26}})
-    session.approve([RETURN_METHOD_APPROVAL])
+    session.approve(SCENARIO_1_APPROVALS)
     session.execute()
     session.narrate()
     session.save_record()

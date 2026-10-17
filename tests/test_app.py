@@ -47,17 +47,23 @@ def button(app: AppTest, label: str):
     return next(b for b in app.button if b.label.startswith(label))
 
 
+def approve_all(app: AppTest) -> None:
+    """Tick every approval checkbox (scenario 1 has two: the return method of s3 and s6)."""
+    for key in [c.key for c in app.checkbox if c.key.startswith("approve-")]:
+        app.checkbox(key=key).check()
+    app.run()
+
+
 def test_scenario_1_full_flow(app_env: Settings) -> None:
     app = open_page("analysis.py")
     labels = [b.label for b in app.sidebar.button]
-    assert labels[0] == "1 · High-volatility weeks" and len(labels) == 5
+    assert labels[0] == "1 · High-volatility weeks and what follows" and len(labels) == 5
     app.sidebar.button(key="scenario-volatility_flag_success").click().run()
     button(app, "Generate plan").click().run()
     assert not app.exception, app.exception
 
-    assert button(app, "Execute").disabled  # the G12 approval is not ticked yet
-    approve = next(c.key for c in app.checkbox if c.key.startswith("approve-"))
-    app.checkbox(key=approve).check().run()
+    assert button(app, "Execute").disabled  # the G12 approvals are not ticked yet
+    approve_all(app)
     button(app, "Execute").click().run()
     assert not app.exception, app.exception
 
@@ -66,21 +72,31 @@ def test_scenario_1_full_flow(app_env: Settings) -> None:
     # Results and trace name each capability by code and name.
     results = [e.label for e in app.expander if e.label.startswith("s")]
     assert results[3].startswith("s4 · C06 · rolling_volatility · completed")
+    assert results[7].startswith("s8 · C13 · hac_mean_difference · completed")
+    # The significance test's table, every number formatted as in the facts sheet.
+    test = next(
+        d.value for d in app.dataframe
+        if "statistic" in d.value.columns and "p_value" in d.value["statistic"].tolist()
+    )  # fmt: skip
+    for statistic in ["diff_means", "se_hac", "p_value", "n_episodes_flagged", "maxlags_used"]:
+        assert statistic in test["statistic"].tolist()
+    # The trace starts at the final result, the test with its p-value.
     picker = next(b for b in app.selectbox if b.label == "Step to trace")
-    assert picker.options[-1] == "s5 · C07 · flag_regime"
+    assert picker.value == "s8" and picker.options[-1] == "s8 · C13 · hac_mean_difference"
     trace = next(d.value for d in app.dataframe if "library call" in d.value.columns)
-    assert trace[["step", "code", "capability"]].values.tolist()[:2] == [
+    assert trace[["step", "code", "capability"]].values.tolist()[:3] == [
+        ["s8", "C13", "hac_mean_difference"],
+        ["s6", "C12", "forward_return"],
         ["s5", "C07", "flag_regime"],
-        ["s4", "C06", "rolling_volatility"],
     ]
     subheaders = [h.value for h in app.subheader]
     # The trace panel sits directly under the results.
     assert subheaders[subheaders.index("Results") + 1] == "Trace a result"
     assert subheaders[-1] == "Run record"
-    assert len(app.get("plotly_chart")) >= 4  # daily, weekly, returns, shaded volatility
+    assert len(app.get("plotly_chart")) >= 5  # daily, weekly, returns, volatility, forward
 
     button(app, "Replay this run").click().run()
-    assert any("5 of 5 step outputs match" in s.value for s in app.success)
+    assert any("8 of 8 step outputs match" in s.value for s in app.success)
 
 
 def test_header_describes_the_product(app_env: Settings) -> None:
@@ -127,8 +143,7 @@ def test_datasets_are_labelled_id_first_with_full_names_on_hover(app_env: Settin
     assert "NASDAQCOM — Synthetic equity index" in load.options
     assert "- SP500 — Synthetic S&P 500, full name" in load.help
 
-    approve = next(c.key for c in app.checkbox if c.key.startswith("approve-"))
-    app.checkbox(key=approve).check().run()
+    approve_all(app)
     button(app, "Execute").click().run()
     assert any(c.value == "Source: NASDAQCOM — Synthetic equity index" for c in app.caption)
     sources = next(d.value for d in app.dataframe if "file sha256" in d.value.columns)
@@ -142,7 +157,7 @@ def test_datasets_are_labelled_id_first_with_full_names_on_hover(app_env: Settin
 
 
 @pytest.mark.parametrize(
-    "scenario_id", ["sarima_forecast_block", "prompt_injection_block", "frequency_mismatch_block"]
+    "scenario_id", ["arima_forecast_block", "prompt_injection_block", "frequency_mismatch_block"]
 )
 def test_blocked_scenario_cannot_execute(scenario_id: str, app_env: Settings) -> None:
     app = open_page("analysis.py")
@@ -230,8 +245,7 @@ def test_weekly_to_daily_edit_warns_and_runs_after_re_approval(app_env: Settings
     assert any("Approvals were reset" in i.value for i in app.info)
     assert any("edited (was W)" in c.value for c in app.caption)
 
-    app.checkbox(key=next(c.key for c in app.checkbox if c.key.startswith("approve-"))).check()
-    app.run()
+    approve_all(app)
     button(app, "Execute").click().run()
     assert not app.exception, app.exception
     trace = next(d.value for d in app.dataframe if "library call" in d.value.columns)
@@ -315,16 +329,17 @@ def step_headers(app: AppTest) -> list[tuple[str, bool]]:
 def test_plan_steps_are_collapsed_and_approvals_stay_in_validation(app_env: Settings) -> None:
     app = plan_scenario_1(app_env)
     headers = step_headers(app)
-    assert [is_open for _, is_open in headers] == [False] * 5  # the G12 step too
+    assert [is_open for _, is_open in headers] == [False] * 8  # the G12 steps too
     assert headers[0][0] == "Step 1 · C01 · Load series · NASDAQCOM — Synthetic equity index"
-    assert (
-        headers[2][0] == "Step 3 · C03 · Compute returns · method: simple, periods: 1"
-    )  # no badge
+    assert headers[2][0] == "Step 3 · C03 · Compute returns · method: log, periods: 1"  # no badge
     assert headers[3][0] == "Step 4 · C06 · Rolling volatility · window: 12 weeks, annualize: yes"
-    # The G12 approval is still required, in the Validation section, naming its step.
-    g12 = next(m.value for m in app.markdown if "**G12 MATERIAL_ASSUMPTION**" in m.value)
-    assert g12.endswith("· Step 3 · C03 · Compute returns (s3)")
-    assert len([c for c in app.checkbox if c.key.startswith("approve-")]) == 1
+    assert headers[5][0] == "Step 6 · C12 · Forward return · horizon: 1 week, method: log"
+    assert headers[7][0] == "Step 8 · C13 · HAC mean difference"  # maxlags unset: no summary
+    # The G12 approvals are still required, in the Validation section, naming their steps.
+    g12 = [m.value for m in app.markdown if "**G12 MATERIAL_ASSUMPTION**" in m.value]
+    assert g12[0].endswith("· Step 3 · C03 · Compute returns (s3)")
+    assert g12[1].endswith("· Step 6 · C12 · Forward return (s6)")
+    assert len([c for c in app.checkbox if c.key.startswith("approve-")]) == 2
     assert button(app, "Execute").disabled
     # Collapsing is visual only: the editor still runs.
     assert next(n for n in app.number_input if n.key.endswith("-s4-window")).value == 12
@@ -342,8 +357,12 @@ def test_edits_are_marked_and_steps_with_new_findings_open(app_env: Settings) ->
         "Step 4 · C06 · Rolling volatility · window: 12 trading days, annualize: yes"
     )
     assert headers[4][1] and "Warning]" in headers[3][0] and "Warning]" in headers[4][0]
-    # The new G12 approval of this plan version opens nothing and adds no badge.
-    assert headers[2] == ("Step 3 · C03 · Compute returns · method: simple, periods: 1", False)
+    # The forward horizon is counted in periods too: 1 week became 1 trading day.
+    assert headers[5][1] and headers[5][0].startswith(
+        "Step 6 · C12 · Forward return · horizon: 1 trading day, method: log"
+    )
+    # The new G12 approvals of this plan version open nothing and add no badge.
+    assert headers[2] == ("Step 3 · C03 · Compute returns · method: log, periods: 1", False)
 
 
 def test_step_summary_falls_back_to_every_parameter(app_env: Settings) -> None:
@@ -356,7 +375,7 @@ def test_step_summary_falls_back_to_every_parameter(app_env: Settings) -> None:
     assert ui.step_summary(flag, spec, "W", catalog) == "quantile: 0.9, method: expanding"
     every = dataclasses.replace(spec, summary_params=())
     assert ui.step_summary(flag, every, "W", catalog).endswith("min periods: 52 weeks")
-    unknown = Step(id="s2", capability="sarima", params={"steps_ahead": 1})
+    unknown = Step(id="s2", capability="arima", params={"steps_ahead": 1})
     assert ui.step_summary(unknown, None, None, catalog) == "steps ahead: 1"
     header = ui.step_header(2, unknown, "steps ahead: 1", {Severity.BLOCK}, edited=False)
-    assert header == "Step 2 · Sarima · steps ahead: 1 :red-badge[:material/block: Blocked]"
+    assert header == "Step 2 · Arima · steps ahead: 1 :red-badge[:material/block: Blocked]"
