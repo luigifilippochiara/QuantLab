@@ -99,8 +99,9 @@ The **Analysis** page follows the safety model step by step:
 2. Review the plan. Each step is a collapsible block whose header names the step
    and its main parameters (e.g. "Step 4 · Rolling volatility · window: 12 weeks,
    annualize: yes"); open it for its inputs, predicted output and editable fields.
-   Steps with a guardrail finding open by default with a badge, and edited steps
-   are marked, so nothing that needs attention is hidden.
+   Steps with a blocking issue or a warning open by default with a badge, and
+   edited steps are marked. Approvals are not shown on the steps: each one is listed
+   in the validation results, naming its step (e.g. "Step 3 · Compute returns").
 3. Read the validation results. Blocking issues must be resolved, approvals must
    be ticked, and warnings are shown for context.
 4. Click **Execute**. Results appear per step: charts for series (with flagged

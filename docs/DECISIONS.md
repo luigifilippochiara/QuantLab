@@ -293,11 +293,14 @@ and main parameters ("Step 4 · Rolling volatility · window: 12 weeks, annualiz
 yes"). Which parameters are main is declared in the registry
 (`CapabilitySpec.summary_params`, all parameters when empty); it is display-only,
 so it is not in the LLM summary and the registry version does not change. A step
-with any guardrail finding opens by default with a severity badge, and an edited
+with a BLOCK or WARN finding opens by default with a severity badge, and an edited
 step carries an "edited" badge. Expanders are keyed by plan version, like the
 editor's widgets, so after an edit is applied or reset every step returns to its
-default and steps with new findings open. Collapsing is visual only: the editor
-always runs, and approvals stay one by one in the Validation section. Alternative:
+default and steps with new BLOCK or WARN findings open. Collapsing is visual only:
+the editor always runs. Approval findings do not change how a step is shown (no
+badge, no opening): they are approved one by one in the Validation section, where
+each finding names its step as the plan does ("Step 3 · Compute returns (s3)"), so
+routine approvals such as the return method do not keep a step open. Alternative:
 show only steps with findings, rejected because a reviewer should still see the
 whole plan at a glance.
 

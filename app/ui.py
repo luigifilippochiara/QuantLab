@@ -24,7 +24,7 @@ from quantlab.guardrails import PERIOD_UNITS, Issue, Severity, parse_date
 from quantlab.lineage import ReplayReport, TraceResult
 from quantlab.mock_scenarios import SCENARIOS_BY_ID
 from quantlab.narrator import format_number
-from quantlab.plan import Step
+from quantlab.plan import Plan, Step
 from quantlab.registry import CapabilitySpec, ParamSpec
 from quantlab.types import Artifact, DataType
 
@@ -38,10 +38,10 @@ SEVERITY_BADGE = {
 }
 # Name of the first column for TABLE artifacts made of named rows.
 TABLE_ROW_NAMES = {"find_extremes": "extreme"}
-# Header badges of a plan step: its guardrail findings (most severe first) and edits.
+# Header badges of a plan step: its BLOCK and WARN findings and its edits. Approval
+# findings get no badge: they are handled one by one in the Validation section.
 STEP_BADGES = {
     Severity.BLOCK: ":red-badge[:material/block: Blocked]",
-    Severity.APPROVAL: ":orange-badge[:material/warning: Approval required]",
     Severity.WARN: ":yellow-badge[:material/info: Warning]",
 }
 EDITED_BADGE = ":blue-badge[:material/edit: edited]"
@@ -193,19 +193,28 @@ def step_summary(
     return ", ".join(parts)
 
 
+def step_title(position: int, capability: str) -> str:
+    """A step's name in the plan, e.g. "Step 4 · Rolling volatility"."""
+    return f"Step {position} · {capability.replace('_', ' ').capitalize()}"
+
+
+def step_titles(plan: Plan) -> dict[str, str]:
+    """Step id -> step name, so findings can name the step as the plan shows it."""
+    return {step.id: step_title(i, step.capability) for i, step in enumerate(plan.steps, 1)}
+
+
 def step_header(
     position: int, step: Step, summary: str, severities: set[Severity], edited: bool
 ) -> str:
     """The collapsed header of a plan step, e.g. "Step 4 · Rolling volatility · window: ...".
 
-    Badges follow for the step's guardrail findings (most severe first) and for
-    user-edited parameters, so neither is hidden when the step is collapsed.
+    Badges follow for the step's BLOCK and WARN findings (most severe first) and
+    for user-edited parameters, so neither is hidden when the step is collapsed.
     Plan text is escaped, so a planner value cannot inject Markdown.
     """
-    title = f"Step {position} · {step.capability.replace('_', ' ').capitalize()}"
+    title = step_title(position, step.capability)
     text = escape_md(f"{title} · {summary}" if summary else title)
-    badges = [STEP_BADGES[s] for s in (Severity.BLOCK, Severity.APPROVAL, Severity.WARN)
-              if s in severities]  # fmt: skip
+    badges = [STEP_BADGES[s] for s in (Severity.BLOCK, Severity.WARN) if s in severities]
     if edited:
         badges.append(EDITED_BADGE)
     return " ".join([text, *badges])
@@ -394,9 +403,18 @@ def grouped_bar_figure(
 # ---------------------------------------------------------------------------
 
 
-def render_issue(issue: Issue) -> None:
-    """Show one guardrail issue: severity badge, code, step, message and suggestion."""
-    where = f"step {issue.step_id}" if issue.step_id else "whole plan"
+def render_issue(issue: Issue, titles: dict[str, str] | None = None) -> None:
+    """Show one guardrail issue: severity badge, code, step, message and suggestion.
+
+    Args:
+        issue: the issue.
+        titles: step id -> step name (see step_titles), e.g. "Step 3 · Compute
+            returns"; the step is then named as in the plan, with its id.
+    """
+    where = "whole plan"
+    if issue.step_id:
+        title = (titles or {}).get(issue.step_id)
+        where = f"{escape_md(title)} ({issue.step_id})" if title else f"step {issue.step_id}"
     st.markdown(f"{SEVERITY_BADGE[issue.severity]} **{issue.code} {issue.name}** · {where}")
     st.markdown(escape_md(issue.message))
     if issue.suggestion:

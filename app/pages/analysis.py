@@ -130,14 +130,20 @@ else:
     issues = session.report.issues if session.report else []
     for position, step in enumerate(plan.steps, start=1):
         spec = REGISTRY.get(step.capability)
-        severities = {issue.severity for issue in issues if issue.step_id == step.id}
+        # BLOCK and WARN findings badge and open a step; approval findings do not
+        # change how a step is shown (they are handled in the Validation section).
+        severities = {
+            issue.severity
+            for issue in issues
+            if issue.step_id == step.id and issue.severity != Severity.APPROVAL
+        }
         step_edited = any(
             not ui.same_value(value, proposal.get(step.id, {}).get(name))
             for name, value in step.params.items()
         )
         input_meta = dry_run.get(next(iter(step.inputs.values()), ""), {})
         summary = ui.step_summary(step, spec, input_meta.get("frequency"), catalog)
-        # Collapsed unless the step has a guardrail finding. Collapsing is visual only:
+        # Collapsed unless the step has a BLOCK or WARN finding. Collapsing is visual only:
         # the editor below always runs, and approvals stay in the Validation section.
         # Keyed by plan version, so after an edit is applied every step starts again
         # from its default and a step with a new finding opens.
@@ -235,7 +241,7 @@ if report is not None:
     for severity in (Severity.BLOCK, Severity.APPROVAL, Severity.WARN):
         for issue in [i for i in report.issues if i.severity == severity]:
             with st.container(border=True):
-                ui.render_issue(issue)
+                ui.render_issue(issue, ui.step_titles(plan) if plan else None)
                 if severity == Severity.APPROVAL:
                     # Keyed by plan version: an edited plan starts with every box unticked.
                     is_ticked = st.checkbox(

@@ -279,18 +279,20 @@ def step_headers(app: AppTest) -> list[tuple[str, bool]]:
     return [(e.label, e.proto.expanded) for e in app.expander if e.label.startswith("Step ")]
 
 
-def test_plan_steps_are_collapsed_unless_they_have_a_finding(app_env: Settings) -> None:
+def test_plan_steps_are_collapsed_and_approvals_stay_in_validation(app_env: Settings) -> None:
     app = plan_scenario_1(app_env)
     headers = step_headers(app)
-    assert [is_open for _, is_open in headers] == [False, False, True, False, False]
+    assert [is_open for _, is_open in headers] == [False] * 5  # the G12 step too
     assert headers[0][0] == "Step 1 · Load series · NASDAQCOM — Synthetic equity index"
-    assert headers[2][0].startswith("Step 3 · Compute returns · method: simple, periods: 1 ")
-    assert headers[2][0].endswith("Approval required]")  # the G12 approval, badged
+    assert headers[2][0] == "Step 3 · Compute returns · method: simple, periods: 1"  # no badge
     assert headers[3][0] == "Step 4 · Rolling volatility · window: 12 weeks, annualize: yes"
-    # Collapsing is visual only: the editor still runs and approvals stay one by one.
-    assert next(n for n in app.number_input if n.key.endswith("-s4-window")).value == 12
+    # The G12 approval is still required, in the Validation section, naming its step.
+    g12 = next(m.value for m in app.markdown if "**G12 MATERIAL_ASSUMPTION**" in m.value)
+    assert g12.endswith("· Step 3 · Compute returns (s3)")
     assert len([c for c in app.checkbox if c.key.startswith("approve-")]) == 1
     assert button(app, "Execute").disabled
+    # Collapsing is visual only: the editor still runs.
+    assert next(n for n in app.number_input if n.key.endswith("-s4-window")).value == 12
 
 
 def test_edits_are_marked_and_steps_with_new_findings_open(app_env: Settings) -> None:
@@ -305,7 +307,8 @@ def test_edits_are_marked_and_steps_with_new_findings_open(app_env: Settings) ->
         "Step 4 · Rolling volatility · window: 12 trading days, annualize: yes"
     )
     assert headers[4][1] and "Warning]" in headers[3][0] and "Warning]" in headers[4][0]
-    assert headers[2][1] and "Approval required" in headers[2][0]  # G12 still to approve
+    # The new G12 approval of this plan version opens nothing and adds no badge.
+    assert headers[2] == ("Step 3 · Compute returns · method: simple, periods: 1", False)
 
 
 def test_step_summary_falls_back_to_every_parameter(app_env: Settings) -> None:
