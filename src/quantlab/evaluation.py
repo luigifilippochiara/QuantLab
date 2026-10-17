@@ -2,18 +2,23 @@
 
 Role in the architecture: this measures PLANNER accuracy only. It runs the
 planner (mock or live) on the golden requests in eval/golden_requests.yaml,
-validates each plan, and scores it against the expected capability sequence
-and key parameters. It does not execute anything: whether the computations
-themselves are right is measured separately, by the unit tests.
+validates each plan, and scores it against the expected capability sequence,
+key parameters and (where given) the expected guardrail outcome. It does not
+execute anything: whether the computations themselves are right is measured
+separately, by the unit tests.
 
 Metrics (normal cases = expect "plan"; adversarial = expect "refuse_or_block"):
 - valid-plan rate: normal cases whose plan has no BLOCK and is not a refusal;
 - exact sequence match: capability list equals the expected list, in order;
 - capability-set Jaccard: |expected AND planned| / |expected OR planned|, averaged;
 - key-param accuracy: share of expected parameter values found in the plan;
+- guardrail-outcome match: cases whose validation issues are exactly the expected ones;
 - correct refusal/block rate: adversarial cases that were refused or blocked.
 
-The CLI (`quantlab.cli eval`) and eval/run_eval.py both call `run_evaluation`.
+Each normal case is also scored item by item (every step in order, every key
+parameter, each severity of the guardrail outcome), so a mismatch shows exactly
+what the planner chose differently. The CLI (`quantlab.cli eval`) and
+eval/run_eval.py both call `run_evaluation`.
 """
 
 import math
@@ -26,13 +31,22 @@ import yaml
 
 from quantlab.config import PROJECT_ROOT, Settings
 from quantlab.data import Catalog, load_catalog
-from quantlab.guardrails import effective_params, fill_defaults, validate_plan
+from quantlab.guardrails import Issue, Severity, effective_params, fill_defaults, validate_plan
 from quantlab.mock_scenarios import SCENARIOS_BY_ID
+from quantlab.plan import Plan
 from quantlab.planner import generate_plan
 from quantlab.registry import REGISTRY
 
 GOLDEN_PATH = PROJECT_ROOT / "eval" / "golden_requests.yaml"
 REPORTS_DIR = PROJECT_ROOT / "eval" / "reports"
+
+# The severities of a golden case's `guardrails` entry, and the item names they are
+# reported under.
+GUARDRAIL_ITEMS = {
+    "approval": (Severity.APPROVAL, "approvals"),
+    "warn": (Severity.WARN, "warnings"),
+    "block": (Severity.BLOCK, "blocks"),
+}
 
 
 @dataclass
@@ -45,6 +59,24 @@ class GoldenCase:
     expect: str
     capabilities: list[str] = field(default_factory=list)
     key_params: dict[str, dict[str, Any]] = field(default_factory=dict)
+    guardrails: dict[str, list[str]] | None = None
+
+
+@dataclass
+class ItemCheck:
+    """One scored item of a golden case: what was expected and what the planner chose.
+
+    Fields:
+        item: what is checked, e.g. "step 6", "forward_return.method" or "approvals".
+        expected: the expected value, as text.
+        actual: the planned value, as text.
+        match: whether they agree.
+    """
+
+    item: str
+    expected: str
+    actual: str
+    match: bool
 
 
 @dataclass
@@ -62,8 +94,11 @@ class CaseScore:
         jaccard: capability-set overlap with the expected set.
         params_hit: expected parameter values found.
         params_total: expected parameter values checked.
-        correct: valid + exact sequence for normal cases; refused/blocked for adversarial ones.
+        correct: valid + exact sequence (+ the expected guardrail outcome, where given)
+            for normal cases; refused/blocked for adversarial ones.
         error: planner error, if any.
+        guardrails_match: issues are exactly the expected ones (None if not specified).
+        checks: the item-by-item comparison (normal cases).
     """
 
     case_id: str
@@ -78,6 +113,8 @@ class CaseScore:
     params_total: int
     correct: bool
     error: str | None
+    guardrails_match: bool | None = None
+    checks: list[ItemCheck] = field(default_factory=list)
 
 
 @dataclass
@@ -115,6 +152,7 @@ def load_golden(path: Path = GOLDEN_PATH) -> list[GoldenCase]:
                 expect=item["expect"],
                 capabilities=item.get("capabilities", []),
                 key_params=item.get("key_params", {}),
+                guardrails=item.get("guardrails"),
             )
         )
     return cases
@@ -126,6 +164,44 @@ def _same_value(expected: Any, actual: Any) -> bool:
         is_number = isinstance(actual, (int, float)) and not isinstance(actual, bool)
         return is_number and math.isclose(expected, actual, abs_tol=1e-9)
     return expected == actual
+
+
+def sequence_checks(expected: list[str], planned: list[str]) -> list[ItemCheck]:
+    """Compare the capability sequence position by position ("(none)" past either end)."""
+    checks = []
+    for position in range(max(len(expected), len(planned))):
+        want = expected[position] if position < len(expected) else "(none)"
+        got = planned[position] if position < len(planned) else "(none)"
+        checks.append(ItemCheck(f"step {position + 1}", want, got, want == got))
+    return checks
+
+
+def param_checks(key_params: dict[str, dict[str, Any]], plan: Plan | None) -> list[ItemCheck]:
+    """Compare each expected parameter value with the plan (defaults filled in).
+
+    A match only if EVERY step using the capability has the expected value (e.g. if
+    a plan resamples two series, both must be resampled weekly).
+    """
+    checks = []
+    for capability, params in key_params.items():
+        steps = [step for step in plan.steps if step.capability == capability] if plan else []
+        for name, expected in params.items():
+            values = [effective_params(s, REGISTRY[capability]).get(name) for s in steps]
+            match = bool(steps) and all(_same_value(expected, value) for value in values)
+            actual = ", ".join(str(value) for value in values) or f"(no {capability} step)"
+            checks.append(ItemCheck(f"{capability}.{name}", str(expected), actual, match))
+    return checks
+
+
+def guardrail_checks(expected: dict[str, list[str]], issues: list[Issue]) -> list[ItemCheck]:
+    """Compare the issue codes of each severity with the expected ones (order ignored)."""
+    checks = []
+    for key, (severity, item) in GUARDRAIL_ITEMS.items():
+        want = sorted(expected.get(key, []))
+        got = sorted(i.code for i in issues if i.severity == severity)
+        checks.append(ItemCheck(item, ", ".join(want) or "none", ", ".join(got) or "none",
+                                want == got))  # fmt: skip
+    return checks
 
 
 def score_case(
@@ -157,22 +233,19 @@ def score_case(
     union = expected_set | planned_set
     jaccard = len(expected_set & planned_set) / len(union) if union else 1.0
 
-    hits = total = 0
-    for capability, params in case.key_params.items():
-        steps = [step for step in plan.steps if step.capability == capability] if plan else []
-        for name, expected in params.items():
-            total += 1
-            # A hit only if EVERY step using the capability has the expected value
-            # (e.g. if a plan resamples two series, both must be resampled weekly).
-            if steps and all(
-                _same_value(expected, effective_params(s, REGISTRY[capability]).get(name))
-                for s in steps
-            ):
-                hits += 1
+    params = param_checks(case.key_params, plan)
+    guardrails_match = None
+    checks: list[ItemCheck] = []
+    if case.expect == "plan":
+        checks = sequence_checks(case.capabilities, planned) + params
+        if case.guardrails is not None:
+            outcome = guardrail_checks(case.guardrails, report.issues if report else result.issues)
+            guardrails_match = all(check.match for check in outcome)
+            checks += outcome
 
     sequence_match = planned == case.capabilities
     if case.expect == "plan":
-        correct = valid and sequence_match
+        correct = valid and sequence_match and guardrails_match is not False
     else:
         correct = refused or blocked
     return CaseScore(
@@ -184,10 +257,12 @@ def score_case(
         refused_or_blocked=refused or blocked,
         sequence_match=sequence_match,
         jaccard=round(jaccard, 4),
-        params_hit=hits,
-        params_total=total,
+        params_hit=sum(check.match for check in params),
+        params_total=len(params),
         correct=correct,
         error=result.error,
+        guardrails_match=guardrails_match,
+        checks=checks,
     )
 
 
@@ -207,24 +282,42 @@ def summarise(scores: list[CaseScore]) -> dict[str, float | None]:
         "key_param_accuracy": (
             round(sum(s.params_hit for s in normal) / params_total, 4) if params_total else None
         ),
+        "guardrail_outcome_match": rate(
+            [s.guardrails_match for s in normal if s.guardrails_match is not None]
+        ),
         "correct_refusal_block_rate": rate([s.refused_or_blocked for s in adversarial]),
         "overall_correct": rate([s.correct for s in scores]),
     }
 
 
-def run_evaluation(mode: str, settings: Settings, golden_path: Path = GOLDEN_PATH) -> EvalReport:
-    """Run the planner on every golden request and compute the metrics.
+def run_evaluation(
+    mode: str,
+    settings: Settings,
+    golden_path: Path = GOLDEN_PATH,
+    case_ids: list[str] | None = None,
+) -> EvalReport:
+    """Run the planner on the golden requests and compute the metrics.
 
     Args:
         mode: "mock", "cached" or "live".
         settings: settings.
         golden_path: the golden requests file.
+        case_ids: evaluate only these cases (None = all of them).
 
     Returns:
         The EvalReport.
+
+    Raises:
+        ValueError: if a requested case id is not in the golden file.
     """
     catalog = load_catalog(settings.catalog_path)
-    scores = [score_case(case, settings, catalog, mode) for case in load_golden(golden_path)]
+    cases = load_golden(golden_path)
+    if case_ids is not None:
+        unknown = sorted(set(case_ids) - {case.id for case in cases})
+        if unknown:
+            raise ValueError(f"unknown golden case id(s): {', '.join(unknown)}")
+        cases = [case for case in cases if case.id in case_ids]
+    scores = [score_case(case, settings, catalog, mode) for case in cases]
     return EvalReport(
         mode=mode,
         model="mock" if mode == "mock" else settings.planner_model,
@@ -274,6 +367,7 @@ def write_report(report: EvalReport, reports_dir: Path = REPORTS_DIR) -> Path:
         f"| Exact capability-sequence match | {_percent(m['exact_sequence_match'])} |",
         f"| Mean capability-set Jaccard | {m['mean_jaccard']} |",
         f"| Key-parameter accuracy | {_percent(m['key_param_accuracy'])} |",
+        f"| Guardrail-outcome match | {_percent(m['guardrail_outcome_match'])} |",
         f"| Correct refusal/block rate (adversarial) | "
         f"{_percent(m['correct_refusal_block_rate'])} |",
         f"| Overall correct | {_percent(m['overall_correct'])} |",
@@ -291,6 +385,17 @@ def write_report(report: EvalReport, reports_dir: Path = REPORTS_DIR) -> Path:
             f"{s.jaccard} | {params} | {', '.join(s.issue_codes) or '-'} | "
             f"{' > '.join(s.planned) or '(none)'} |"
         )
+    lines += ["", "## Item checks", ""]
+    for s in report.scores:
+        if not s.checks:
+            continue
+        lines += [f"### {s.case_id}", "", "| Item | Expected | Planned | Match |"]
+        lines.append("|---|---|---|---|")
+        lines += [
+            f"| {c.item} | {c.expected} | {c.actual} | {'yes' if c.match else 'NO'} |"
+            for c in s.checks
+        ]
+        lines.append("")
     reports_dir.mkdir(parents=True, exist_ok=True)
     stamp = datetime.now(UTC).strftime("%Y%m%d-%H%M%S")
     path = reports_dir / f"{stamp}-{report.mode}.md"

@@ -14,7 +14,7 @@ from streamlit.testing.v1 import AppTest
 from quantlab.config import PROJECT_ROOT, Settings
 from quantlab.data import load_catalog
 from quantlab.guardrails import GUARDRAILS, Severity
-from quantlab.mock_scenarios import CANNED_REQUESTS_BY_ID, SCENARIOS_BY_ID
+from quantlab.mock_scenarios import CANNED_REQUESTS_BY_ID, FLAGSHIP_REQUEST, SCENARIOS_BY_ID
 from quantlab.plan import Step
 from quantlab.registry import REGISTRY
 
@@ -97,6 +97,12 @@ def test_scenario_1_full_flow(app_env: Settings) -> None:
 
     button(app, "Replay this run").click().run()
     assert any("8 of 8 step outputs match" in s.value for s in app.success)
+
+
+def test_example_1_button_fills_in_the_flagship_request(app_env: Settings) -> None:
+    app = open_page("analysis.py")
+    app.sidebar.button(key="scenario-volatility_flag_success").click().run()
+    assert app.text_area(key="request_text").value == FLAGSHIP_REQUEST
 
 
 def test_header_describes_the_product(app_env: Settings) -> None:
@@ -333,7 +339,7 @@ def test_plan_steps_are_collapsed_and_approvals_stay_in_validation(app_env: Sett
     assert headers[0][0] == "Step 1 · C01 · Load series · NASDAQCOM — Synthetic equity index"
     assert headers[2][0] == "Step 3 · C03 · Compute returns · method: log, periods: 1"  # no badge
     assert headers[3][0] == "Step 4 · C06 · Rolling volatility · window: 12 weeks, annualize: yes"
-    assert headers[5][0] == "Step 6 · C12 · Forward return · horizon: 1 week, method: log"
+    assert headers[5][0] == "Step 6 · C12 · Forward return · horizon: 1 week, method: simple"
     assert headers[7][0] == "Step 8 · C13 · HAC mean difference"  # maxlags unset: no summary
     # The G12 approvals are still required, in the Validation section, naming their steps.
     g12 = [m.value for m in app.markdown if "**G12 MATERIAL_ASSUMPTION**" in m.value]
@@ -359,7 +365,7 @@ def test_edits_are_marked_and_steps_with_new_findings_open(app_env: Settings) ->
     assert headers[4][1] and "Warning]" in headers[3][0] and "Warning]" in headers[4][0]
     # The forward horizon is counted in periods too: 1 week became 1 trading day.
     assert headers[5][1] and headers[5][0].startswith(
-        "Step 6 · C12 · Forward return · horizon: 1 trading day, method: log"
+        "Step 6 · C12 · Forward return · horizon: 1 trading day, method: simple"
     )
     # The new G12 approvals of this plan version open nothing and add no badge.
     assert headers[2] == ("Step 3 · C03 · Compute returns · method: log, periods: 1", False)

@@ -4,7 +4,9 @@ import json
 import re
 
 from quantlab.config import PROJECT_ROOT
+from quantlab.evaluation import load_golden
 from quantlab.guardrails import GUARDRAILS
+from quantlab.mock_scenarios import FLAGSHIP_REQUEST, SCENARIOS_BY_ID
 from quantlab.registry import REGISTRY
 
 README = (PROJECT_ROOT / "README.md").read_text(encoding="utf-8")
@@ -56,6 +58,23 @@ def test_no_hardcoded_counts_or_code_ranges() -> None:
         found += [f"{path}: {m.group()}" for m in HARDCODED_COUNT.finditer(flat)]
         found += [f"{path}: {m.group()}" for m in CODE_RANGE.finditer(flat)]
     assert found == []
+
+
+def test_flagship_request_is_one_constant_used_everywhere() -> None:
+    # The app, the CLI and the notebooks read the scenario's request; the golden set
+    # resolves its `scenario:` reference to it; the README quotes it verbatim.
+    assert SCENARIOS_BY_ID["volatility_flag_success"].request is FLAGSHIP_REQUEST
+    golden = next(c for c in load_golden() if c.id == "s1_volatility_flag_success")
+    assert golden.request == FLAGSHIP_REQUEST
+    assert FLAGSHIP_REQUEST in README  # on one line, character for character
+    # The text is written only where it is defined, and quoted in the README.
+    opening = FLAGSHIP_REQUEST[:48]
+    texts = {**written_text(), "eval/golden_requests.yaml": (PROJECT_ROOT / "eval" /
+             "golden_requests.yaml").read_text(encoding="utf-8")}  # fmt: skip
+    assert sorted(path for path, text in texts.items() if opening in text) == [
+        "README.md",
+        "src/quantlab/mock_scenarios.py",
+    ]
 
 
 def test_every_notebook_exists() -> None:

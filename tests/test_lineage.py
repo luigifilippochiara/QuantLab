@@ -168,8 +168,8 @@ def test_manifest_records_the_forward_horizon_and_method(
     manifest = json.loads((settings.runs_dir / record.run_id / "manifest.json").read_text())
     forward = manifest["steps"][5]
     assert forward["capability"] == "forward_return"
-    assert forward["params"] == {"method": "log", "horizon": 1}
-    assert (forward["meta"]["horizon"], forward["meta"]["return_method"]) == (1, "log")
+    assert forward["params"] == {"method": "simple", "horizon": 1}
+    assert (forward["meta"]["horizon"], forward["meta"]["return_method"]) == (1, "simple")
     assert manifest["steps"][7]["meta"]["horizon"] == 1  # inherited by the test's table
     test = settings.runs_dir / record.run_id / "outputs" / "s8_hac_mean_difference.json"
     assert {"p_value", "se_hac", "maxlags_used", "n_episodes_flagged"} <= set(

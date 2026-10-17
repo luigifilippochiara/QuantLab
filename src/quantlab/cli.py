@@ -5,6 +5,7 @@
     uv run python -m quantlab.cli replay <run_id>          # re-run without the LLM, compare hashes
     uv run python -m quantlab.cli trace <run_id> <step_id> # where does this number come from?
     uv run python -m quantlab.cli eval --mode mock         # planner evaluation report
+    uv run python -m quantlab.cli eval --mode live --case s1_volatility_flag_success
 
 Role in the architecture: a thin, headless front end over engine.py,
 lineage.py and evaluation.py; it contains no analysis logic of its own.
@@ -203,8 +204,12 @@ def cmd_trace(args: argparse.Namespace, settings: Settings) -> int:
 
 
 def cmd_eval(args: argparse.Namespace, settings: Settings) -> int:
-    """Evaluate the planner on the golden requests and write a Markdown report."""
-    report = run_evaluation(args.mode, settings)
+    """Evaluate the planner on the golden requests and write a Markdown report.
+
+    Item checks (expected versus planned) are printed for the cases named with
+    --case, all of them; without --case, only the items that do not match.
+    """
+    report = run_evaluation(args.mode, settings, case_ids=args.cases)
     path = write_report(report)
     print_table(
         ["case", "expect", "correct", "planned / issues"],
@@ -214,6 +219,14 @@ def cmd_eval(args: argparse.Namespace, settings: Settings) -> int:
             for s in report.scores
         ],
     )  # fmt: skip
+    for s in report.scores:
+        shown = s.checks if args.cases else [c for c in s.checks if not c.match]
+        if shown:
+            print(f"\n{s.case_id}, item by item:")
+            print_table(
+                ["item", "expected", "planned", "match"],
+                [[c.item, c.expected, c.actual, "yes" if c.match else "NO"] for c in shown],
+            )
     print("\nMetrics:")
     for name, value in report.metrics.items():
         print(f"  {name}: {'n/a' if value is None else value}")
@@ -248,6 +261,9 @@ def build_parser() -> argparse.ArgumentParser:
 
     evaluate = commands.add_parser("eval", help="evaluate the planner on golden requests")
     evaluate.add_argument("--mode", choices=LLM_MODES, default="mock")
+    evaluate.add_argument(
+        "--case", action="append", dest="cases", help="evaluate only this golden case (repeatable)"
+    )
     return parser
 
 

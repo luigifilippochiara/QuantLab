@@ -100,19 +100,15 @@ def _refusal(reason: str) -> dict[str, Any]:
     }
 
 
-def _weekly_volatility_flag_steps(
-    return_method: str, flag_params: dict[str, Any]
-) -> list[dict[str, Any]]:
-    """Steps s1-s5 of scenarios 1 and 2, which differ in the return method and the threshold."""
-    returns_rationale = {"simple": "Simple weekly returns of the index.",
-                         "log": "Weekly log returns of the index."}[return_method]  # fmt: skip
+def _weekly_volatility_flag_steps(flag_params: dict[str, Any]) -> list[dict[str, Any]]:
+    """The steps of scenario 2: weekly simple returns, their volatility and the flags."""
     return [
         _step("s1", "load_series", params={"dataset_id": "NASDAQCOM"},
               rationale="Load the NASDAQ Composite daily closes."),
         _step("s2", "resample", {"series": "s1"}, {"freq": "W", "how": "last"},
               rationale="Weekly Friday closes, as requested."),
-        _step("s3", "compute_returns", {"series": "s2"}, {"method": return_method, "periods": 1},
-              rationale=returns_rationale),
+        _step("s3", "compute_returns", {"series": "s2"}, {"method": "simple", "periods": 1},
+              rationale="Simple weekly returns of the index."),
         _step("s4", "rolling_volatility", {"series": "s3"}, {"window": 12, "annualize": True},
               rationale="12-week rolling annualised volatility."),
         _step("s5", "flag_regime", {"series": "s4"}, flag_params,
@@ -120,16 +116,64 @@ def _weekly_volatility_flag_steps(
     ]  # fmt: skip
 
 
-# Scenario 1 continues after the flags: the following week's return, stamped on the
-# flag week, compared descriptively and then tested.
-NEXT_WEEK_COMPARISON_STEPS = [
-    _step("s6", "forward_return", {"series": "s2"}, {"horizon": 1, "method": "log"},
-          rationale="Log return from each Friday close to the next, stamped on the first week."),
+# The flagship request (example 1). It states every choice the plan makes, so a live
+# planner can reach exactly the canned plan below from the text alone (the golden set
+# checks it item by item). Defined once: the app, the CLI, the notebooks, the golden
+# set and the tests read it from here; the README quotes it, and a test checks the quote.
+FLAGSHIP_REQUEST = (
+    "Using NASDAQ Composite (NASDAQCOM) weekly data, calculate weekly log returns, "
+    "estimate 12-week annualised rolling volatility, and flag unusually volatile weeks as "
+    "those above the 90th percentile of past volatility only (expanding window, at least "
+    "52 weeks of history). Compare next-week simple returns after volatile weeks with "
+    "those after normal weeks, then test whether the difference in means is statistically "
+    "significant using Newey-West standard errors."
+)
+
+# Example 1's plan. Every parameter is written out (no hidden defaults).
+FLAGSHIP_STEPS = [
+    # The dataset named in the request.
+    _step("s1", "load_series", params={"dataset_id": "NASDAQCOM"},
+          rationale="Load the NASDAQ Composite daily closes."),
+    # Weekly Friday closes: every later step works on complete weeks.
+    _step("s2", "resample", {"series": "s1"}, {"freq": "W", "how": "last"},
+          rationale="Weekly Friday closes, as requested."),
+    # LOG returns for the volatility: they add up over time, which is what the
+    # square-root-of-time annualisation assumes.
+    _step("s3", "compute_returns", {"series": "s2"}, {"method": "log", "periods": 1},
+          rationale="Weekly log returns, the input of the volatility."),
+    # 12 weeks, annualised by sqrt(52), as requested.
+    _step("s4", "rolling_volatility", {"series": "s3"}, {"window": 12, "annualize": True},
+          rationale="12-week rolling annualised volatility."),
+    # The threshold uses past volatility only, after 52 weeks of history, so every
+    # flag could have been set at the time (no look-ahead).
+    _step("s5", "flag_regime", {"series": "s4"},
+          {"method": "expanding", "quantile": 0.90, "min_periods": 52},
+          rationale="Flag weeks above the 90th percentile of past volatility only."),
+    # SIMPLE returns for the outcome, unlike s3: a mean of log returns is lower than
+    # the mean simple return by about half the variance, so it would understate the
+    # more volatile weeks and bias the comparison against them. Computed from the
+    # weekly prices (s2), so the outcome starts at the close of the flagged week.
+    _step("s6", "forward_return", {"series": "s2"}, {"horizon": 1, "method": "simple"},
+          rationale="Simple return over the following week, stamped on the week it follows."),
+    # Describe first: both groups' means, spreads and number of episodes...
     _step("s7", "compare_groups", {"values": "s6", "flags": "s5"},
-          rationale="Describe next-week returns after flagged and after normal weeks."),
+          rationale="Describe next-week returns after volatile and after normal weeks."),
+    # ...then test that same difference, with standard errors that allow for clustered
+    # volatility (maxlags unset: the Newey-West rule).
     _step("s8", "hac_mean_difference", {"outcome": "s6", "flags": "s5"}, {"maxlags": None},
-          rationale="Test the difference with Newey-West standard errors (default lags)."),
+          rationale="Test the difference in means with Newey-West standard errors."),
 ]  # fmt: skip
+
+# The plan's declared assumptions, shown to the analyst as the planner's notes.
+FLAGSHIP_NOTES = (
+    "Assumptions: log returns for the volatility (time-additive, consistent with "
+    "square-root-of-time annualisation); simple returns for the outcome (a mean of log "
+    "returns is lower by about half the variance, which would bias the comparison against "
+    "high-volatility weeks); the expanding threshold uses past volatility only (at least 52 "
+    "weeks), so every flag was known at the time. The next-week return runs from each "
+    "Friday close to the next, after the data behind the flag. compare_groups describes "
+    "the two groups first; hac_mean_difference then tests the difference (default lags)."
+)
 
 
 SCENARIOS: list[Scenario] = [
@@ -137,29 +181,13 @@ SCENARIOS: list[Scenario] = [
         id="volatility_flag_success",
         number=1,
         label="1 · High-volatility weeks and what follows",
-        request=(
-            "Calculate weekly returns for NASDAQ, estimate 12-week rolling volatility, "
-            "identify unusually volatile weeks, and test whether returns in the following "
-            "week differ from normal weeks."
-        ),
+        request=FLAGSHIP_REQUEST,
         dataset_ids=("NASDAQCOM",),
         expected_status="completed",
-        expected_codes=("G12",),
+        expected_codes=("G12",),  # the two return-method approvals (s3 and s6), nothing else
         auto_approve=True,
         keywords=(("nasdaq",), ("volatil",)),
-        plan=_plan(
-            ["NASDAQCOM"],
-            _weekly_volatility_flag_steps(
-                "log", {"method": "expanding", "quantile": 0.90, "min_periods": 52}
-            )
-            + NEXT_WEEK_COMPARISON_STEPS,
-            "'Unusually volatile' = 12-week annualised volatility above the 90th percentile "
-            "of its own past only (expanding window, so no future data is used). 'Returns in "
-            "the following week' = the log return from each week's Friday close to the next "
-            "(forward_return, horizon 1), stamped on the week it follows: the flag uses data "
-            "up to that Friday, the outcome only data after it. compare_groups describes both "
-            "groups; hac_mean_difference tests the difference with Newey-West standard errors.",
-        ),
+        plan=_plan(["NASDAQCOM"], FLAGSHIP_STEPS, FLAGSHIP_NOTES),
     ),
     Scenario(
         id="volatility_flag_lookahead",
@@ -176,7 +204,7 @@ SCENARIOS: list[Scenario] = [
         keywords=(("nasdaq",), ("full-sample", "full sample")),
         plan=_plan(
             ["NASDAQCOM"],
-            _weekly_volatility_flag_steps("simple", {"method": "full_sample", "quantile": 0.95}),
+            _weekly_volatility_flag_steps({"method": "full_sample", "quantile": 0.95}),
             "Full-sample threshold used because the request asks for it explicitly.",
         ),
     ),

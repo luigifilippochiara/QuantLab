@@ -64,9 +64,9 @@ QuantLab also runs fully offline in **mock mode**, which needs no API key.
 **Example output.** For example workflow 1 on the 1971-2026 NASDAQ snapshot,
 QuantLab reports that 446 of 2,842 weeks (15.7%) had a 12-week annualised
 volatility above the 90th percentile of their own past, in 40 distinct episodes.
-The following week's log return averaged 0.107% after a flagged week and 0.203%
-after a normal week: a difference of -0.096 percentage points, with a Newey-West
-standard error of 0.228 (8 lags) and a p-value of 0.68, so there is no
+The following week's simple return averaged 0.209% after a flagged week and
+0.230% after a normal week: a difference of -0.021 percentage points, with a
+Newey-West standard error of 0.223 (8 lags) and a p-value of 0.93, so there is no
 statistically significant difference. The share of flagged weeks exceeds 10%
 because each week is compared only with the history available at the time, so
 the more volatile decades after the 1970s cross the earlier thresholds more often.
@@ -84,6 +84,7 @@ uv run python -m quantlab.cli run 1 --datasets NASDAQCOM --mode mock --approve-a
 uv run python -m quantlab.cli replay <run_id>     # re-run without the model, compare hashes
 uv run python -m quantlab.cli trace <run_id> s5   # where does this number come from?
 uv run python -m quantlab.cli eval --mode mock    # planner evaluation -> eval/reports/
+uv run python -m quantlab.cli eval --mode live --case s1_volatility_flag_success   # one case, item by item
 
 uv run pytest                                     # test suite: no network, no API key
 uv run ruff check . && uv run ruff format --check .
@@ -150,18 +151,24 @@ behaviour, and the protections QuantLab applies along the way. They run with
 canned plans in mock mode (`mock_scenarios.py`) or with the live planner, from the
 app or with `cli demo`.
 
-1. **High-volatility weeks and what follows** (`volatility_flag_success`):
-   "Calculate weekly returns for NASDAQ, estimate 12-week rolling volatility,
-   identify unusually volatile weeks, and test whether returns in the following
-   week differ from normal weeks." Weekly closes, log returns, 12-week rolling
-   annualised volatility, flags above the 90th percentile of past volatility only
-   (expanding), the following week's return stamped on each week
-   (`forward_return`), a descriptive comparison (`compare_groups`) and the
-   significance test (`hac_mean_difference`). The analyst confirms the return
-   method of the returns and of the forward returns (G12). The result shows the
-   volatility with the high-volatility weeks shaded, both groups' means and
-   standard deviations, the number of distinct episodes, and the test's
-   difference, p-value and 95% confidence interval.
+1. **High-volatility weeks and what follows** (`volatility_flag_success`). The
+   request states every choice, so the live planner can reach the same plan as
+   the canned one from the text alone:
+
+   > Using NASDAQ Composite (NASDAQCOM) weekly data, calculate weekly log returns, estimate 12-week annualised rolling volatility, and flag unusually volatile weeks as those above the 90th percentile of past volatility only (expanding window, at least 52 weeks of history). Compare next-week simple returns after volatile weeks with those after normal weeks, then test whether the difference in means is statistically significant using Newey-West standard errors.
+
+   Weekly Friday closes; weekly log returns for the volatility (they add up over
+   time, as square-root-of-time annualisation assumes); 12-week annualised
+   rolling volatility; flags above the 90th percentile of past volatility only
+   (expanding, after 52 weeks); the following week's simple return stamped on
+   each week (`forward_return`: a mean of log returns would be lower by about
+   half the variance and bias the comparison against volatile weeks); a
+   descriptive comparison first (`compare_groups`), then the significance test
+   (`hac_mean_difference`). The analyst confirms the two return-method choices
+   (G12); there is no warning and no block. The result shows the volatility with
+   the high-volatility weeks shaded, both groups' means and standard deviations,
+   the number of distinct episodes, and the test's difference, p-value and 95%
+   confidence interval.
 2. **Look-ahead protection** (`volatility_flag_lookahead`): the high-volatility
    flags of example 1 (without the comparison), with a full-sample
    95th-percentile threshold. QuantLab allows it only with
@@ -503,8 +510,12 @@ Two separate questions, measured separately:
   `eval/run_eval.py`) on `eval/golden_requests.yaml`: the five example workflows,
   simple variations, and adversarial requests (such as a forecast) that must end
   in a refusal or a BLOCK. Metrics: valid-plan rate, exact capability-sequence
-  match, capability-set Jaccard, key-parameter accuracy and correct refusal/block
-  rate. Reports go to `eval/reports/`. In mock mode this checks the harness only
+  match, capability-set Jaccard, key-parameter accuracy, guardrail-outcome match
+  and correct refusal/block rate. Each case is also reported item by item (every
+  step in order, every key parameter, the issues of each severity), so a live
+  mismatch shows exactly what the planner chose differently; `--case <id>` runs
+  one case, such as the fully specified flagship (`s1_volatility_flag_success`).
+  Reports go to `eval/reports/`. In mock mode this checks the harness only
   (the mock knows just the five examples and the canned requests); `--mode live`
   measures the real model.
 * **Are the computations right?** Measured by the unit tests, independently of
@@ -535,8 +546,9 @@ runs/                       run records, plan cache, events.jsonl (git-ignored)
 
 * **Live mode coverage.** The OpenAI path is in use with `gpt-6-luna` for both
   the planner and the narrator. The Anthropic path is covered by automated tests
-  with simulated responses only, and the live planner evaluation (`eval --mode
-  live`) has not yet been run. Mock mode, used by the tests, the CLI, the
+  with simulated responses only, and the full live planner evaluation (`eval
+  --mode live`) has not yet been run; the flagship case was run live three times
+  and matched the canned plan exactly each time. Mock mode, used by the tests, the CLI, the
   notebooks and the app, is fully covered.
 * **No plan -> observe -> replan loop.** Validation errors are shown to the
   analyst but not yet fed back to the model for a corrected plan.

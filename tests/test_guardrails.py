@@ -335,12 +335,10 @@ def test_g10_says_when_it_also_invalidates_the_significance_test(catalog: Catalo
 
 
 def test_g12_message_names_the_chosen_value(catalog: Catalog) -> None:
-    raw = raw_plan(SUCCESS)
-    step(raw, "s3")["params"]["method"] = "simple"
-    issues = validate(raw, catalog).approvals_required
+    issues = validate(raw_plan(SUCCESS), catalog).approvals_required
     assert [i.code for i in issues] == ["G12", "G12"]
-    assert "method='simple'" in issues[0].message  # compute_returns
-    assert "method='log'" in issues[1].message  # forward_return applies G12 the same way
+    assert "method='log'" in issues[0].message  # compute_returns, for the volatility
+    assert "method='simple'" in issues[1].message  # forward_return applies G12 the same way
 
 
 # --- G11 OVERLAPPING_OBSERVATIONS -------------------------------------------------

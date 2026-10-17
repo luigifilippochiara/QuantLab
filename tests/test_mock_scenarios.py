@@ -11,14 +11,19 @@ import subprocess
 import pytest
 
 from quantlab.config import Settings
+from quantlab.data import Catalog
 from quantlab.engine import ExecutionRefusedError, Session, run_request
+from quantlab.guardrails import fill_defaults, validate_plan
+from quantlab.lineage import replay
 from quantlab.mock_scenarios import (
     CANNED_REQUESTS,
+    FLAGSHIP_REQUEST,
     SCENARIOS,
     SCENARIOS_BY_ID,
     CannedRequest,
     Scenario,
 )
+from quantlab.plan import Plan
 
 from conftest import ARIMA_PLAN, RETURN_METHOD_APPROVAL, SCENARIO_1_APPROVALS
 from fakes import FakeAnthropicClient, tool_response
@@ -59,6 +64,58 @@ def test_canned_request_end_to_end(canned: CannedRequest, settings: Settings) ->
     assert session.report.codes() == sorted(canned.expected_codes)
     assert not session.execution.issues
     assert session.narrative.grounding.grounded, session.narrative.grounding.ungrounded
+
+
+# --- the flagship (example 1): fully specified, so mock and live should agree -----
+
+# (step id, capability, inputs, params): the plan the flagship request specifies.
+FLAGSHIP_PLAN = [
+    ("s1", "load_series", {}, {"dataset_id": "NASDAQCOM"}),
+    ("s2", "resample", {"series": "s1"}, {"freq": "W", "how": "last"}),
+    ("s3", "compute_returns", {"series": "s2"}, {"method": "log", "periods": 1}),
+    ("s4", "rolling_volatility", {"series": "s3"}, {"window": 12, "annualize": True}),
+    ("s5", "flag_regime", {"series": "s4"},
+     {"method": "expanding", "quantile": 0.90, "min_periods": 52}),
+    ("s6", "forward_return", {"series": "s2"}, {"horizon": 1, "method": "simple"}),
+    ("s7", "compare_groups", {"values": "s6", "flags": "s5"}, {}),
+    ("s8", "hac_mean_difference", {"outcome": "s6", "flags": "s5"}, {"maxlags": None}),
+]  # fmt: skip
+
+
+def test_flagship_plan_is_exactly_the_specified_plan() -> None:
+    plan = SCENARIOS_BY_ID["volatility_flag_success"].plan
+    steps = [(s["id"], s["capability"], s["inputs"], s["params"]) for s in plan["steps"]]
+    assert steps == FLAGSHIP_PLAN
+    assert plan["dataset_ids"] == ["NASDAQCOM"] and not plan["cannot_fulfill"]
+    # The assumptions the plan declares to the analyst.
+    notes = plan["planner_notes"]
+    assert "log returns for the volatility" in notes and "square-root-of-time" in notes
+    assert "simple returns for the outcome" in notes and "half the variance" in notes
+    assert "past volatility only" in notes
+
+
+def test_flagship_validates_with_exactly_two_g12_approvals(catalog: Catalog) -> None:
+    raw = SCENARIOS_BY_ID["volatility_flag_success"].plan
+    plan = fill_defaults(Plan(plan_id="p", request=FLAGSHIP_REQUEST, **raw))
+    report = validate_plan(plan, catalog)
+    assert [(i.issue_id, i.severity) for i in report.issues] == [
+        ("G12:s3:return_method", "APPROVAL"),  # log returns for the volatility
+        ("G12:s6:return_method", "APPROVAL"),  # simple returns for the outcome
+    ]  # nothing else: no WARN, no BLOCK
+    assert "method='log'" in report.issues[0].message
+    assert "method='simple'" in report.issues[1].message
+
+
+def test_flagship_runs_end_to_end_and_replays_identically(settings: Settings) -> None:
+    session = run_request(FLAGSHIP_REQUEST, ["NASDAQCOM"], "mock", approve=True,
+                          settings=settings)  # fmt: skip
+    assert session.status == "completed" and not session.execution.issues
+    assert [a.issue_id for a in session.approvals] == SCENARIO_1_APPROVALS
+    assert session.narrative.grounding.grounded
+    report = replay(session.run_id, settings)
+    assert report.all_match, report.message
+    original = [r.output_hash for r in session.execution.step_records]
+    assert [s.replay_hash for s in report.steps] == original and len(original) == 8
 
 
 def test_scenario_1_needs_the_return_method_approvals_then_tests(settings: Settings) -> None:

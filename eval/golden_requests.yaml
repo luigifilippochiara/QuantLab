@@ -13,18 +13,26 @@
 #   key_params:   capability -> {param: expected value}; checked on every step using
 #                 that capability, with defaults filled in. Only values the request
 #                 actually implies are listed (e.g. not a window the user never gave).
+#   guardrails:   optional expected validation outcome: the issue codes of each
+#                 severity (approval, warn, block), duplicates counted, order ignored.
+#
+# Normal cases are also reported item by item (each step in order, each key
+# parameter, each severity), so a mismatch shows what the planner chose differently.
 
+# The flagship request states every choice, so a live planner should reproduce the
+# canned plan exactly: all eight steps in order, the parameters the request names,
+# and the outcome of two return-method approvals with no warning and no block.
 - id: s1_volatility_flag_success
   scenario: volatility_flag_success
   expect: plan
   capabilities: [load_series, resample, compute_returns, rolling_volatility, flag_regime,
                  forward_return, compare_groups, hac_mean_difference]
   key_params:
-    load_series: {dataset_id: NASDAQCOM}
-    resample: {freq: W}
+    compute_returns: {method: log}
     rolling_volatility: {window: 12}
-    flag_regime: {method: expanding}
-    forward_return: {horizon: 1}
+    flag_regime: {method: expanding, quantile: 0.90}
+    forward_return: {horizon: 1, method: simple}
+  guardrails: {approval: [G12, G12], warn: [], block: []}
 
 - id: s2_volatility_flag_lookahead
   scenario: volatility_flag_lookahead

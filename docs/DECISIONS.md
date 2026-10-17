@@ -791,20 +791,16 @@ rejected as needlessly unhelpful when the dataset's last date is known.
 This section partly reverses "Descriptive capabilities only" above: QuantLab
 again has one significance test, built to answer the brief's core question.
 
-**Example 1 answers the brief end to end.** Its request is now "Calculate weekly
-returns for NASDAQ, estimate 12-week rolling volatility, identify unusually
-volatile weeks, and test whether returns in the following week differ from
-normal weeks." The canned plan: weekly Friday closes, log returns, 12-week
-annualised volatility, flags above the expanding 90th percentile (52 weeks of
-history first), next-week forward returns from the weekly closes, `compare_groups`
-and `hac_mean_difference` on the forward returns and the flags. Its only issues
-are the two G12 approvals of the return method (of `compute_returns` and of
-`forward_return`). Log returns, because they add up over time, so a multi-week
-forward return is the sum of the weekly ones. Example 2 keeps its five steps
-unchanged (simple returns, full-sample threshold, no test), so the look-ahead
-protection is still shown on its own; the first five steps of both come from
-one helper that takes the return method. The canned plans' version is now
-`canned-scenarios-v7`.
+**Example 1 answers the brief end to end.** Its request is the fully specified
+flagship request (see "The flagship request, fully specified" below). The canned
+plan: weekly Friday closes, weekly log returns, 12-week annualised volatility,
+flags above the expanding 90th percentile (52 weeks of history first), next-week
+simple forward returns from the weekly closes, then `compare_groups` and
+`hac_mean_difference` on the forward returns and the flags. Its only issues are
+the two G12 approvals of the return method (of `compute_returns` and of
+`forward_return`). Example 2 keeps its five steps unchanged (simple returns,
+full-sample threshold, no test), so the look-ahead protection is still shown on
+its own.
 
 **`forward_return` is back, redefined, and only ever an outcome (C12).** From a
 price or index level, the value at t is the return from the close of t to the
@@ -913,3 +909,55 @@ tests". With the new registry version as well, no plan cached before is reused.
 **Step titles write HAC in capitals.** Titles are generated from the capability
 name; a small word table (`ui.TITLE_ACRONYMS`) makes `hac_mean_difference` read
 "HAC mean difference" instead of "Hac mean difference".
+
+## The flagship request, fully specified
+
+**One request that states every choice.** Example 1's request now names the
+dataset, the frequency, both return methods, the window, the threshold and its
+history, the outcome horizon and the test. It is `FLAGSHIP_REQUEST` in
+`mock_scenarios.py`, defined once: the scenario, the app's example button, the
+CLI, the notebooks and the golden set (through its `scenario:` reference) read
+it, and the README quotes it on one line. A test checks the quote and that the
+text is written nowhere else. Why: a loosely worded request leaves the return
+methods, the threshold and the horizon to the planner, so mock and live plans
+could differ for legitimate reasons, and the evaluation could not tell a planner
+error from an interpretation. Alternative: keep the natural wording and accept
+variation, rejected for the flagship, which is the demo and the anchor of the
+tests; the other golden requests stay loosely worded on purpose, to measure
+interpretation.
+
+**Log returns for the volatility, simple returns for the outcome.** Log returns
+add up over time, which is what square-root-of-time annualisation assumes. For
+the outcome, a mean of log returns is lower than the mean simple return by about
+half the variance (E[ln(1+R)] is about E[R] minus half the variance), and the
+variance is larger after volatile weeks, so log means would bias the comparison
+against them. On the NASDAQ snapshot the gap between the groups shrinks from
+-0.096 percentage points with log returns to -0.021 with simple returns. Both
+choices are G12 approvals; the canned plan declares them, with the expanding
+threshold's use of past data only, in its planner notes, and each step carries a
+why-comment in the code. `compare_groups` comes before the test: describe the
+groups first, then test the difference.
+
+**The golden flagship entry is scored item by item.** It lists the exact
+capability sequence, six key parameters (the methods of both return steps, the
+window, the threshold method and quantile, the horizon) and the expected
+guardrail outcome, `{approval: [G12, G12], warn: [], block: []}`. The harness
+gained that optional `guardrails` field and an item-by-item comparison
+(`ItemCheck`: every step in order, every key parameter, the issue codes of each
+severity) in the score of every normal case. `cli eval` prints it (all items
+with `--case <id>`, which evaluates one case, otherwise only the mismatches) and
+the Markdown report includes it. A normal case is now correct only if its
+guardrail outcome matches too, where one is given. The planner prompt was not
+changed for this: live mode must reach the plan from the request alone.
+
+**Live results.** Three live runs of the flagship entry (OpenAI `gpt-6-luna`,
+`planner-v5`, 2026-10-17) matched on every item, and the three plans were
+identical to the canned plan in every step, input and parameter (they leave
+`maxlags` unset, which fills in as the same default). Their planner notes differ
+in wording from the canned notes and do not restate the log/simple reasoning;
+notes are free text and are not scored.
+
+**No cache bump was needed.** The plan-cache key includes the request text (with
+the prompt version, the model and the registry version), so the new request can
+never return a plan cached for the old one. The canned plans' version moved to
+`canned-scenarios-v8`, since their content changed.
