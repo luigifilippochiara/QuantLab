@@ -1,13 +1,13 @@
-"""Capability registry page: the approved menu, plus the guardrail table.
+"""Capability registry page: the approved menu of capabilities.
 
-Everything shown is generated from quantlab.registry and quantlab.guardrails,
-so this page cannot drift from what the validator and executor enforce.
+Everything shown is generated from quantlab.registry, so this page cannot drift
+from what the planner may name and the executor may run. The guardrails have
+their own page (guardrails.py).
 """
 
 import pandas as pd
 import streamlit as st
 
-from quantlab.guardrails import GUARDRAILS
 from quantlab.registry import REGISTRY, ParamSpec, llm_summary, registry_version
 
 import ui
@@ -80,23 +80,6 @@ for spec in REGISTRY.values():
             st.markdown(f"- {ui.escape_md(assumption.text)}{flag}")
         st.markdown("**Underlying library calls**")
         st.code(spec.library_calls, language="python")
-
-st.subheader("Guardrails")
-# A static table (not an interactive dataframe) so the long explanations wrap and all rows show.
-st.table(
-    pd.DataFrame(
-        [
-            {
-                "code": g.code,
-                "name": g.name,
-                "severity": g.severity.value,
-                "stage": g.stage,
-                "what goes wrong without it": g.risk,
-            }
-            for g in GUARDRAILS.values()
-        ]
-    ).set_index("code")
-)
 
 with st.expander("What the planner LLM sees (generated summary)", icon=":material/smart_toy:"):
     st.code(llm_summary(), language="json")

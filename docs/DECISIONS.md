@@ -272,7 +272,7 @@ load datasets in a different order lose that metric but keep a Jaccard of 1.
 ## Streamlit app
 
 **`st.navigation` with explicit page titles.** `app/streamlit_app.py` is a small
-router; the four pages are plain scripts in `app/pages/` and shared rendering
+router; the five pages are plain scripts in `app/pages/` and shared rendering
 helpers live in `app/ui.py`. This gives readable page names ("Run history"
 rather than file names) and keeps each page a top-to-bottom script.
 
@@ -283,7 +283,7 @@ nothing can be placed above it. The router therefore hides that menu
 use for "Datasets" and "LLM mode", so it matches their font and size by
 construction, followed by one `st.page_link` per `st.Page` (same titles and icons),
 and finally runs the page, whose own sidebar content comes below. It lives in
-`streamlit_app.py`, so all four pages share it. Alternative: CSS that moves or
+`streamlit_app.py`, so all five pages share it. Alternative: CSS that moves or
 prefixes the native menu, rejected as fragile: it depends on Streamlit's internal
 markup, which can change between versions.
 
@@ -303,6 +303,21 @@ each finding names its step as the plan does ("Step 3 · Compute returns (s3)"),
 routine approvals such as the return method do not keep a step open. Alternative:
 show only steps with findings, rejected because a reviewer should still see the
 whole plan at a glance.
+
+**Guardrails have their own page, and both reference pages count from the code.**
+The guardrail table moved from the Capability registry page to a "Guardrails"
+page listed directly below it, so each page answers one question (what may run,
+and what stops it). The menu order is the order of the `st.Page` list in
+`streamlit_app.py`: with `st.navigation`, Streamlit ignores the `pages/`
+file-name convention, so numeric file prefixes would change nothing. The intro
+lines compute their numbers: the capability count from `REGISTRY`, the static and
+runtime counts from the `stage` of each entry in `guardrails.GUARDRAILS`, the
+same table every issue takes its name and severity from. A test reads every
+`make_issue(code, ...)` call in the source and requires the static codes in
+`guardrails.py` and the runtime codes in `executor.py` to match the table
+exactly, so a guardrail cannot be added, removed or moved without the page
+following. Alternative: hand-written counts in the copy, rejected because they go
+stale silently.
 
 **No dataset is preselected.** The Datasets picker starts empty, so the analyst
 chooses the data instead of starting from a NASDAQ default; an example workflow

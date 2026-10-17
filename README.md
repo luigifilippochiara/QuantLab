@@ -113,8 +113,9 @@ The **Analysis** page follows the safety model step by step:
 The other pages: **Run history** lists past runs, shows each manifest and user
 edits, and replays a run without the model; **Monitoring** shows run outcomes,
 latency per stage, capability usage and guardrail activity; **Capability
-registry** lists every approved capability, the guardrails, and the exact
-summary the planner model sees.
+registry** lists every approved capability and the exact summary the planner
+model sees; **Guardrails** lists every static and runtime guardrail with its
+severity and what goes wrong without it.
 
 ### Editing a plan before it runs
 
@@ -347,7 +348,8 @@ audit). Fewer libraries means fewer versions to pin, record and explain.
 Each guardrail is a small named function whose docstring explains what goes
 wrong without it. Static guardrails run on the plan alone (the planner's plan and
 every user edit, through the same validator); runtime guardrails need data and
-run in the executor. The table is generated from `guardrails.GUARDRAILS`. G11
+run in the executor. The table is generated from `guardrails.GUARDRAILS`, which
+also feeds the **Guardrails** page and its counts. G11
 (overlapping observations in a t-test) was retired together with the statistical
 tests; codes are never reused, so the issue ids in older run records keep their
 meaning and those runs can still be replayed.

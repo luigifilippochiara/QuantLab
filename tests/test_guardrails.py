@@ -1,15 +1,18 @@
 """Static guardrails G01-G14: each triggers on a crafted plan and stays silent on a clean one.
 
 Also covers filter_period's interval rules (G03): at least one date, start
-before end, valid dates, and a period that overlaps the data.
+before end, valid dates, and a period that overlaps the data; and checks that the
+GUARDRAILS table (shown on the Guardrails page) lists exactly the implemented checks.
 """
 
+import ast
 import copy
 import json
 from typing import Any
 
 import pytest
 
+from quantlab.config import PROJECT_ROOT
 from quantlab.data import Catalog
 from quantlab.guardrails import (
     GUARDRAILS,
@@ -382,3 +385,51 @@ def test_tool_schema_excludes_system_fields_and_has_no_refs() -> None:
     assert "$ref" not in json.dumps(schema)
     step_props = schema["properties"]["steps"]["items"]["properties"]
     assert set(step_props) == {"id", "capability", "inputs", "params", "rationale"}
+
+
+# --- the GUARDRAILS table lists exactly the implemented checks --------------------
+# The Guardrails page and its counts are generated from the table, so it must not
+# drift from the code: every issue is built by make_issue(code, ...), and the codes
+# are read from the source of every module.
+
+
+def is_call_to(node: ast.AST, name: str) -> bool:
+    """Whether a syntax-tree node is a call to the plain name `name`, e.g. make_issue(...)."""
+    return isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and node.func.id == name
+
+
+def make_issue_codes() -> set[tuple[str, str]]:
+    """(file name, guardrail code) for every make_issue call in src/quantlab."""
+    found = set()
+    for path in sorted((PROJECT_ROOT / "src" / "quantlab").glob("*.py")):
+        for node in ast.walk(ast.parse(path.read_text(encoding="utf-8"))):
+            if is_call_to(node, "make_issue"):
+                code = node.args[0]
+                assert isinstance(code, ast.Constant), f"{path.name}:{node.lineno}: literal code"
+                found.add((path.name, code.value))
+    return found
+
+
+def test_guardrail_table_matches_the_implemented_checks() -> None:
+    raised = make_issue_codes()
+    # Static checks live in guardrails.py, runtime checks in executor.py, nowhere else.
+    assert {file for file, _ in raised} == {"guardrails.py", "executor.py"}
+    static = {code for file, code in raised if file == "guardrails.py"}
+    runtime = {code for file, code in raised if file == "executor.py"}
+    assert static == {c for c, g in GUARDRAILS.items() if g.stage == "static"}
+    assert runtime == {c for c, g in GUARDRAILS.items() if g.stage == "runtime"}
+    # Static guardrails are the plan-level G codes, runtime ones the R codes.
+    assert all(code.startswith("G") for code in static)
+    assert all(code.startswith("R") for code in runtime)
+
+
+def test_issues_are_only_built_through_make_issue() -> None:
+    """So the make_issue scan above sees every guardrail code."""
+    builders = []
+    for path in sorted((PROJECT_ROOT / "src" / "quantlab").glob("*.py")):
+        for node in ast.walk(ast.parse(path.read_text(encoding="utf-8"))):
+            if isinstance(node, ast.FunctionDef) and any(
+                is_call_to(inner, "Issue") for inner in ast.walk(node)
+            ):
+                builders.append((path.name, node.name))
+    assert builders == [("guardrails.py", "make_issue")]

@@ -13,7 +13,7 @@ from streamlit.testing.v1 import AppTest
 
 from quantlab.config import PROJECT_ROOT, Settings
 from quantlab.data import load_catalog
-from quantlab.guardrails import Severity
+from quantlab.guardrails import GUARDRAILS, Severity
 from quantlab.mock_scenarios import CANNED_REQUESTS_BY_ID, SCENARIOS_BY_ID
 from quantlab.plan import Step
 from quantlab.registry import REGISTRY
@@ -142,13 +142,35 @@ def test_blocked_scenario_cannot_execute(scenario_id: str, app_env: Settings) ->
     assert any("blocked" in m.value for m in app.markdown if "Run `" in m.value)
 
 
-@pytest.mark.parametrize("page", ["run_history.py", "monitoring.py", "registry.py"])
+@pytest.mark.parametrize(
+    "page", ["run_history.py", "monitoring.py", "registry.py", "guardrails.py"]
+)
 def test_other_pages_render(page: str, app_env: Settings) -> None:
     open_page(page)
 
 
+def test_capability_count_comes_from_the_registry(app_env: Settings) -> None:
+    app = open_page("registry.py")
+    assert f"these {len(REGISTRY)} capabilities" in app.caption[0].value
+    # The guardrails moved to their own page: shown in one place only.
+    assert not app.table and [h.value for h in app.subheader] == []
+
+
+def test_guardrails_page_counts_and_table_come_from_the_code(app_env: Settings) -> None:
+    app = open_page("guardrails.py")
+    assert app.title[0].value == "Guardrails"
+    static = sum(code.startswith("G") for code in GUARDRAILS)  # plan-level G codes
+    runtime = sum(code.startswith("R") for code in GUARDRAILS)  # runtime R codes
+    intro = app.caption[0].value
+    assert f"every plan passes {static} static guardrails" in intro
+    assert f"and {runtime} runtime guardrails" in intro
+    table = app.table[0].value
+    assert list(table.index) == list(GUARDRAILS)
+    assert list(table.columns) == ["name", "severity", "stage", "what goes wrong without it"]
+
+
 def test_sidebar_title_sits_above_the_page_menu(app_env: Settings) -> None:
-    """Through the router: the title first, then the four page links, then the page's own."""
+    """Through the router: the title first, then the five page links, then the page's own."""
     app = AppTest.from_file(str(PROJECT_ROOT / "app" / "streamlit_app.py"), default_timeout=60)
     app.run()
     assert not app.exception, app.exception
@@ -161,11 +183,12 @@ def test_sidebar_title_sits_above_the_page_menu(app_env: Settings) -> None:
         ("Run history", ":material/history:"),
         ("Monitoring", ":material/monitoring:"),
         ("Capability registry", ":material/menu_book:"),
+        ("Guardrails", ":material/shield:"),
     ]
     # Drawing order: the title, then the menu, then the page's own sidebar content.
-    order = [(node.type, node.value) for node in list(app.sidebar.children.values())[:6]]
-    assert [kind for kind, _ in order] == ["header"] + ["page_link"] * 4 + ["header"]
-    assert (order[0][1], order[5][1]) == ("QuantLab", "Datasets")
+    order = [(node.type, node.value) for node in list(app.sidebar.children.values())[:7]]
+    assert [kind for kind, _ in order] == ["header"] + ["page_link"] * 5 + ["header"]
+    assert (order[0][1], order[6][1]) == ("QuantLab", "Datasets")
 
 
 def issue_codes(app: AppTest) -> set[str]:
