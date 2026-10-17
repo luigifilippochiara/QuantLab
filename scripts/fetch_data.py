@@ -57,10 +57,7 @@ SERIES_TO_FETCH: list[dict[str, str]] = [
     {
         "fred_id": "DGS10",
         "title": "10-Year U.S. Treasury Constant Maturity Yield",
-        "full_name": (
-            "Market Yield on U.S. Treasury Securities at 10-Year Constant Maturity, "
-            "Quoted on an Investment Basis"
-        ),
+        "full_name": "Market Yield on U.S. Treasury Securities at 10-Year Constant Maturity",
         "description": "10-year US Treasury constant-maturity yield, daily, in percent.",
         "units": "Percent",
         "kind": "rate_level",
@@ -68,10 +65,7 @@ SERIES_TO_FETCH: list[dict[str, str]] = [
     {
         "fred_id": "DGS2",
         "title": "2-Year U.S. Treasury Constant Maturity Yield",
-        "full_name": (
-            "Market Yield on U.S. Treasury Securities at 2-Year Constant Maturity, "
-            "Quoted on an Investment Basis"
-        ),
+        "full_name": "Market Yield on U.S. Treasury Securities at 2-Year Constant Maturity",
         "description": "2-year US Treasury constant-maturity yield, daily, in percent.",
         "units": "Percent",
         "kind": "rate_level",

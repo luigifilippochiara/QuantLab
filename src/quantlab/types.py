@@ -24,9 +24,9 @@ class DataType(StrEnum):
 
     SERIES = "series"  # float time series: pd.Series with a DatetimeIndex
     FLAGS = "flags"  # boolean time series: pd.Series of bool with a DatetimeIndex
+    TABLE = "table"
     # dict of named scalars (e.g. summary statistics), or of named rows that are
     # dicts of scalars (e.g. find_extremes: {"max": {"date": ..., "value": ...}})
-    TABLE = "table"
 
 
 class SeriesKind(StrEnum):
