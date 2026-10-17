@@ -6,7 +6,7 @@ import json
 from quantlab.config import Settings
 from quantlab.data import Catalog
 from quantlab.engine import run_request
-from quantlab.executor import execute_plan
+from quantlab.executor import StepRecord, execute_plan
 from quantlab.guardrails import validate_plan
 from quantlab.lineage import (
     Approval,
@@ -18,11 +18,12 @@ from quantlab.lineage import (
     new_run_id,
     replay,
     save_run,
+    step_capability_code,
     trace,
 )
 from quantlab.mock_scenarios import CANNED_REQUESTS_BY_ID
 from quantlab.monitoring import read_events
-from quantlab.registry import registry_version
+from quantlab.registry import REGISTRY, registry_version
 
 from conftest import RETURN_METHOD_APPROVAL, SPREAD_PLAN, as_plan, raw_plan
 
@@ -144,3 +145,37 @@ def test_replay_of_a_period_and_extremes_run_matches(settings: Settings) -> None
     report = replay(session.run_id, settings)
     assert report.all_match, report.message
     assert [s.capability for s in report.steps][-2:] == ["filter_period", "find_extremes"]
+
+
+def test_manifest_records_each_steps_capability_code(settings: Settings, catalog: Catalog) -> None:
+    record = run_and_save(SCENARIO_1, settings, catalog)
+    manifest = json.loads((settings.runs_dir / record.run_id / "manifest.json").read_text())
+    for step in manifest["steps"]:
+        assert step["capability_code"] == REGISTRY[step["capability"]].code
+    assert manifest["steps"][3]["capability_code"] == "C06"  # rolling_volatility
+
+
+def test_manifests_from_before_codes_still_replay_and_trace(
+    settings: Settings, catalog: Catalog
+) -> None:
+    """A run record without codes: replay still matches, and codes come from the names."""
+    record = run_and_save(SCENARIO_1, settings, catalog)
+    path = settings.runs_dir / record.run_id / "manifest.json"
+    manifest = json.loads(path.read_text())
+    for step in manifest["steps"]:
+        del step["capability_code"]
+    path.write_text(json.dumps(manifest))
+    old = load_run(record.run_id, settings.runs_dir)
+    assert all(step.capability_code is None for step in old.steps)
+
+    report = replay(record.run_id, settings)
+    assert report.all_match, report.message
+    assert [step.capability_code for step in report.steps] == ["C01", "C02", "C03", "C06", "C07"]
+    chain = trace(old, "s5").chain
+    assert [step.capability_code for step in chain] == ["C07", "C06", "C03", "C02", "C01"]
+
+
+def test_a_retired_capability_has_no_code() -> None:
+    step = StepRecord(step_id="s4", capability="forward_return", library_calls="pandas",
+                      params={}, input_step_ids={}, input_hashes={})  # fmt: skip
+    assert step_capability_code(step) is None

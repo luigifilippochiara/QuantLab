@@ -25,7 +25,7 @@ from quantlab.lineage import ReplayReport, TraceResult
 from quantlab.mock_scenarios import SCENARIOS_BY_ID
 from quantlab.narrator import format_number
 from quantlab.plan import Plan, Step
-from quantlab.registry import CapabilitySpec, ParamSpec
+from quantlab.registry import CapabilitySpec, ParamSpec, capability_code
 from quantlab.types import Artifact, DataType
 
 SERIES_COLOR = "#3987e5"  # blue: the series itself
@@ -193,9 +193,27 @@ def step_summary(
     return ", ".join(parts)
 
 
+def capability_label(name: str, code: str | None = None) -> str:
+    """A capability as shown in the app, e.g. "C06 · rolling_volatility".
+
+    Args:
+        name: capability name.
+        code: its code as recorded in a run record; when missing it is looked up
+            from the registry. A name that is not registered is shown alone.
+    """
+    code = code or capability_code(name)
+    return f"{code} · {name}" if code else name
+
+
 def step_title(position: int, capability: str) -> str:
-    """A step's name in the plan, e.g. "Step 4 · Rolling volatility"."""
-    return f"Step {position} · {capability.replace('_', ' ').capitalize()}"
+    """A step's name in the plan, e.g. "Step 4 · C06 · Rolling volatility".
+
+    An unregistered capability (e.g. one a planner invented) has no code, so its
+    title is just "Step 2 · Sarima".
+    """
+    code = capability_code(capability)
+    readable = capability.replace("_", " ").capitalize()
+    return f"Step {position} · {code} · {readable}" if code else f"Step {position} · {readable}"
 
 
 def step_titles(plan: Plan) -> dict[str, str]:
@@ -206,7 +224,7 @@ def step_titles(plan: Plan) -> dict[str, str]:
 def step_header(
     position: int, step: Step, summary: str, severities: set[Severity], edited: bool
 ) -> str:
-    """The collapsed header of a plan step, e.g. "Step 4 · Rolling volatility · window: ...".
+    """The collapsed header of a plan step, e.g. "Step 4 · C06 · Rolling volatility · window: ...".
 
     Badges follow for the step's BLOCK and WARN findings (most severe first) and
     for user-edited parameters, so neither is hidden when the step is collapsed.
@@ -408,8 +426,8 @@ def render_issue(issue: Issue, titles: dict[str, str] | None = None) -> None:
 
     Args:
         issue: the issue.
-        titles: step id -> step name (see step_titles), e.g. "Step 3 · Compute
-            returns"; the step is then named as in the plan, with its id.
+        titles: step id -> step name (see step_titles), e.g. "Step 3 · C03 ·
+            Compute returns"; the step is then named as in the plan, with its id.
     """
     where = "whole plan"
     if issue.step_id:
@@ -448,7 +466,7 @@ def render_artifact(
     """
     meta = artifact.meta
     if artifact.data_type == DataType.SERIES:
-        title = f"{step_id} {capability} ({meta.kind}, {meta.frequency})"
+        title = f"{step_id} · {capability_label(capability)} ({meta.kind}, {meta.frequency})"
         st.plotly_chart(
             series_figure(artifact.value, title, str(meta.kind), flags),
             width="stretch",
@@ -503,6 +521,7 @@ def render_trace(result: TraceResult, catalog: Catalog) -> None:
         [
             {
                 "step": s.step_id,
+                "code": s.capability_code or "-",
                 "capability": s.capability,
                 "inputs": ", ".join(f"{k} <- {v}" for k, v in s.inputs.items()) or "-",
                 "params": describe_params(s.params, s.edited) or "-",
@@ -565,6 +584,7 @@ def render_replay(report: ReplayReport, catalog: Catalog) -> None:
                 [
                     {
                         "step": s.step_id,
+                        "code": s.capability_code or "-",
                         "capability": s.capability,
                         "original hash": (s.original_hash or "-")[:16],
                         "replay hash": (s.replay_hash or "-")[:16],

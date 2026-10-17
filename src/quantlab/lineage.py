@@ -30,6 +30,7 @@ from quantlab.executor import StepRecord, execute_plan
 from quantlab.guardrails import Issue, ValidationReport
 from quantlab.monitoring import log_event
 from quantlab.plan import Plan
+from quantlab.registry import capability_code
 from quantlab.types import Artifact, DataType, canonical_text
 
 # Library versions recorded in every manifest (fixed names, never user input).
@@ -174,7 +175,7 @@ class RunRecord(BaseModel):
         registry_version: hash of the capability registry summary.
         steps: one StepRecord per executed step.
         warnings: all WARN issues (static and runtime).
-        runtime_issues: issues raised during execution (R01-R04).
+        runtime_issues: issues raised during execution (runtime guardrails, R codes).
         narrative: narrator output and grounding check (see narrator.NarrativeResult).
         stage_timings_ms: latency per stage.
         error: why the run did not complete, if it did not.
@@ -397,6 +398,7 @@ class StepReplay(BaseModel):
 
     step_id: str
     capability: str
+    capability_code: str | None
     original_hash: str | None
     replay_hash: str | None
     match: bool
@@ -422,6 +424,22 @@ class ReplayReport(BaseModel):
     datasets: list[DatasetCheck]
     steps: list[StepReplay]
     message: str
+
+
+def step_capability_code(step: StepRecord) -> str | None:
+    """Return the capability code of a recorded step.
+
+    Run records made before capability codes existed have none, so the code is
+    then looked up from the capability name; it stays None for a capability
+    that is no longer registered.
+
+    Args:
+        step: a step record from a manifest.
+
+    Returns:
+        The code, e.g. "C06", or None.
+    """
+    return step.capability_code or capability_code(step.capability)
 
 
 def replay(run_id: str, settings: Settings) -> ReplayReport:
@@ -481,6 +499,7 @@ def replay(run_id: str, settings: Settings) -> ReplayReport:
             StepReplay(
                 step_id=original.step_id,
                 capability=original.capability,
+                capability_code=step_capability_code(original),
                 original_hash=original.output_hash,
                 replay_hash=replay_hash,
                 match=replay_hash == original.output_hash,
@@ -544,6 +563,7 @@ class TraceStep(BaseModel):
 
     step_id: str
     capability: str
+    capability_code: str | None
     library_calls: str
     params: dict[str, Any]
     edited: dict[str, Any] = Field(default_factory=dict)
@@ -607,6 +627,7 @@ def trace(record: RunRecord, step_id: str) -> TraceResult:
         TraceStep(
             step_id=step.step_id,
             capability=step.capability,
+            capability_code=step_capability_code(step),
             library_calls=step.library_calls,
             params=step.params,
             edited=edited.get(step.step_id, {}),

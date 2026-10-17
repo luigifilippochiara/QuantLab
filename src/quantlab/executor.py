@@ -50,6 +50,8 @@ class StepRecord(BaseModel):
     Fields:
         step_id: the plan step id.
         capability: capability name.
+        capability_code: the capability's permanent code, e.g. "C06" (None in
+            run records made before codes existed: see lineage.step_capability_code).
         library_calls: the underlying library calls (from the registry).
         params: parameters actually used (defaults filled in).
         input_step_ids: input name -> step id it came from.
@@ -69,6 +71,7 @@ class StepRecord(BaseModel):
 
     step_id: str
     capability: str
+    capability_code: str | None = None
     library_calls: str
     params: dict[str, Any]
     input_step_ids: dict[str, str]
@@ -94,7 +97,7 @@ class ExecutionResult:
             stopped it) or "failed" (a capability raised an error).
         artifacts: step id -> output Artifact, for every step that completed.
         step_records: one StepRecord per step that was attempted.
-        issues: runtime issues (R01-R04), or the static blocks that prevented starting.
+        issues: runtime issues (R codes), or the static blocks that prevented starting.
         error: human-readable reason when status is not "completed".
         duration_ms: total wall-clock time.
     """
@@ -339,6 +342,7 @@ def execute_plan(
         record = StepRecord(
             step_id=step.id,
             capability=step.capability,
+            capability_code=spec.code,
             library_calls=spec.library_calls,
             params=params,
             input_step_ids=dict(step.inputs),

@@ -166,9 +166,9 @@ def cmd_replay(args: argparse.Namespace, settings: Settings) -> int:
     if report.steps:
         print("\nSteps:")
         print_table(
-            ["step", "capability", "original hash", "replay hash", "match"],
+            ["step", "code", "capability", "original hash", "replay hash", "match"],
             [
-                [s.step_id, s.capability, (s.original_hash or "-")[:16],
+                [s.step_id, s.capability_code or "-", s.capability, (s.original_hash or "-")[:16],
                  (s.replay_hash or "-")[:16], "yes" if s.match else "NO"]
                 for s in report.steps
             ],
@@ -183,7 +183,7 @@ def print_trace(result: TraceResult) -> None:
     print(f"lineage of {result.step_id} in run {result.run_id}:\n")
     for step in result.chain:
         inputs = ", ".join(f"{k}<-{v}" for k, v in step.inputs.items()) or "-"
-        print(f"{step.step_id} {step.capability}  inputs: {inputs}")
+        print(f"{step.step_id} {step.capability_code or '-'} {step.capability}  inputs: {inputs}")
         print(f"    params:  {step.params}")
         if step.edited:
             print(f"    edited by the user (planner proposed): {step.edited}")

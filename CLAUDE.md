@@ -11,10 +11,10 @@ paragraph: what, why, alternatives).
 The LLM proposes, the system disposes.
 
 1. The planner LLM writes a plan: inert JSON naming registered capabilities.
-2. `guardrails.py` checks it (G01-G14, G11 retired: BLOCK / APPROVAL / WARN).
+2. `guardrails.py` checks it with the static guardrails (G codes: BLOCK / APPROVAL / WARN).
 3. A human reviews, edits parameter VALUES only (structure locked in the engine,
    re-validated by the same validator, approvals reset) and approves.
-4. `executor.py` runs it by dict lookup in `REGISTRY`, with runtime guardrails R01-R04.
+4. `executor.py` runs it by dict lookup in `REGISTRY`, with the runtime guardrails (R codes).
 5. The narrator LLM summarises using only the facts sheet; `check_grounding` verifies every number.
 6. Every run is saved (`lineage.py`) and can be replayed without the LLM with matching hashes.
 
@@ -32,7 +32,7 @@ Hard rules:
 ## Architecture (src/quantlab/)
 
 `config` (settings) -> `types` (enums, Artifact, hashing) -> `data` (catalog,
-hash-verified snapshots) -> `capabilities` (the 11 quant functions, descriptive
+hash-verified snapshots) -> `capabilities` (the quant functions, descriptive
 only; the ONLY code calling pandas/numpy for analysis) -> `registry` (specs,
 REGISTRY, LLM summary, version) -> `plan` (Pydantic Plan/Step) -> `guardrails`
 (static guardrails, dry run, GUARDRAILS table) -> `mock_scenarios` (example workflows) ->
@@ -49,9 +49,12 @@ Keep the menu small and simple: the capabilities are descriptive on purpose
 
 1. Write the function in `capabilities.py`: Artifacts in, a new Artifact out,
    metadata set explicitly, comments explaining every quantitative choice.
-2. Add a `CapabilitySpec` to `registry.py` and to the `REGISTRY` list (inputs with
-   allowed kinds, params with ranges/choices/defaults, min_obs rule, assumptions,
-   library calls, `meta_from_params` if a parameter sets output metadata).
+2. Add a `CapabilitySpec` to `registry.py` and to the `REGISTRY` list (the next
+   unused code, inputs with allowed kinds, params with ranges/choices/defaults,
+   min_obs rule, assumptions, library calls, `meta_from_params` if a parameter
+   sets output metadata). Codes (`C` and two digits) are permanent: never
+   renumbered or reused; record each new one in `ASSIGNED_CODES` in
+   `tests/test_registry.py`, and add the capability to the README table.
 3. Add hand-computed numerical tests in `tests/test_capabilities.py`;
    `tests/test_registry.py` checks the signature matches the spec, and
    `tests/test_executor.py` checks the dry run matches runtime metadata.

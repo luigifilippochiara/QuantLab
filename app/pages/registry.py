@@ -1,4 +1,4 @@
-"""Capability registry page: the approved menu of capabilities.
+"""Capability registry page: the approved menu of capabilities, with their codes.
 
 Everything shown is generated from quantlab.registry, so this page cannot drift
 from what the planner may name and the executor may run. The guardrails have
@@ -8,7 +8,7 @@ their own page (guardrails.py).
 import pandas as pd
 import streamlit as st
 
-from quantlab.registry import REGISTRY, ParamSpec, llm_summary, registry_version
+from quantlab.registry import REGISTRY, ParamSpec, registry_version
 
 import ui
 
@@ -29,7 +29,9 @@ st.caption(
 )
 
 for spec in REGISTRY.values():
-    with st.expander(f"{spec.name} → {spec.output_type.value}", icon=":material/function:"):
+    with st.expander(
+        f"{spec.code} · {spec.name} → {spec.output_type.value}", icon=":material/function:"
+    ):
         st.markdown(ui.escape_md(spec.description))
         if spec.inputs:
             st.markdown("**Inputs** (references to earlier steps)")
@@ -80,6 +82,3 @@ for spec in REGISTRY.values():
             st.markdown(f"- {ui.escape_md(assumption.text)}{flag}")
         st.markdown("**Underlying library calls**")
         st.code(spec.library_calls, language="python")
-
-with st.expander("What the planner LLM sees (generated summary)", icon=":material/smart_toy:"):
-    st.code(llm_summary(), language="json")

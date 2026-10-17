@@ -1,4 +1,4 @@
-"""Static guardrails G01-G14: each triggers on a crafted plan and stays silent on a clean one.
+"""Static guardrails (G codes): each triggers on a crafted plan and stays silent on a clean one.
 
 Also covers filter_period's interval rules (G03): at least one date, start
 before end, valid dates, and a period that overlaps the data; and checks that the

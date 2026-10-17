@@ -1,4 +1,4 @@
-"""Static plan validation: guardrails G01-G14, checked before anything runs.
+"""Static plan validation: the static guardrails (G codes), checked before anything runs.
 
 Role in the architecture: the validator is the "system disposes" half of
 "the LLM proposes, the system disposes". It takes a plan (inert data) and,
@@ -20,7 +20,7 @@ the engine also passes the planner's proposal as `baseline`, which enables G14
 (an edit changed a frequency but left the windows measured in its periods).
 `check_edits` locks the plan's structure: users may change parameter values only.
 
-The runtime guardrails R01-R04 (which need data) live in executor.py, but all
+The runtime guardrails (R codes, which need data) live in executor.py, but all
 guardrail codes are described in the single GUARDRAILS table below. G11 is not
 used: it was retired with the statistical tests, and codes are never reused, so
 the issue ids recorded in older run records keep their meaning.

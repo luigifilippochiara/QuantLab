@@ -99,7 +99,7 @@ data.py loads a series as a float pd.Series with a DatetimeIndex, verifies the f
 - Frequency enum: D, W, M with annualisation factors 252, 52, 12.
 - Artifact dataclass: value, data_type, meta (kind, frequency, return_method if relevant, horizon if relevant, source dataset ids, n_obs, start, end). The executor stores one Artifact per step id. Wrapper functions receive input Artifacts and return a new Artifact, so metadata such as kind and frequency propagates explicitly (do not rely on pandas .attrs).
 
-## Capability registry (exactly these 12 for v1)
+## Capability registry (exactly these for v1)
 
 Each CapabilitySpec has: name, description (for the LLM), func (the wrapper; excluded from the LLM summary), inputs (named inputs with allowed DataTypes and optionally allowed SeriesKinds), params (name, type int/float/str/bool, required, default, min, max, choices, description), output_type, output_kind, min_obs rule, assumptions (list of {id, text, requires_approval}), and the underlying library calls (string for traceability, e.g. "pandas.Series.rolling(...).std(ddof=1)").
 
@@ -242,7 +242,7 @@ The v1 set; the current example workflows are described in the README.
 - Numerical correctness on tiny synthetic series with hand-computed expected values: simple and log returns, difference, spread alignment, rolling volatility (including annualisation), forward_return (simple compounding and log summing, correct t+1 start).
 - No-look-ahead property: changing values after time t does not change expanding-method flags at or before t.
 - compare_groups and ols_hac match direct scipy/statsmodels calls on the same data; episode counting is correct.
-- Every guardrail G01–G13 and R01–R05 triggers on a crafted case and does not trigger on a clean case.
+- Every guardrail triggers on a crafted case and does not trigger on a clean case.
 - Dispatch refuses unregistered capability names.
 - End-to-end: mock scenario A on synthetic data runs and produces a manifest; replay reproduces identical hashes.
 - Grounding check: catches an invented number, accepts correctly rounded and percent-formatted numbers.

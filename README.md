@@ -113,8 +113,8 @@ The **Analysis** page follows the safety model step by step:
 The other pages: **Run history** lists past runs, shows each manifest and user
 edits, and replays a run without the model; **Monitoring** shows run outcomes,
 latency per stage, capability usage and guardrail activity; **Capability
-registry** lists every approved capability and the exact summary the planner
-model sees; **Guardrails** lists every static and runtime guardrail with its
+registry** lists every approved capability with its code, inputs, parameters and
+assumptions; **Guardrails** lists every static and runtime guardrail with its
 severity and what goes wrong without it.
 
 ### Editing a plan before it runs
@@ -231,10 +231,10 @@ flowchart LR
     U[User request] --> P["Planner LLM<br/>planner.py"]
     R[("Capability registry<br/>registry.py")] -. generated summary .-> P
     C[("Dataset catalog<br/>metadata only")] -. id, kind, frequency, dates .-> P
-    P -->|"plan: inert JSON"| V["Validator G01-G14<br/>guardrails.py"]
+    P -->|"plan: inert JSON"| V["Validator<br/>static guardrails<br/>guardrails.py"]
     V -->|"BLOCK / APPROVAL / WARN"| H["Human review<br/>edit params, approve"]
     H -->|"edits: same validator"| V
-    H -->|approved plan| E["Executor R01-R04<br/>executor.py"]
+    H -->|approved plan| E["Executor<br/>runtime guardrails<br/>executor.py"]
     R -->|"REGISTRY[name].func"| E
     D[("FRED snapshot<br/>SHA-256 verified")] --> E
     E -->|"facts sheet (numbers only)"| N["Narrator LLM<br/>+ grounding check"]
@@ -250,12 +250,12 @@ flowchart LR
 | `config.py` | Settings from `.env`: API key, models, LLM mode, paths, budgets |
 | `types.py` | `DataType`, `SeriesKind`, `Frequency`; `Artifact` (value + explicit metadata); canonical hashing |
 | `data.py` | Catalog, FRED CSV parsing, SHA-256 verification, LLM-safe dataset metadata |
-| `capabilities.py` | The 11 quantitative functions: the only code that calls pandas/numpy for analysis |
+| `capabilities.py` | The quantitative functions: the only code that calls pandas/numpy for analysis |
 | `registry.py` | Capability specs, the `REGISTRY` whitelist, generated LLM summary and registry version |
 | `plan.py` | Pydantic `Plan` / `Step` (extra fields forbidden), plan version hash, the LLM tool schema |
-| `guardrails.py` | Static guardrails G01-G14, edit lock, metadata dry run, `ValidationReport`, the guardrail table |
+| `guardrails.py` | Static guardrails (G codes), edit lock, metadata dry run, `ValidationReport`, the guardrail table |
 | `mock_scenarios.py` | Example workflows 1-5 and further canned requests, with plans (mock mode, CLI, app, tests) |
-| `executor.py` | Registry dispatch, approval gate, runtime guardrails R01-R04, step records |
+| `executor.py` | Registry dispatch, approval gate, runtime guardrails (R codes), step records |
 | `planner.py` | OpenAI and Anthropic planners, mock planner, plan cache |
 | `narrator.py` | Facts sheet, LLM narrator, template fallback, numeric grounding check |
 | `lineage.py` | Run record (manifest), save/load, replay, trace |
@@ -285,7 +285,7 @@ structured plan instead:
   without executing it.
 * **Reviewable.** An analyst reads a few lines of plan, not pages of code, and
   edits parameters through fields constrained by the registry.
-* **Tested once, reused always.** The 11 capabilities have unit tests against
+* **Tested once, reused always.** Every capability has unit tests against
   hand-computed values; generated code would need validating every time.
 * **Reproducible.** Plan, data hashes and library versions are enough to replay a
   run with no model involved.
@@ -296,22 +296,24 @@ which is what model-risk governance requires.
 
 ## Capabilities and libraries
 
-The approved menu (browse it on the **Capability registry** page), deliberately
-small and descriptive:
+The approved menu, deliberately small and descriptive; the **Capability
+registry** page always shows the current list. Each capability has a permanent
+code (C01, C02, ...) used in the app, run records and traces; plans and the
+planner use its name.
 
-| Capability | What it does |
-|---|---|
-| `load_series` | Load one dataset from the catalog (hash-verified, missing days dropped) |
-| `resample` | Daily to weekly (Friday) or monthly (month end), or keep daily (`D`, unchanged) |
-| `compute_returns` | Simple or log returns of a price or index |
-| `difference` | Changes of a rate or yield, in its own units |
-| `spread` | a - b on the dates both series share |
-| `rolling_volatility` | Trailing rolling standard deviation, annualised |
-| `flag_regime` | Flag periods above a quantile threshold (e.g. high volatility) |
-| `summary_stats` | Count, mean, std, min, max, skew, excess kurtosis |
-| `compare_groups` | Average of a series in flagged vs normal periods (descriptive, no test) |
-| `filter_period` | Keep the observations between a start and/or an end date (inclusive) |
-| `find_extremes` | When a series reached its maximum and/or minimum, the value, and a tie count |
+| Code | Capability | What it does |
+|---|---|---|
+| C01 | `load_series` | Load one dataset from the catalog (hash-verified, missing days dropped) |
+| C02 | `resample` | Daily to weekly (Friday) or monthly (month end), or keep daily (`D`, unchanged) |
+| C03 | `compute_returns` | Simple or log returns of a price or index |
+| C04 | `difference` | Changes of a rate or yield, in its own units |
+| C05 | `spread` | a - b on the dates both series share |
+| C06 | `rolling_volatility` | Trailing rolling standard deviation, annualised |
+| C07 | `flag_regime` | Flag periods above a quantile threshold (e.g. high volatility) |
+| C08 | `summary_stats` | Count, mean, std, min, max, skew, excess kurtosis |
+| C09 | `compare_groups` | Average of a series in flagged vs normal periods (descriptive, no test) |
+| C10 | `filter_period` | Keep the observations between a start and/or an end date (inclusive) |
+| C11 | `find_extremes` | When a series reached its maximum and/or minimum, the value, and a tie count |
 
 **Periods and peaks.** `filter_period` takes `start` and/or `end` (inclusive ISO
 dates): giving neither is a G03 BLOCK, as are a start not before the end and a

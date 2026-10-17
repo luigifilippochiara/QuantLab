@@ -63,6 +63,16 @@ def test_scenario_1_full_flow(app_env: Settings) -> None:
 
     successes = [s.value for s in app.success]
     assert any("numbers verified" in text for text in successes)
+    # Results and trace name each capability by code and name.
+    results = [e.label for e in app.expander if e.label.startswith("s")]
+    assert results[3].startswith("s4 · C06 · rolling_volatility · completed")
+    picker = next(b for b in app.selectbox if b.label == "Step to trace")
+    assert picker.options[-1] == "s5 · C07 · flag_regime"
+    trace = next(d.value for d in app.dataframe if "library call" in d.value.columns)
+    assert trace[["step", "code", "capability"]].values.tolist()[:2] == [
+        ["s5", "C07", "flag_regime"],
+        ["s4", "C06", "rolling_volatility"],
+    ]
     subheaders = [h.value for h in app.subheader]
     # The trace panel sits directly under the results.
     assert subheaders[subheaders.index("Results") + 1] == "Trace a result"
@@ -306,12 +316,14 @@ def test_plan_steps_are_collapsed_and_approvals_stay_in_validation(app_env: Sett
     app = plan_scenario_1(app_env)
     headers = step_headers(app)
     assert [is_open for _, is_open in headers] == [False] * 5  # the G12 step too
-    assert headers[0][0] == "Step 1 · Load series · NASDAQCOM — Synthetic equity index"
-    assert headers[2][0] == "Step 3 · Compute returns · method: simple, periods: 1"  # no badge
-    assert headers[3][0] == "Step 4 · Rolling volatility · window: 12 weeks, annualize: yes"
+    assert headers[0][0] == "Step 1 · C01 · Load series · NASDAQCOM — Synthetic equity index"
+    assert (
+        headers[2][0] == "Step 3 · C03 · Compute returns · method: simple, periods: 1"
+    )  # no badge
+    assert headers[3][0] == "Step 4 · C06 · Rolling volatility · window: 12 weeks, annualize: yes"
     # The G12 approval is still required, in the Validation section, naming its step.
     g12 = next(m.value for m in app.markdown if "**G12 MATERIAL_ASSUMPTION**" in m.value)
-    assert g12.endswith("· Step 3 · Compute returns (s3)")
+    assert g12.endswith("· Step 3 · C03 · Compute returns (s3)")
     assert len([c for c in app.checkbox if c.key.startswith("approve-")]) == 1
     assert button(app, "Execute").disabled
     # Collapsing is visual only: the editor still runs.
@@ -323,15 +335,15 @@ def test_edits_are_marked_and_steps_with_new_findings_open(app_env: Settings) ->
     next(s for s in app.selectbox if s.key.endswith("-s2-freq")).select("D").run()
     button(app, "Apply changes").click().run()
     headers = step_headers(app)
-    assert headers[1] == ("Step 2 · Resample · freq: D, how: last :blue-badge[:material/edit: "
-                          "edited]", False)  # fmt: skip
+    assert headers[1] == ("Step 2 · C02 · Resample · freq: D, how: last :blue-badge[:material/"
+                          "edit: edited]", False)  # fmt: skip
     # Window 12 now counts trading days: G14 warns on both steps, which open.
     assert headers[3][1] and headers[3][0].startswith(
-        "Step 4 · Rolling volatility · window: 12 trading days, annualize: yes"
+        "Step 4 · C06 · Rolling volatility · window: 12 trading days, annualize: yes"
     )
     assert headers[4][1] and "Warning]" in headers[3][0] and "Warning]" in headers[4][0]
     # The new G12 approval of this plan version opens nothing and adds no badge.
-    assert headers[2] == ("Step 3 · Compute returns · method: simple, periods: 1", False)
+    assert headers[2] == ("Step 3 · C03 · Compute returns · method: simple, periods: 1", False)
 
 
 def test_step_summary_falls_back_to_every_parameter(app_env: Settings) -> None:

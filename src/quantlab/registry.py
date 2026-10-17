@@ -122,6 +122,9 @@ class CapabilitySpec:
     """Everything the system knows about one capability.
 
     Fields:
+        code: permanent identifier, "C" and two digits (e.g. "C06"), for display
+            and audit only: plans, the planner and dispatch use the name, and
+            the code is not in the LLM summary (see the rule above REGISTRY).
         name: unique name used in plans.
         description: what it does, written for the LLM and the user.
         func: the wrapper function in capabilities.py (never shown to the LLM).
@@ -141,6 +144,7 @@ class CapabilitySpec:
             not part of the LLM summary or the registry version.
     """
 
+    code: str
     name: str
     description: str
     func: Callable[..., Artifact]
@@ -176,6 +180,7 @@ LEVEL_KINDS = (
 
 
 LOAD_SERIES = CapabilitySpec(
+    code="C01",
     name="load_series",
     description="Load one dataset from the catalog as a daily time series (hash-verified).",
     func=capabilities.load_series,
@@ -203,6 +208,7 @@ LOAD_SERIES = CapabilitySpec(
 )
 
 RESAMPLE = CapabilitySpec(
+    code="C02",
     name="resample",
     description=(
         "Convert a level series to weekly (week ending Friday) or monthly (month end) "
@@ -243,6 +249,7 @@ RESAMPLE = CapabilitySpec(
 )
 
 COMPUTE_RETURNS = CapabilitySpec(
+    code="C03",
     name="compute_returns",
     description="Returns of a price or index level. Not for rates or yields: use difference.",
     func=capabilities.compute_returns,
@@ -292,6 +299,7 @@ COMPUTE_RETURNS = CapabilitySpec(
 )
 
 DIFFERENCE = CapabilitySpec(
+    code="C04",
     name="difference",
     description=(
         "Change over k periods, x_t - x_{t-k}, in the series' own units. "
@@ -314,6 +322,7 @@ DIFFERENCE = CapabilitySpec(
 )
 
 SPREAD = CapabilitySpec(
+    code="C05",
     name="spread",
     description="Difference a - b of two series with the same frequency, on their common dates.",
     func=capabilities.spread,
@@ -340,6 +349,7 @@ SPREAD = CapabilitySpec(
 )
 
 ROLLING_VOLATILITY = CapabilitySpec(
+    code="C06",
     name="rolling_volatility",
     description=(
         "Trailing rolling volatility (sample standard deviation) of returns, changes or "
@@ -389,6 +399,7 @@ ROLLING_VOLATILITY = CapabilitySpec(
 )
 
 FLAG_REGIME = CapabilitySpec(
+    code="C07",
     name="flag_regime",
     description=(
         "Flag observations above a quantile threshold, e.g. periods of high volatility. "
@@ -455,6 +466,7 @@ FLAG_REGIME = CapabilitySpec(
 )
 
 SUMMARY_STATS = CapabilitySpec(
+    code="C08",
     name="summary_stats",
     description="Descriptive statistics: count, mean, std, min, max, skew, excess kurtosis.",
     func=capabilities.summary_stats,
@@ -470,6 +482,7 @@ SUMMARY_STATS = CapabilitySpec(
 )
 
 COMPARE_GROUPS = CapabilitySpec(
+    code="C09",
     name="compare_groups",
     description=(
         "Average of a series in flagged versus normal periods (e.g. returns in "
@@ -496,6 +509,7 @@ COMPARE_GROUPS = CapabilitySpec(
 )
 
 FILTER_PERIOD = CapabilitySpec(
+    code="C10",
     name="filter_period",
     description=(
         "Restrict a series to a time interval given by start and/or end dates (inclusive). "
@@ -540,6 +554,7 @@ FILTER_PERIOD = CapabilitySpec(
 )
 
 FIND_EXTREMES = CapabilitySpec(
+    code="C11",
     name="find_extremes",
     description=(
         "When a series reached its maximum and/or minimum, and the value there (e.g. when "
@@ -576,6 +591,11 @@ FIND_EXTREMES = CapabilitySpec(
 
 # The registry itself: capability name -> spec. Built from a list so each key is
 # guaranteed to equal the spec's own name. This dict IS the whitelist.
+#
+# Capability codes (C01, C02, ...) are permanent, like the guardrail codes: each
+# is written explicitly in its spec (never derived from its position in this
+# list), codes are never renumbered, and a retired capability's code is never
+# reused, so the codes in older run records keep their meaning.
 REGISTRY: dict[str, CapabilitySpec] = {
     spec.name: spec
     for spec in [
@@ -592,6 +612,20 @@ REGISTRY: dict[str, CapabilitySpec] = {
         FIND_EXTREMES,
     ]
 }
+
+
+def capability_code(name: str) -> str | None:
+    """Return the code of a registered capability, e.g. "C06" for rolling_volatility.
+
+    Args:
+        name: capability name.
+
+    Returns:
+        The code, or None for a name that is not registered (a capability retired
+        before codes existed, or one a planner invented).
+    """
+    spec = REGISTRY.get(name)
+    return spec.code if spec else None
 
 
 def describe_capability(spec: CapabilitySpec) -> dict[str, Any]:

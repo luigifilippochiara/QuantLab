@@ -308,7 +308,8 @@ for step in plan.steps:
     key_output = artifact is not None and (
         artifact.data_type.value == "table" or step.id in shading or step.capability == "spread"
     )
-    label = f"{step.id} · {step.capability} · {record.status}"
+    capability = ui.capability_label(step.capability, record.capability_code)
+    label = f"{step.id} · {capability} · {record.status}"
     if record.n_obs is not None:
         label += f" · {record.n_obs:,} obs · {record.duration_ms:.0f} ms"
     with st.expander(label, expanded=key_output or record.status != "completed"):
@@ -332,7 +333,9 @@ if executed:
         "Step to trace",
         executed,
         index=len(executed) - 1,  # the final result by default (e.g. flag_regime)
-        format_func=lambda s: f"{s} · {records[s].capability}",
+        format_func=lambda s: (
+            f"{s} · {ui.capability_label(records[s].capability, records[s].capability_code)}"
+        ),
     )
     ui.render_trace(session.trace(chosen_step), catalog)
 

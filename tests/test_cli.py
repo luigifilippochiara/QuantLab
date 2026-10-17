@@ -25,8 +25,9 @@ def test_demo_behaves_as_expected(cli_env: Settings, capsys: pytest.CaptureFixtu
         assert scenario_id in output
     # Scenario 6: the trace of scenario 1's flag_regime step, down to the NASDAQ file.
     trace = output.split("Scenario 6 (traceability)")[1]
-    for line in ["s5 flag_regime", "s4 rolling_volatility", "s3 compute_returns",
-                 "s2 resample", "s1 load_series", "NASDAQCOM (FRED NASDAQCOM) sha256"]:  # fmt: skip
+    for line in ["s5 C07 flag_regime", "s4 C06 rolling_volatility", "s3 C03 compute_returns",
+                 "s2 C02 resample", "s1 C01 load_series",
+                 "NASDAQCOM (FRED NASDAQCOM) sha256"]:  # fmt: skip
         assert line in trace
 
 
@@ -34,10 +35,11 @@ def test_run_replay_and_trace(cli_env: Settings, capsys: pytest.CaptureFixture) 
     assert main(["run", "1", "--datasets", "NASDAQCOM", "--mode", "mock", "--approve-all"]) == 0
     run_id = list_runs(cli_env.runs_dir)[0]["run_id"]
     assert main(["replay", run_id]) == 0
-    assert "ALL HASHES MATCH" in capsys.readouterr().out
+    replayed = capsys.readouterr().out
+    assert "ALL HASHES MATCH" in replayed and "C07" in replayed
     assert main(["trace", run_id, "s5"]) == 0
     output = capsys.readouterr().out
-    assert "s5 flag_regime" in output and "NASDAQCOM (FRED NASDAQCOM)" in output
+    assert "s5 C07 flag_regime" in output and "NASDAQCOM (FRED NASDAQCOM)" in output
 
 
 def test_run_without_approval_exits_nonzero(cli_env: Settings, capsys) -> None:

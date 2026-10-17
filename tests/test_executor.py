@@ -1,4 +1,4 @@
-"""Executor: dispatch whitelist, approval gate, runtime guardrails R01-R04, dry-run agreement."""
+"""Executor: dispatch whitelist, approval gate, runtime guardrails (R codes), dry-run agreement."""
 
 import shutil
 from pathlib import Path

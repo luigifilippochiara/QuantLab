@@ -71,7 +71,11 @@ with left:
     counts = capability_counts(events)
     if counts:
         st.plotly_chart(
-            ui.bar_figure(list(counts), list(counts.values()), "Steps executed per capability"),
+            ui.bar_figure(
+                [ui.capability_label(name) for name in counts],
+                list(counts.values()),
+                "Steps executed per capability",
+            ),
             width="stretch",
             theme="streamlit",
             alt="Executions per capability",
