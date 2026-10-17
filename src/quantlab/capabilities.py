@@ -1,6 +1,6 @@
 """Capability functions: the pre-written, tested quantitative building blocks.
 
-Role in the architecture: these functions are the ONLY code that calls
+Role in the architecture: these 11 functions are the ONLY code that calls
 pandas / numpy / statsmodels for analysis. A plan can only *name* one of them
 (via the registry in registry.py); it can never supply code. Each function:
 

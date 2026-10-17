@@ -147,7 +147,7 @@ def render_header() -> None:
         unsafe_allow_html=True,
     )
     st.caption(
-        "**How it works:** The LLM proposes a plan made only of approved capabilities; the "
+        "**How it works:** The LLM proposes a plan made only of approved capabilities. The "
         "system validates it, you review and approve it, and a deterministic engine runs it."
     )
 
