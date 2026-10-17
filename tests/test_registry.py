@@ -68,3 +68,9 @@ def test_registry_version_is_a_stable_hash() -> None:
     version = registry_version()
     assert len(version) == 64
     assert version == registry_version()
+
+
+def test_summary_params_name_real_parameters_and_stay_out_of_the_llm_summary() -> None:
+    for spec in REGISTRY.values():
+        assert all(spec.param(name) for name in spec.summary_params), spec.name
+    assert "summary_params" not in llm_summary()  # display only: the registry version ignores it

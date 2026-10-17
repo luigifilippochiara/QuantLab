@@ -287,6 +287,20 @@ and finally runs the page, whose own sidebar content comes below. It lives in
 prefixes the native menu, rejected as fragile: it depends on Streamlit's internal
 markup, which can change between versions.
 
+**Plan steps are collapsed to a summary line unless they need attention.** Each
+step is an `st.expander` whose header gives its number, readable capability name
+and main parameters ("Step 4 · Rolling volatility · window: 12 weeks, annualize:
+yes"). Which parameters are main is declared in the registry
+(`CapabilitySpec.summary_params`, all parameters when empty); it is display-only,
+so it is not in the LLM summary and the registry version does not change. A step
+with any guardrail finding opens by default with a severity badge, and an edited
+step carries an "edited" badge. Expanders are keyed by plan version, like the
+editor's widgets, so after an edit is applied or reset every step returns to its
+default and steps with new findings open. Collapsing is visual only: the editor
+always runs, and approvals stay one by one in the Validation section. Alternative:
+show only steps with findings, rejected because a reviewer should still see the
+whole plan at a glance.
+
 **No dataset is preselected.** The Datasets picker starts empty, so the analyst
 chooses the data instead of starting from a NASDAQ default; an example workflow
 fills in its own datasets. With nothing selected, the planner still sees every

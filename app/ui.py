@@ -20,11 +20,12 @@ import streamlit as st
 
 from quantlab.config import Settings, load_settings
 from quantlab.data import Catalog, load_catalog
-from quantlab.guardrails import Issue, Severity, parse_date
+from quantlab.guardrails import PERIOD_UNITS, Issue, Severity, parse_date
 from quantlab.lineage import ReplayReport, TraceResult
 from quantlab.mock_scenarios import SCENARIOS_BY_ID
 from quantlab.narrator import format_number
-from quantlab.registry import ParamSpec
+from quantlab.plan import Step
+from quantlab.registry import CapabilitySpec, ParamSpec
 from quantlab.types import Artifact, DataType
 
 SERIES_COLOR = "#3987e5"  # blue: the series itself
@@ -37,6 +38,13 @@ SEVERITY_BADGE = {
 }
 # Name of the first column for TABLE artifacts made of named rows.
 TABLE_ROW_NAMES = {"find_extremes": "extreme"}
+# Header badges of a plan step: its guardrail findings (most severe first) and edits.
+STEP_BADGES = {
+    Severity.BLOCK: ":red-badge[:material/block: Blocked]",
+    Severity.APPROVAL: ":orange-badge[:material/warning: Approval required]",
+    Severity.WARN: ":yellow-badge[:material/info: Warning]",
+}
+EDITED_BADGE = ":blue-badge[:material/edit: edited]"
 
 STATUS_BADGE = {
     "completed": ":green-badge[completed]",
@@ -139,6 +147,68 @@ def render_header() -> None:
         "**How it works:** The LLM proposes a plan made only of approved capabilities; the "
         "system validates it, you review and approve it, and a deterministic engine runs it."
     )
+
+
+def step_summary(
+    step: Step, spec: CapabilitySpec | None, input_frequency: str | None, catalog: Catalog
+) -> str:
+    """A step's main parameters as short text, e.g. "window: 12 weeks, annualize: yes".
+
+    The main parameters come from the registry (`summary_params`); without them,
+    or for an unknown capability, every parameter is shown. Unset values are left
+    out, windows counted in periods get the input's unit, and a dataset id is shown
+    as its catalog label.
+
+    Args:
+        step: the plan step.
+        spec: its capability spec (None if the capability is not registered).
+        input_frequency: predicted frequency of the step's input ("D", "W", "M"), if known.
+        catalog: the dataset catalog.
+
+    Returns:
+        The summary text ("" when the step has no parameters).
+    """
+    if spec is None:
+        names = list(step.params)
+    else:
+        names = list(spec.summary_params) or [p.name for p in spec.params]
+    parts = []
+    for name in names:
+        value = step.params.get(name)
+        if value is None:
+            continue
+        spec_param = spec.param(name) if spec else None
+        counted = spec_param is not None and spec_param.counted_in_periods
+        if name == "dataset_id" and isinstance(value, str):
+            parts.append(dataset_label(catalog, value))
+            continue
+        if isinstance(value, bool):
+            shown = "yes" if value else "no"
+        elif counted and input_frequency in PERIOD_UNITS:
+            unit = PERIOD_UNITS[input_frequency]  # e.g. "weeks", "trading days"
+            shown = f"{value} {unit.removesuffix('s') if value == 1 else unit}"
+        else:
+            shown = str(value)
+        parts.append(f"{name.replace('_', ' ')}: {shown}")
+    return ", ".join(parts)
+
+
+def step_header(
+    position: int, step: Step, summary: str, severities: set[Severity], edited: bool
+) -> str:
+    """The collapsed header of a plan step, e.g. "Step 4 · Rolling volatility · window: ...".
+
+    Badges follow for the step's guardrail findings (most severe first) and for
+    user-edited parameters, so neither is hidden when the step is collapsed.
+    Plan text is escaped, so a planner value cannot inject Markdown.
+    """
+    title = f"Step {position} · {step.capability.replace('_', ' ').capitalize()}"
+    text = escape_md(f"{title} · {summary}" if summary else title)
+    badges = [STEP_BADGES[s] for s in (Severity.BLOCK, Severity.APPROVAL, Severity.WARN)
+              if s in severities]  # fmt: skip
+    if edited:
+        badges.append(EDITED_BADGE)
+    return " ".join([text, *badges])
 
 
 def same_value(a: Any, b: Any) -> bool:

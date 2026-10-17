@@ -5,13 +5,18 @@ and replayed; blocked scenarios cannot execute; the other pages render; the
 header, mock-only example workflows and full dataset names on hover.
 """
 
+import dataclasses
 import datetime
 
 import pytest
 from streamlit.testing.v1 import AppTest
 
 from quantlab.config import PROJECT_ROOT, Settings
+from quantlab.data import load_catalog
+from quantlab.guardrails import Severity
 from quantlab.mock_scenarios import CANNED_REQUESTS_BY_ID, SCENARIOS_BY_ID
+from quantlab.plan import Step
+from quantlab.registry import REGISTRY
 
 PAGES = PROJECT_ROOT / "app" / "pages"
 SCENARIO_1_REQUEST = SCENARIOS_BY_ID["volatility_flag_success"].request
@@ -267,3 +272,53 @@ def test_find_extremes_which_edit_in_the_editor(
     table = next(d.value for d in app.dataframe if "extreme" in d.value.columns)
     assert table["extreme"].tolist() == rows
     assert any("numbers verified" in s.value for s in app.success)
+
+
+def step_headers(app: AppTest) -> list[tuple[str, bool]]:
+    """(label, open) of every plan-step expander, in plan order."""
+    return [(e.label, e.proto.expanded) for e in app.expander if e.label.startswith("Step ")]
+
+
+def test_plan_steps_are_collapsed_unless_they_have_a_finding(app_env: Settings) -> None:
+    app = plan_scenario_1(app_env)
+    headers = step_headers(app)
+    assert [is_open for _, is_open in headers] == [False, False, True, False, False]
+    assert headers[0][0] == "Step 1 · Load series · NASDAQCOM — Synthetic equity index"
+    assert headers[2][0].startswith("Step 3 · Compute returns · method: simple, periods: 1 ")
+    assert headers[2][0].endswith("Approval required]")  # the G12 approval, badged
+    assert headers[3][0] == "Step 4 · Rolling volatility · window: 12 weeks, annualize: yes"
+    # Collapsing is visual only: the editor still runs and approvals stay one by one.
+    assert next(n for n in app.number_input if n.key.endswith("-s4-window")).value == 12
+    assert len([c for c in app.checkbox if c.key.startswith("approve-")]) == 1
+    assert button(app, "Execute").disabled
+
+
+def test_edits_are_marked_and_steps_with_new_findings_open(app_env: Settings) -> None:
+    app = plan_scenario_1(app_env)
+    next(s for s in app.selectbox if s.key.endswith("-s2-freq")).select("D").run()
+    button(app, "Apply changes").click().run()
+    headers = step_headers(app)
+    assert headers[1] == ("Step 2 · Resample · freq: D, how: last :blue-badge[:material/edit: "
+                          "edited]", False)  # fmt: skip
+    # Window 12 now counts trading days: G14 warns on both steps, which open.
+    assert headers[3][1] and headers[3][0].startswith(
+        "Step 4 · Rolling volatility · window: 12 trading days, annualize: yes"
+    )
+    assert headers[4][1] and "Warning]" in headers[3][0] and "Warning]" in headers[4][0]
+    assert headers[2][1] and "Approval required" in headers[2][0]  # G12 still to approve
+
+
+def test_step_summary_falls_back_to_every_parameter(app_env: Settings) -> None:
+    import ui  # importable once app_env has put app/ on the path
+
+    catalog = load_catalog(app_env.catalog_path)
+    flag = Step(id="s5", capability="flag_regime", inputs={"series": "s4"},
+                params={"quantile": 0.9, "method": "expanding", "min_periods": 52})  # fmt: skip
+    spec = REGISTRY["flag_regime"]
+    assert ui.step_summary(flag, spec, "W", catalog) == "quantile: 0.9, method: expanding"
+    every = dataclasses.replace(spec, summary_params=())
+    assert ui.step_summary(flag, every, "W", catalog).endswith("min periods: 52 weeks")
+    unknown = Step(id="s2", capability="sarima", params={"steps_ahead": 1})
+    assert ui.step_summary(unknown, None, None, catalog) == "steps ahead: 1"
+    header = ui.step_header(2, unknown, "steps ahead: 1", {Severity.BLOCK}, edited=False)
+    assert header == "Step 2 · Sarima · steps ahead: 1 :red-badge[:material/block: Blocked]"

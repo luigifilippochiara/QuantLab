@@ -96,8 +96,11 @@ The **Analysis** page follows the safety model step by step:
 1. Choose the datasets the planner may use (hover a dataset for its full name),
    then type a request, or in mock mode pick one of the example workflows in the
    sidebar, and click **Generate plan**.
-2. Review the plan. Each step is shown as a block with its inputs, its predicted
-   output and its parameters as editable fields.
+2. Review the plan. Each step is a collapsible block whose header names the step
+   and its main parameters (e.g. "Step 4 · Rolling volatility · window: 12 weeks,
+   annualize: yes"); open it for its inputs, predicted output and editable fields.
+   Steps with a guardrail finding open by default with a badge, and edited steps
+   are marked, so nothing that needs attention is hidden.
 3. Read the validation results. Blocking issues must be resolved, approvals must
    be ticked, and warnings are shown for context.
 4. Click **Execute**. Results appear per step: charts for series (with flagged

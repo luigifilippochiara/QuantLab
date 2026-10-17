@@ -136,6 +136,9 @@ class CapabilitySpec:
         meta_from_params: output metadata fields set from a parameter, e.g.
             {"frequency": "freq"} for resample. The validator's dry run uses this
             to predict output metadata without running anything.
+        summary_params: the main parameters, in order, shown in a plan step's
+            one-line summary in the app (empty = all parameters). Display only:
+            not part of the LLM summary or the registry version.
     """
 
     name: str
@@ -150,6 +153,7 @@ class CapabilitySpec:
     library_calls: str
     reads_catalog: bool = False
     meta_from_params: dict[str, str] = field(default_factory=dict)
+    summary_params: tuple[str, ...] = ()
 
     def param(self, name: str) -> ParamSpec | None:
         """Return the ParamSpec called `name`, or None."""
@@ -195,6 +199,7 @@ LOAD_SERIES = CapabilitySpec(
     ),
     library_calls="pandas.read_csv; hashlib.sha256 (file hash check)",
     reads_catalog=True,
+    summary_params=("dataset_id",),
 )
 
 RESAMPLE = CapabilitySpec(
@@ -234,6 +239,7 @@ RESAMPLE = CapabilitySpec(
     ),
     library_calls="pandas.Series.resample('W-FRI' | 'ME').last() | .mean()",
     meta_from_params={"frequency": "freq"},
+    summary_params=("freq", "how"),
 )
 
 COMPUTE_RETURNS = CapabilitySpec(
@@ -282,6 +288,7 @@ COMPUTE_RETURNS = CapabilitySpec(
     ),
     library_calls="P / P.shift(k) - 1 (pandas) | numpy.log(P / P.shift(k))",
     meta_from_params={"return_method": "method", "periods": "periods"},
+    summary_params=("method", "periods"),
 )
 
 DIFFERENCE = CapabilitySpec(
@@ -303,6 +310,7 @@ DIFFERENCE = CapabilitySpec(
     ),
     library_calls="pandas.Series - pandas.Series.shift(k)",
     meta_from_params={"periods": "periods"},
+    summary_params=("periods",),
 )
 
 SPREAD = CapabilitySpec(
@@ -377,6 +385,7 @@ ROLLING_VOLATILITY = CapabilitySpec(
         ),
     ),
     library_calls="pandas.Series.rolling(window).std(ddof=1) * sqrt(factor)",
+    summary_params=("window", "annualize"),
 )
 
 FLAG_REGIME = CapabilitySpec(
@@ -442,6 +451,7 @@ FLAG_REGIME = CapabilitySpec(
     library_calls=(
         "pandas.Series.shift(1).expanding(min_periods).quantile(q) | pandas.Series.quantile(q)"
     ),
+    summary_params=("quantile", "method"),
 )
 
 SUMMARY_STATS = CapabilitySpec(
@@ -526,6 +536,7 @@ FILTER_PERIOD = CapabilitySpec(
         ),
     ),
     library_calls="boolean mask on the pandas DatetimeIndex",
+    summary_params=("start", "end"),
 )
 
 FIND_EXTREMES = CapabilitySpec(
@@ -559,6 +570,7 @@ FIND_EXTREMES = CapabilitySpec(
         ),
     ),
     library_calls="pandas.Series.dropna().max() / .min(); dates where the value equals it",
+    summary_params=("which",),
 )
 
 

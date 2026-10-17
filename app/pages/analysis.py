@@ -127,9 +127,25 @@ else:
     # Widget keys include the plan version, so after an edit is applied (or reset)
     # every widget starts again from the plan's current values.
     version = session.plan_hash[:12]
-    for step in plan.steps:
+    issues = session.report.issues if session.report else []
+    for position, step in enumerate(plan.steps, start=1):
         spec = REGISTRY.get(step.capability)
-        with st.container(border=True):
+        severities = {issue.severity for issue in issues if issue.step_id == step.id}
+        step_edited = any(
+            not ui.same_value(value, proposal.get(step.id, {}).get(name))
+            for name, value in step.params.items()
+        )
+        input_meta = dry_run.get(next(iter(step.inputs.values()), ""), {})
+        summary = ui.step_summary(step, spec, input_meta.get("frequency"), catalog)
+        # Collapsed unless the step has a guardrail finding. Collapsing is visual only:
+        # the editor below always runs, and approvals stay in the Validation section.
+        # Keyed by plan version, so after an edit is applied every step starts again
+        # from its default and a step with a new finding opens.
+        with st.expander(
+            ui.step_header(position, step, summary, severities, step_edited),
+            expanded=bool(severities),
+            key=f"step-{session.run_id}-{version}-{step.id}",
+        ):
             inputs = ", ".join(f"{name} ← {ref}" for name, ref in step.inputs.items())
             predicted = dry_run.get(step.id)
             output = (
@@ -137,10 +153,9 @@ else:
                 if predicted
                 else "unknown"
             )
-            st.markdown(f"**{step.id} · {step.capability}**")
             st.caption(
-                f"inputs: {inputs or 'none'} · output (predicted): {output} · "
-                f"{ui.escape_md(step.rationale)}"
+                f"{step.id} · `{step.capability}` · inputs: {inputs or 'none'} · "
+                f"output (predicted): {output} · {ui.escape_md(step.rationale)}"
             )
             if spec is None:
                 st.caption("Not a registered capability: it can be neither run nor edited.")
