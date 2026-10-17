@@ -116,17 +116,18 @@ def _weekly_volatility_flag_steps(flag_params: dict[str, Any]) -> list[dict[str,
     ]  # fmt: skip
 
 
-# The flagship request (example 1). It states every choice the plan makes, so a live
-# planner can reach exactly the canned plan below from the text alone (the golden set
-# checks it item by item). Defined once: the app, the CLI, the notebooks, the golden
-# set and the tests read it from here; the README quotes it, and a test checks the quote.
+# The flagship request (example 1). It states the choices that have no default (the
+# dataset, weekly data, log returns for the volatility, simple next-week returns for
+# the outcome, a test of the difference in means); the registry defaults supply the
+# rest (annualised volatility, an expanding 90th-percentile threshold after 52 weeks,
+# Newey-West lags by rule), so a live planner can still reach exactly the canned plan
+# below (the golden set checks it item by item). Defined once: the app, the CLI, the
+# notebooks, the golden set and the tests read it from here; the README quotes it, and
+# a test checks the quote.
 FLAGSHIP_REQUEST = (
-    "Using NASDAQ Composite (NASDAQCOM) weekly data, calculate weekly log returns, "
-    "estimate 12-week annualised rolling volatility, and flag unusually volatile weeks as "
-    "those above the 90th percentile of past volatility only (expanding window, at least "
-    "52 weeks of history). Compare next-week simple returns after volatile weeks with "
-    "those after normal weeks, then test whether the difference in means is statistically "
-    "significant using Newey-West standard errors."
+    "Using NASDAQ, calculate weekly log returns, 12-week volatility, and flag unusually "
+    "volatile weeks. Compare next-week simple returns after volatile weeks with those after "
+    "normal weeks, then test whether the difference in means is statistically significant."
 )
 
 # Example 1's plan. Every parameter is written out (no hidden defaults).
@@ -141,11 +142,11 @@ FLAGSHIP_STEPS = [
     # square-root-of-time annualisation assumes.
     _step("s3", "compute_returns", {"series": "s2"}, {"method": "log", "periods": 1},
           rationale="Weekly log returns, the input of the volatility."),
-    # 12 weeks, annualised by sqrt(52), as requested.
+    # 12 weeks, as requested; annualised by sqrt(52) (the default).
     _step("s4", "rolling_volatility", {"series": "s3"}, {"window": 12, "annualize": True},
           rationale="12-week rolling annualised volatility."),
-    # The threshold uses past volatility only, after 52 weeks of history, so every
-    # flag could have been set at the time (no look-ahead).
+    # The defaults: a threshold from past volatility only (expanding), after 52 weeks
+    # of history, so every flag could have been set at the time (no look-ahead).
     _step("s5", "flag_regime", {"series": "s4"},
           {"method": "expanding", "quantile": 0.90, "min_periods": 52},
           rationale="Flag weeks above the 90th percentile of past volatility only."),
@@ -158,8 +159,8 @@ FLAGSHIP_STEPS = [
     # Describe first: both groups' means, spreads and number of episodes...
     _step("s7", "compare_groups", {"values": "s6", "flags": "s5"},
           rationale="Describe next-week returns after volatile and after normal weeks."),
-    # ...then test that same difference, with standard errors that allow for clustered
-    # volatility (maxlags unset: the Newey-West rule).
+    # ...then test that same difference (the registry's one significance test), with
+    # standard errors that allow for clustered volatility (maxlags unset: the rule).
     _step("s8", "hac_mean_difference", {"outcome": "s6", "flags": "s5"}, {"maxlags": None},
           rationale="Test the difference in means with Newey-West standard errors."),
 ]  # fmt: skip

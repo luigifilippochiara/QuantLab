@@ -152,10 +152,12 @@ canned plans in mock mode (`mock_scenarios.py`) or with the live planner, from t
 app or with `cli demo`.
 
 1. **High-volatility weeks and what follows** (`volatility_flag_success`). The
-   request states every choice, so the live planner can reach the same plan as
-   the canned one from the text alone:
+   request states the choices that have no default; the registry defaults supply
+   the rest (annualised volatility, an expanding 90th-percentile threshold after
+   52 weeks, Newey-West lags by rule), so the live planner can reach the same plan
+   as the canned one:
 
-   > Using NASDAQ Composite (NASDAQCOM) weekly data, calculate weekly log returns, estimate 12-week annualised rolling volatility, and flag unusually volatile weeks as those above the 90th percentile of past volatility only (expanding window, at least 52 weeks of history). Compare next-week simple returns after volatile weeks with those after normal weeks, then test whether the difference in means is statistically significant using Newey-West standard errors.
+   > Using NASDAQ, calculate weekly log returns, 12-week volatility, and flag unusually volatile weeks. Compare next-week simple returns after volatile weeks with those after normal weeks, then test whether the difference in means is statistically significant.
 
    Weekly Friday closes; weekly log returns for the volatility (they add up over
    time, as square-root-of-time annualisation assumes); 12-week annualised
@@ -547,8 +549,9 @@ runs/                       run records, plan cache, events.jsonl (git-ignored)
 * **Live mode coverage.** The OpenAI path is in use with `gpt-6-luna` for both
   the planner and the narrator. The Anthropic path is covered by automated tests
   with simulated responses only, and the full live planner evaluation (`eval
-  --mode live`) has not yet been run; the flagship case was run live three times
-  and matched the canned plan exactly each time. Mock mode, used by the tests, the CLI, the
+  --mode live`) has not yet been run; the flagship case (with both the longer
+  and the current, shorter request) was run live three times and matched the
+  canned plan exactly each time. Mock mode, used by the tests, the CLI, the
   notebooks and the app, is fully covered.
 * **No plan -> observe -> replan loop.** Validation errors are shown to the
   analyst but not yet fed back to the model for a corrected plan.

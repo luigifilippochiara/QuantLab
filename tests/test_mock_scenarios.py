@@ -24,6 +24,7 @@ from quantlab.mock_scenarios import (
     Scenario,
 )
 from quantlab.plan import Plan
+from quantlab.registry import REGISTRY
 
 from conftest import ARIMA_PLAN, RETURN_METHOD_APPROVAL, SCENARIO_1_APPROVALS
 from fakes import FakeAnthropicClient, tool_response
@@ -92,6 +93,20 @@ def test_flagship_plan_is_exactly_the_specified_plan() -> None:
     assert "log returns for the volatility" in notes and "square-root-of-time" in notes
     assert "simple returns for the outcome" in notes and "half the variance" in notes
     assert "past volatility only" in notes
+
+
+def test_flagship_request_relies_on_these_registry_defaults() -> None:
+    # The request does not state them, so a planner that omits them gets the canned plan.
+    defaults = {
+        ("rolling_volatility", "annualize"): True,
+        ("flag_regime", "method"): "expanding",
+        ("flag_regime", "quantile"): 0.90,
+        ("flag_regime", "min_periods"): 52,
+        ("hac_mean_difference", "maxlags"): None,  # None = the Newey-West lag rule
+    }
+    for (capability, name), expected in defaults.items():
+        spec_param = REGISTRY[capability].param(name)
+        assert not spec_param.required and spec_param.default == expected, (capability, name)
 
 
 def test_flagship_validates_with_exactly_two_g12_approvals(catalog: Catalog) -> None:

@@ -961,3 +961,19 @@ notes are free text and are not scored.
 the prompt version, the model and the registry version), so the new request can
 never return a plan cached for the old one. The canned plans' version moved to
 `canned-scenarios-v8`, since their content changed.
+
+**The flagship request was shortened; registry defaults carry what it omits.**
+The request now states only what has no sensible default: the dataset (NASDAQ),
+weekly log returns, the 12-week window, next-week simple returns as the outcome,
+and a test of the difference in means. Annualisation, the expanding 90th
+percentile after 52 weeks and the Newey-West lag rule come from the registry
+defaults, which already had exactly those values, so no default changed; a test
+pins them, since the short request now depends on them. The canned plan, its two
+G12 approvals and the eval checks are unchanged. Three live runs (`gpt-6-luna`,
+2026-10-17) matched on every item, and after defaults were filled in each plan
+was identical to the canned plan in every step, input and parameter. The runs
+differed only in what they wrote out: one left `annualize`, `quantile` and
+`min_periods` to the defaults, the others wrote some or all of them, and two
+named the 90th percentile as an assumption in their notes. Alternative: keep the
+fully specified request, rejected because it reads like a parameter list rather
+than a question an analyst would ask, and the defaults make it unnecessary.

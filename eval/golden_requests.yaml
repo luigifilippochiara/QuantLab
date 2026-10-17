@@ -19,9 +19,10 @@
 # Normal cases are also reported item by item (each step in order, each key
 # parameter, each severity), so a mismatch shows what the planner chose differently.
 
-# The flagship request states every choice, so a live planner should reproduce the
-# canned plan exactly: all eight steps in order, the parameters the request names,
-# and the outcome of two return-method approvals with no warning and no block.
+# The flagship request states the choices without a default and leaves the rest to
+# the registry defaults, so a live planner should still reproduce the canned plan
+# exactly: all eight steps in order, the key parameters, and the outcome of two
+# return-method approvals with no warning and no block.
 - id: s1_volatility_flag_success
   scenario: volatility_flag_success
   expect: plan
