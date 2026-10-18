@@ -206,7 +206,7 @@ def test_blocked_scenario_cannot_execute(scenario_id: str, app_env: Settings) ->
 def test_scenario_4_shows_a_simulated_planner_blocked_by_v02(app_env: Settings) -> None:
     scenario = SCENARIOS_BY_ID["prompt_injection_unknown_capability"]
     app = open_page("analysis.py")
-    assert "simulated planner" in app.sidebar.button(key=f"scenario-{scenario.id}").label
+    assert app.sidebar.button(key=f"scenario-{scenario.id}").label == "4 · Prompt injection"
     app.sidebar.button(key=f"scenario-{scenario.id}").click().run()
     button(app, "Generate plan").click().run()
     # The planner output is labelled as simulated, above the plan.

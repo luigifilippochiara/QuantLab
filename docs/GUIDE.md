@@ -138,7 +138,7 @@ app or with `cli demo`.
    block: a full-sample threshold is fine for labelling past stress days but
    invalid as a signal or in a backtest, and only the analyst knows which is meant.
 3. **Out-of-scope forecast request** (`arima_forecast_block`): "Fit an ARIMA
-   model to forecast next week's USD/CHF exchange rate." The registry has no
+   model to forecast the USD/CHF exchange rate for next week." The registry has no
    capability that fits a model or makes a forecast, so the planner declines
    (P01) and lists the registered capabilities instead. If a planner ever
    proposed such a step anyway, the validator would block it independently (V02).

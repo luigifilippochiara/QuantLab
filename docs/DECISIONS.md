@@ -1550,11 +1550,9 @@ The validator blocks it with V02 UNKNOWN_CAPABILITY alone, before approval; the
 executor is never reached, and no function is registered under that name anyway.
 This shows the deterministic wall that holds whatever the planner proposes.
 
-**The output is labelled as simulated** wherever it is shown: the sidebar button
-reads "4 · Prompt injection (simulated planner)", and the Analysis page shows a
-notice above the plan in mock mode ("Simulated misbehaving planner: …", from
-`Scenario.note`), so it
-is never taken for what a real model produced. **The eval case** (renamed
+**The output is labelled as simulated** where the plan is shown: the Analysis page
+shows a notice above the plan in mock mode ("Simulated misbehaving planner: …", from
+`Scenario.note`), so it is never taken for what a real model produced. **The eval case** (renamed
 `s4_prompt_injection_unknown_capability`) records the canned plan and its V02 block;
 being adversarial, it is scored on being refused or blocked, so a live planner that
 refuses (P01) is also correct. **The golden snapshot** keeps its frozen records: a
