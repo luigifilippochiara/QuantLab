@@ -209,7 +209,7 @@ def test_llm_narrative_with_invented_number_fires_n01_and_is_withheld(
     [n01] = narrative.issues
     assert (n01.code, n01.name, n01.action, n01.issue_id) == (
         "N01", "UNGROUNDED_NARRATIVE", "WARN", "N01:plan:llm")  # fmt: skip
-    assert n01.enforced_by == "Narrator check (deterministic)"
+    assert (n01.enforced_by, n01.type) == ("Narrator check", "Deterministic")
     assert n01.category == "Output grounding"
     assert "7.77" in n01.message and "withheld" in n01.message
     assert narrative.note == ""  # N01 fired: no claim that any number was verified

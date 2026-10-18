@@ -1,5 +1,7 @@
 """Engine: the full plan -> validate -> edit -> approve -> execute -> narrate -> record flow."""
 
+import json
+
 import pytest
 
 from quantlab.config import Settings
@@ -40,6 +42,10 @@ def test_end_to_end_scenario_1_with_manifest_and_replay(settings: Settings) -> N
 
     record = load_run(session.run_id, settings.runs_dir)
     assert manifest.exists() and record.status == "completed"
+    # Each issue in the manifest names the stage that enforced it and its type.
+    saved = json.loads(manifest.read_text(encoding="utf-8"))["validation"]["issues"]
+    assert {(i["code"], i["enforced_by"], i["type"]) for i in saved} == {
+        ("V10", "Validator", "Deterministic")}  # fmt: skip
     assert [a.issue_id for a in record.approvals] == SCENARIO_1_APPROVALS
     assert record.llm.provider == "mock" and record.registry_version
     assert record.plan_original["steps"][4]["params"]["quantile"] == 0.9  # as proposed

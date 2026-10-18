@@ -19,7 +19,7 @@ GUIDE = (PROJECT_ROOT / "docs" / "GUIDE.md").read_text(encoding="utf-8")
 def test_guardrail_table_matches_the_code() -> None:
     for g in GUARDRAILS.values():
         row = (f"| {g.code} | `{g.name}` | {g.action.value} | {g.enforced_by} | "
-               f"{g.category.value} | {g.description} |")  # fmt: skip
+               f"{g.type.value} | {g.category.value} | {g.description} |")  # fmt: skip
         assert row in ARCHITECTURE, f"docs/ARCHITECTURE.md guardrail row out of date: {g.code}"
 
 

@@ -188,9 +188,9 @@ def test_blocked_scenario_cannot_execute(scenario_id: str, app_env: Settings) ->
 @pytest.mark.parametrize(
     ("scenario_id", "enforcer", "category"),
     [
-        ("volatility_flag_success", "Validator (deterministic)", "Methodology"),
-        ("arima_forecast_block", "Planner (LLM)", "Approved scope"),
-        ("spread_frequency_mismatch_block", "Validator (deterministic)", "Methodology"),
+        ("volatility_flag_success", "Validator · Type: Deterministic", "Methodology"),
+        ("arima_forecast_block", "Planner · Type: LLM", "Approved scope"),
+        ("spread_frequency_mismatch_block", "Validator · Type: Deterministic", "Methodology"),
     ],
 )
 def test_every_issue_shows_who_enforces_it(
@@ -199,7 +199,8 @@ def test_every_issue_shows_who_enforces_it(
     app = open_page("analysis.py")
     app.sidebar.button(key=f"scenario-{scenario_id}").click().run()
     button(app, "Generate plan").click().run()
-    shown = f"Enforced by: **{enforcer}** · Category: {category}"
+    enforced_by, kind = enforcer.split(" · ")
+    shown = f"Enforced by: **{enforced_by}** · {kind} · Category: {category}"
     caption = next(c for c in app.caption if c.value == shown)
     # The guardrail's description is the line's tooltip, from the same GUARDRAILS table.
     assert caption.proto.help in {g.description for g in GUARDRAILS.values()}
@@ -223,7 +224,7 @@ def test_ungrounded_llm_narrative_is_withheld_with_an_n01_issue(app_env: Setting
     app.run()
     assert not app.exception, app.exception
     captions = [c.value for c in app.caption]
-    n01 = "Enforced by: **Narrator check (deterministic)** · Category: Output grounding"
+    n01 = "Enforced by: **Narrator check** · Type: Deterministic · Category: Output grounding"
     assert n01 in captions
     assert any("N01 UNGROUNDED_NARRATIVE" in m.value and "narrative" in m.value
                for m in app.markdown)  # fmt: skip
@@ -270,10 +271,12 @@ def test_guardrails_page_intro_and_table_come_from_the_code(app_env: Settings) -
         assert f"**{action.value}**" in intro  # what each action means
     table = app.table[0].value
     assert list(table.index) == list(GUARDRAILS)
-    assert list(table.columns) == ["Name", "Action", "Enforced by", "Category", "Description"]
+    assert list(table.columns) == [
+        "Name", "Action", "Enforced by", "Type", "Category", "Description"]  # fmt: skip
     v09 = table.loc["V09"]
-    assert (v09["Action"], v09["Enforced by"], v09["Category"]) == (
-        "APPROVE", "Validator (deterministic)", "Methodology")  # fmt: skip
+    assert (v09["Action"], v09["Enforced by"], v09["Type"], v09["Category"]) == (
+        "APPROVE", "Validator", "Deterministic", "Methodology")  # fmt: skip
+    assert table.loc["P01", "Type"] == "LLM"
     assert table.loc["V02", "Description"] == GUARDRAILS["V02"].description
     assert showing(app) == f"Showing {len(GUARDRAILS)} of {len(GUARDRAILS)} guardrails"
     assert button(app, "Clear filters").disabled  # nothing to clear yet
@@ -286,6 +289,7 @@ def test_guardrail_filter_options_come_from_the_table(app_env: Settings) -> None
     assert options["guardrail_action"] == list(dict.fromkeys(g.action.value for g in guardrails))
     assert options["guardrail_enforcer"] == list(dict.fromkeys(g.enforced_by for g in guardrails))
     assert options["guardrail_enforcer"] == list(ENFORCERS.values())  # every stage, in order
+    assert options["guardrail_type"] == ["Deterministic", "LLM"]  # GuardrailType order
     assert set(options["guardrail_category"]) == {g.category.value for g in guardrails}
 
 
@@ -317,11 +321,11 @@ def test_guardrail_filters_combine_and_clear(app_env: Settings) -> None:
     app.multiselect(key="guardrail_action").select("APPROVE").run()
     assert guardrail_codes(app) == ["V09", "V10"]
     app.multiselect(key="guardrail_action").unselect("APPROVE").run()
-    app.multiselect(key="guardrail_enforcer").select("Executor (runtime)").run()
+    app.multiselect(key="guardrail_enforcer").select("Executor").run()
     assert guardrail_codes(app) == ["E01", "E02", "E03", "E04", "E05"]
     app.multiselect(key="guardrail_category").select("Methodology").run()  # AND
     assert guardrail_codes(app) == ["E05"]
-    app.multiselect(key="guardrail_enforcer").select("Planner (LLM)").run()  # OR within one
+    app.multiselect(key="guardrail_enforcer").select("Planner").run()  # OR within one
     app.multiselect(key="guardrail_category").select("Approved scope").run()
     assert guardrail_codes(app) == ["P01", "E05"]
     app.text_input(key="guardrail_search").input("e0").run()
@@ -333,6 +337,23 @@ def test_guardrail_filters_combine_and_clear(app_env: Settings) -> None:
     assert app.text_input(key="guardrail_search").value == ""
     assert all(m.value == [] for m in app.multiselect)
     assert button(app, "Clear filters").disabled
+
+
+def test_guardrail_type_filter_alone_and_combined(app_env: Settings) -> None:
+    app = open_page("guardrails.py")
+    app.multiselect(key="guardrail_type").select("LLM").run()
+    assert guardrail_codes(app) == ["P01"]
+    assert showing(app) == f"Showing 1 of {len(GUARDRAILS)} guardrails"
+    app.multiselect(key="guardrail_action").select("WARN").run()  # AND: no LLM warning
+    assert guardrail_codes(app) == []
+    app.multiselect(key="guardrail_type").unselect("LLM").select("Deterministic").run()
+    assert guardrail_codes(app) == ["E03", "E04", "E05", "N01"]
+    app.multiselect(key="guardrail_category").select("Data quality").run()
+    app.text_input(key="guardrail_search").input("loss").run()
+    assert guardrail_codes(app) == ["E04"]
+    button(app, "Clear filters").click().run()
+    assert guardrail_codes(app) == list(GUARDRAILS)
+    assert app.multiselect(key="guardrail_type").value == []
 
 
 def test_sidebar_title_sits_above_the_page_menu(app_env: Settings) -> None:

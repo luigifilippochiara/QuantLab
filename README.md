@@ -39,8 +39,8 @@ models are declined.
 **Guardrails** each have an **action** (BLOCK stops the run, APPROVE needs a
 human decision, WARN flags the result), an **enforcer**: the pipeline stage
 named by the code's first letter (**R** request check, **P** planner, **V**
-validator, **E** executor, **N** narrator check), and a **category** naming what
-they protect.
+validator, **E** executor, **N** narrator check), a **type** (LLM for the planner,
+deterministic for every other stage) and a **category** naming what they protect.
 
 The full tables of [capabilities](docs/ARCHITECTURE.md#capabilities) and
 [guardrails](docs/ARCHITECTURE.md#guardrails) are in the architecture document,

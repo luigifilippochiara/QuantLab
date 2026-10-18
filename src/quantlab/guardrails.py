@@ -40,7 +40,7 @@ from dataclasses import asdict, dataclass, field
 from enum import StrEnum
 from typing import Any
 
-from pydantic import BaseModel, Field, ValidationError
+from pydantic import BaseModel, Field, ValidationError, computed_field
 
 from quantlab.capabilities import FORWARD_HORIZON
 from quantlab.data import Catalog
@@ -68,15 +68,25 @@ class Category(StrEnum):
     OUTPUT_GROUNDING = "Output grounding"  # the narrative quotes only values of the run
 
 
-# Who enforces a guardrail, by the first letter of its code, in pipeline order. This
-# is the only place it is written down, so a code and its label can never disagree.
+class GuardrailType(StrEnum):
+    """Whether a guardrail is enforced by deterministic code or by an LLM."""
+
+    DETERMINISTIC = "Deterministic"
+    LLM = "LLM"
+
+
+# The pipeline stage that enforces a guardrail, by the first letter of its code, in
+# pipeline order, and the stages that are an LLM (every other stage is deterministic
+# code). This is the only place either is written down, so a code, its stage and its
+# type can never disagree.
 ENFORCERS = {
-    "R": "Request check (deterministic)",
-    "P": "Planner (LLM)",
-    "V": "Validator (deterministic)",
-    "E": "Executor (runtime)",
-    "N": "Narrator check (deterministic)",
+    "R": "Request check",
+    "P": "Planner",
+    "V": "Validator",
+    "E": "Executor",
+    "N": "Narrator check",
 }
+LLM_STAGES = {"Planner"}
 
 # R01 REQUEST_TOO_LONG: the longest request sent to the planner. Words are what a
 # person writes; the character cap (about 1,000 words at 6 characters each, with a
@@ -90,7 +100,8 @@ class Guardrail:
     """Description of one guardrail (used for issues, the UI and docs/ARCHITECTURE.md).
 
     Fields:
-        code: e.g. "V07"; its first letter says who enforces it (see ENFORCERS).
+        code: e.g. "V07"; its first letter names the stage that enforces it, which
+            also gives its type (see ENFORCERS and LLM_STAGES).
         name: e.g. "RETURNS_ON_RATES".
         action: what happens when it fires: BLOCK, APPROVE or WARN.
         category: what it protects.
@@ -105,8 +116,15 @@ class Guardrail:
 
     @property
     def enforced_by(self) -> str:
-        """Who enforces it, e.g. "Validator (deterministic)" for a V code."""
+        """The pipeline stage that enforces it, e.g. "Validator" for a V code."""
         return ENFORCERS[self.code[0]]
+
+    @property
+    def type(self) -> GuardrailType:
+        """LLM if its stage is an LLM (the planner), Deterministic otherwise."""
+        if self.enforced_by in LLM_STAGES:
+            return GuardrailType.LLM
+        return GuardrailType.DETERMINISTIC
 
 
 BLOCK, APPROVE, WARN = Action.BLOCK, Action.APPROVE, Action.WARN
@@ -263,8 +281,10 @@ class Issue(BaseModel):
         suggestion: how to fix it.
         issue_id: stable id used to record approvals, e.g. "V10:s2:return_method".
 
-    Who enforced it and what it protects are not stored: the enforced_by and
-    category properties read them from the GUARDRAILS table by code.
+    Who enforced it, its type and what it protects are not stored: enforced_by,
+    type and category read them from the GUARDRAILS table by code. They are
+    computed fields, so they are written into run records, for whoever reads a
+    manifest, and ignored when a record is loaded.
     """
 
     code: str
@@ -275,11 +295,19 @@ class Issue(BaseModel):
     suggestion: str | None = None
     issue_id: str
 
+    @computed_field
     @property
     def enforced_by(self) -> str:
-        """Who enforced it, e.g. "Executor (runtime)" (from the GUARDRAILS table)."""
+        """The stage that enforced it, e.g. "Executor" (from the GUARDRAILS table)."""
         return GUARDRAILS[self.code].enforced_by
 
+    @computed_field
+    @property
+    def type(self) -> GuardrailType:
+        """Deterministic or LLM (from the GUARDRAILS table)."""
+        return GUARDRAILS[self.code].type
+
+    @computed_field
     @property
     def category(self) -> Category:
         """What it protects, e.g. "Methodology" (from the GUARDRAILS table)."""

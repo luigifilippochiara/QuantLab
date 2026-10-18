@@ -61,7 +61,8 @@ def print_session(session: Session) -> None:
     if issues:
         print("\nIssues (action, code, enforced by):")
         for issue in issues:
-            print(f"  [{issue.action}] {issue.code} {issue.issue_id} ({issue.enforced_by}): "
+            print(f"  [{issue.action}] {issue.code} {issue.issue_id} "
+                  f"({issue.enforced_by}, {issue.type}): "
                   f"{issue.message}")  # fmt: skip
             if issue.suggestion:
                 print(f"      -> {issue.suggestion}")

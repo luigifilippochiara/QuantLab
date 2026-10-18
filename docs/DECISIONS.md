@@ -1387,3 +1387,20 @@ plan cache, and the full record, plans included, stays one click away: the
 **Download manifest** button under the results and the **Manifest (JSON)** expander
 on the Run history page. The v1 specification asked for the expander; this replaces
 that requirement.
+
+## "Enforced by" split into stage and type
+
+**"Enforced by" is the pipeline stage alone** (Request check, Planner, Validator,
+Executor, Narrator check), and a new **type** says whether that stage is an LLM or
+deterministic code. Both are derived in one place: `ENFORCERS` maps a code's first
+letter to its stage, and `LLM_STAGES` (only the planner) gives the type, so no
+guardrail stores either and a code, its stage and its type cannot disagree. Today
+only P01 is LLM. The Guardrails page shows a Type column (after "Enforced by") and a
+Type filter whose options come from the table; every issue shown during a run, and
+the CLI, show the type next to the stage.
+
+**Issues now carry their stage, type and category in the run record.** They stay
+derived from the table by code, but as Pydantic computed fields they are written
+into every manifest, so a reader of a run record sees them without the code, and
+they are ignored when a record is loaded (nothing is stored twice or read back).
+This replaces the earlier choice of keeping them out of run records.

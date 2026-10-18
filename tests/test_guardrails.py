@@ -25,9 +25,12 @@ from quantlab.executor import (
 from quantlab.guardrails import (
     ENFORCERS,
     GUARDRAILS,
+    LLM_STAGES,
     MAX_REQUEST_CHARS,
     MAX_REQUEST_WORDS,
     Action,
+    GuardrailType,
+    Issue,
     ValidationReport,
     check_request_length,
     check_schema,
@@ -96,7 +99,7 @@ def test_r01_passes_a_normal_request_and_one_at_the_limits() -> None:
 def test_r01_blocks_too_many_words_or_characters(text: str, counted: str) -> None:
     [issue] = check_request_length(text)
     assert (issue.code, issue.issue_id, issue.action) == ("R01", "R01:plan:request", "BLOCK")
-    assert issue.enforced_by == "Request check (deterministic)"
+    assert (issue.enforced_by, issue.type) == ("Request check", "Deterministic")
     assert f"The request has {counted}; the limits are 1,000 words and 8,000" in issue.message
 
 
@@ -456,29 +459,37 @@ def test_guardrail_table_matches_the_implemented_checks() -> None:
         assert file == RAISED_IN[code[0]], f"{code} is raised in {file}"
 
 
-def test_each_code_prefix_names_who_enforces_the_guardrail() -> None:
+def test_each_code_prefix_names_its_stage_and_type() -> None:
     # In pipeline order: request check, planner, validator, executor, narrator check.
     assert list(ENFORCERS.items()) == [
-        ("R", "Request check (deterministic)"),
-        ("P", "Planner (LLM)"),
-        ("V", "Validator (deterministic)"),
-        ("E", "Executor (runtime)"),
-        ("N", "Narrator check (deterministic)"),
+        ("R", "Request check"),
+        ("P", "Planner"),
+        ("V", "Validator"),
+        ("E", "Executor"),
+        ("N", "Narrator check"),
     ]
-    enforced_by = {code: g.enforced_by for code, g in GUARDRAILS.items()}
-    assert enforced_by == {
-        "R01": "Request check (deterministic)",
-        "P01": "Planner (LLM)",
-        **{f"V{i:02d}": "Validator (deterministic)" for i in range(1, 12)},
-        **{f"E{i:02d}": "Executor (runtime)" for i in range(1, 6)},
-        "N01": "Narrator check (deterministic)",
+    assert sorted(LLM_STAGES) == ["Planner"]  # every other stage is deterministic code
+    stage_and_type = {code: (g.enforced_by, g.type) for code, g in GUARDRAILS.items()}
+    deterministic = GuardrailType.DETERMINISTIC
+    assert stage_and_type == {
+        "R01": ("Request check", deterministic),
+        "P01": ("Planner", GuardrailType.LLM),
+        **{f"V{i:02d}": ("Validator", deterministic) for i in range(1, 12)},
+        **{f"E{i:02d}": ("Executor", deterministic) for i in range(1, 6)},
+        "N01": ("Narrator check", deterministic),
     }
-    assert list(GUARDRAILS) == list(enforced_by)  # the table is in pipeline order
+    assert list(GUARDRAILS) == list(stage_and_type)  # the table is in pipeline order
     for code, guardrail in GUARDRAILS.items():
         assert guardrail.code == code and re.fullmatch(r"[RPVEN]\d{2}", code)
-    # An issue reads its enforcer and category from the table, by code.
+    # An issue reads its stage, type and category from the table, by code, and
+    # writes them into the run record (computed fields), which ignores them on load.
     issue = planner_failure_issue("timeout")
-    assert (issue.enforced_by, issue.category) == ("Validator (deterministic)", "Plan integrity")
+    assert (issue.enforced_by, issue.type, issue.category) == (
+        "Validator", "Deterministic", "Plan integrity")  # fmt: skip
+    dumped = issue.model_dump(mode="json")
+    assert (dumped["enforced_by"], dumped["type"], dumped["category"]) == (
+        "Validator", "Deterministic", "Plan integrity")  # fmt: skip
+    assert Issue.model_validate(dumped) == issue
 
 
 # Every guardrail code assigned since the codes were named by pipeline stage
