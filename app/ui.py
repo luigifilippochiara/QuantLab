@@ -386,7 +386,11 @@ def bar_figure(
 
 
 def grouped_bar_figure(
-    categories: list[str], groups: dict[str, list[float]], title: str, value_title: str
+    categories: list[str],
+    groups: dict[str, list[float]],
+    title: str,
+    value_title: str,
+    height: int = 320,
 ) -> go.Figure:
     """Vertical grouped bars for up to two measures in the same unit (e.g. mean and p95 ms).
 
@@ -395,6 +399,7 @@ def grouped_bar_figure(
         groups: measure name -> one value per category (at most two measures).
         title: chart title.
         value_title: y-axis title (the shared unit).
+        height: the chart height in pixels, to line it up with what stands beside it.
 
     Returns:
         A plotly Figure with a legend and value labels.
@@ -417,7 +422,7 @@ def grouped_bar_figure(
         barmode="group",
         bargap=0.3,
         bargroupgap=0.08,
-        height=320,
+        height=height,
         margin={"l": 10, "r": 10, "t": 50, "b": 10},
         yaxis_title=value_title,
         legend={"orientation": "h", "y": 1.12, "x": 0},
@@ -459,13 +464,15 @@ def action_bar_figure(
         )
     figure.update_layout(
         title=title,
-        height=max(220, 32 * len(labels) + 110),
-        margin={"l": 10, "r": 40, "t": 70, "b": 10},
+        height=max(220, 32 * len(labels) + 120),
+        margin={"l": 10, "r": 40, "t": 80, "b": 10},
         xaxis={"visible": False},
         # The categories keep the given order (most frequent first) across the traces.
         yaxis={"categoryorder": "array", "categoryarray": labels, "autorange": "reversed"},
         bargap=0.3,
-        legend={"orientation": "h", "y": 1.08, "x": 0},
+        # The legend sits above the bars, anchored by its bottom edge to the top of the
+        # plot area, so it never overlaps the first bar.
+        legend={"orientation": "h", "x": 0, "xanchor": "left", "y": 1.0, "yanchor": "bottom"},
     )
     return figure
 

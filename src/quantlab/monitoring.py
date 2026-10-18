@@ -5,8 +5,10 @@ one JSON object per line to runs/events.jsonl. Nothing is ever rewritten, so
 the log is a simple audit trail and is trivial to ship to a real log platform
 later.
 
-The Monitoring page reads two sources, and the functions below turn them into
-its numbers (the page only lays them out):
+The Monitoring page counts only decided runs started on the Analysis page
+(monitored_runs); replays count from every source (monitored_events). It reads
+two sources, and the functions below turn them into its numbers (the page only
+lays them out):
 - run records (runs/<run_id>/manifest.json), one per run in its final state:
   activity, human review, narrative and planner outcomes, tokens and cost,
   latency and failures;
@@ -63,9 +65,15 @@ COST_STAGES = {"planning": "planner", "narration": "narrator"}
 # (see target_status). Kept in one place so the targets are easy to review.
 KPI_TARGETS = {
     "replay_match_rate": 1.0,  # every replay must reproduce its run exactly
-    "n01_failure_rate": 0.0,  # no narrative should quote an unchecked number
-    "failed": 0,  # a failed run (not a block) is an error to investigate
+    "grounded_rate": 1.0,  # every narrative must pass the grounding check (N01)
+    # No failed run (not a block: an error to investigate). Checked as a share, so a
+    # page with no runs has no data rather than meeting the target.
+    "failed_share": 0.0,
 }
+# Statuses of a run whose plan reached the approval step with no decision yet
+# (pending, or abandoned): left out of the Monitoring page. A blocked plan never
+# reaches approval and keeps the status "blocked".
+UNDECIDED = ("planned", "ready")
 
 
 def utc_now() -> str:
@@ -221,6 +229,44 @@ def run_order(record: "RunRecord") -> tuple[datetime, str]:
 
 
 # ---------------------------------------------------------------------------
+# What the page counts
+# ---------------------------------------------------------------------------
+
+
+def monitored_runs(records: list["RunRecord"]) -> list["RunRecord"]:
+    """The runs the Monitoring page counts: started on the Analysis page, and decided.
+
+    Left out: headless runs (CLI, notebooks, demo: interactive False), records made
+    before the origin was recorded (interactive None: origin unknown), and runs
+    whose plan awaits a decision or was abandoned (UNDECIDED).
+
+    Args:
+        records: run records.
+
+    Returns:
+        The counted records, in their original order.
+    """
+    return [r for r in records if r.interactive is True and r.status not in UNDECIDED]
+
+
+def monitored_events(events: list[dict[str, Any]], runs: list["RunRecord"]) -> list[dict[str, Any]]:
+    """The events of the counted runs, plus every replay, whatever run it replayed.
+
+    Replays are usually started from Run history or the CLI rather than the Analysis
+    page, so the replay match rate counts them from every source.
+
+    Args:
+        events: monitoring events.
+        runs: the counted runs (monitored_runs).
+
+    Returns:
+        The kept events, in their original order.
+    """
+    run_ids = {r.run_id for r in runs}
+    return [e for e in events if e["run_id"] in run_ids or e["event_type"] == "replay_completed"]
+
+
+# ---------------------------------------------------------------------------
 # Activity (run records)
 # ---------------------------------------------------------------------------
 
@@ -232,10 +278,9 @@ def activity(records: list["RunRecord"]) -> dict[str, Any]:
         records: run records.
 
     Returns:
-        Dict with total, completed, blocked, failed, rejected (by the reviewer) and
-        awaiting (a plan shown with no decision yet: status ready), and
+        Dict with total, completed, blocked, failed and rejected (by the reviewer), and
         completed_share, blocked_share, failed_share and rejected_share (of total;
-        None without runs).
+        None without runs). Over monitored_runs the shares add up to 1.
     """
     statuses = Counter(r.status for r in records)
     counts = {
@@ -244,7 +289,6 @@ def activity(records: list["RunRecord"]) -> dict[str, Any]:
         "blocked": statuses["blocked"],
         "failed": statuses["failed"],
         "rejected": statuses["rejected"],
-        "awaiting": statuses["ready"] + statuses["planned"],
     }
     shares = {
         f"{outcome}_share": share(counts[outcome], len(records))
@@ -259,59 +303,49 @@ def activity(records: list["RunRecord"]) -> dict[str, Any]:
 
 
 def approval_waits(records: list["RunRecord"]) -> list[float]:
-    """Seconds from a plan being shown to its approval, for plans approved on the Analysis page.
+    """Seconds from a plan being shown to its approval, for every approved run given.
 
-    Headless runs approve automatically (in milliseconds), and older records lack the
-    timestamps: both are left out.
+    Older records lack the timestamps and are left out.
 
     Args:
-        records: run records.
+        records: run records (on the page, monitored_runs: approved by a person).
 
     Returns:
-        One wait per interactive, approved run, in seconds.
+        One wait per approved run, in seconds.
     """
     return [
         (parse_time(r.decided_at) - parse_time(r.plan_shown_at)).total_seconds()
         for r in records
-        if r.interactive and r.plan_shown_at and r.decision == "approved" and r.decided_at
+        if r.decision == "approved" and r.plan_shown_at and r.decided_at
     ]
 
 
 def review_outcomes(records: list["RunRecord"]) -> dict[str, Any]:
-    """What reviewers decided about the plans shown to them on the Analysis page.
-
-    Only interactive runs with a plan shown count: headless runs (CLI, notebooks,
-    demo) are decided by their caller, not reviewed by a person, and older records
-    lack the fields. A plan shown but neither approved (executed) nor rejected is
-    abandoned, including one still awaiting a decision.
+    """What reviewers decided about the plans they were shown.
 
     Args:
-        records: run records.
+        records: run records (on the page, monitored_runs: decided on the Analysis page).
 
     Returns:
-        Dict with shown, approved, rejected, abandoned, approval_rate (approved /
-        shown), edit_rate (approved plans whose parameters the reviewer changed /
+        Dict with approved, rejected, approval_rate (approved / (approved +
+        rejected)), edit_rate (approved plans whose parameters the reviewer changed /
         approved), approval_median_s and approval_p95_s (seconds from plan shown to
-        approved), and headless (headless runs with a plan, left out).
+        approved).
     """
-    shown = [r for r in records if r.interactive and r.plan_shown_at]
-    approved = [r for r in shown if r.decision == "approved"]
-    rejected = [r for r in shown if r.decision == "rejected"]
+    approved = [r for r in records if r.decision == "approved"]
+    rejected = [r for r in records if r.decision == "rejected"]
     waits = approval_waits(records)
     median, p95 = (
         (float(np.median(waits)), float(np.percentile(waits, 95))) if waits else (None, None)
     )
     return {
-        "shown": len(shown),
         "approved": len(approved),
         "rejected": len(rejected),
-        "abandoned": len(shown) - len(approved) - len(rejected),
-        "approval_rate": share(len(approved), len(shown)),
+        "approval_rate": share(len(approved), len(approved) + len(rejected)),
         # param_diff: parameters whose final value differs from the planner's proposal.
         "edit_rate": share(sum(1 for r in approved if r.param_diff), len(approved)),
         "approval_median_s": median,
         "approval_p95_s": p95,
-        "headless": sum(1 for r in records if r.interactive is False and r.plan_shown_at),
     }
 
 
@@ -329,33 +363,34 @@ def replay_results(events: list[dict[str, Any]]) -> dict[str, Any]:
     return {"replays": len(replays), "replay_match_rate": share(matching, len(replays))}
 
 
-def narrative_failures(records: list["RunRecord"]) -> dict[str, Any]:
-    """The share of narratives that failed the grounding check (N01).
+def grounded_narratives(records: list["RunRecord"]) -> dict[str, Any]:
+    """The share of runs with a narrative whose narrative passed the grounding check.
+
+    A narrative passes when the check raised no N01 issue (an LLM narrative withheld
+    by N01 fails, even though the checked template is shown in its place).
 
     Args:
         records: run records (narratives recorded before N01 existed are left out).
 
     Returns:
-        Dict with narratives and n01_failure_rate (None without narratives).
+        Dict with narratives and grounded_rate (None without narratives).
     """
     narratives = [r.narrative for r in records if r.narrative and "issues" in r.narrative]
-    failed = sum(1 for n in narratives if any(i["code"] == "N01" for i in n["issues"]))
-    return {"narratives": len(narratives), "n01_failure_rate": share(failed, len(narratives))}
+    grounded = sum(1 for n in narratives if not any(i["code"] == "N01" for i in n["issues"]))
+    return {"narratives": len(narratives), "grounded_rate": share(grounded, len(narratives))}
 
 
 def planner_refusals(records: list["RunRecord"]) -> dict[str, Any]:
-    """The share of requests the planner was asked about that it refused (P01).
+    """How many runs the planner refused (P01), and their share of all runs.
 
     Args:
-        records: run records (a request refused before the planner, R01, is left out).
+        records: run records.
 
     Returns:
-        Dict with planned (requests that reached the planner) and p01_refusal_rate.
+        Dict with refused and refused_share (None without runs).
     """
-    codes = [r.validation.codes() if r.validation else [] for r in records if r.llm]
-    planned = [c for c in codes if "R01" not in c]
-    refused = sum(1 for c in planned if "P01" in c)
-    return {"planned": len(planned), "p01_refusal_rate": share(refused, len(planned))}
+    refused = sum(1 for r in records if r.validation and "P01" in r.validation.codes())
+    return {"refused": refused, "refused_share": share(refused, len(records))}
 
 
 # ---------------------------------------------------------------------------
@@ -392,6 +427,23 @@ def guardrail_counts(
     if not include_unused:
         rows = [row for row in rows if row["count"]]
     return sorted(rows, key=lambda row: -row["count"])  # a stable sort keeps the ties in order
+
+
+def unused_guardrails(events: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """The guardrails that never fired in these events.
+
+    Args:
+        events: monitoring events.
+
+    Returns:
+        Rows of {code, name, action}, sorted by code.
+    """
+    rows = [
+        {"code": row["code"], "name": row["name"], "action": row["action"]}
+        for row in guardrail_counts(events)
+        if not row["count"]
+    ]
+    return sorted(rows, key=lambda row: row["code"])
 
 
 def capability_counts(events: list[dict[str, Any]]) -> list[dict[str, Any]]:

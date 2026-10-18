@@ -1,8 +1,10 @@
-"""Monitoring page: activity, quality and governance, guardrails, capabilities, cost, latency.
+"""Monitoring page: activity, quality and governance, capabilities, guardrails, cost, latency.
 
-Every number comes from quantlab.monitoring, computed from all the run records
-(one per run, its final state) and the event log (guardrail firings, capability
-executions, replays); this page only lays them out.
+Every number comes from quantlab.monitoring, computed from the run records (one per
+run, its final state) and the event log (guardrail firings, capability executions,
+replays); this page only lays them out. It counts the runs started on the Analysis
+page whose plan was decided (quantlab.monitoring.monitored_runs); replays count from
+every source.
 """
 
 from typing import Any
@@ -21,15 +23,18 @@ from quantlab.monitoring import (
     capability_counts,
     cost_table,
     costed_runs,
+    grounded_narratives,
     guardrail_counts,
     latency_table,
-    narrative_failures,
+    monitored_events,
+    monitored_runs,
     planner_refusals,
     read_events,
     recent_failures,
     replay_results,
     review_outcomes,
     target_status,
+    unused_guardrails,
 )
 
 import ui
@@ -37,6 +42,11 @@ import ui
 # The cost chart's height in pixels: the cost table (three rows) plus the cache
 # cards under it, so the two columns end level.
 COST_CHART_HEIGHT = 310
+# The latency chart's height in pixels: the latency table (six stages) plus its
+# caption, so the two columns start and end level.
+LATENCY_CHART_HEIGHT = 290
+# Row height of an interactive table (st.dataframe), to size one to show every row.
+ROW_PX = 35
 # Tables: numbers right-aligned under headers that wrap rather than overflow.
 NUMBERS_RIGHT = [{"selector": "td, th.col_heading", "props": "text-align: right"}]
 # The cost table's columns: whole tokens, and dollars to six decimals so sub-cent
@@ -72,14 +82,22 @@ st.caption(
     "orange when it is not."
 )
 
-runs = load_runs(settings.runs_dir)
-if not runs:
+records = load_runs(settings.runs_dir)
+if not records:
     st.info(
         "No runs yet. Run something on the Analysis page or the CLI and it appears here.",
         icon=":material/monitoring:",
     )
     st.stop()
-events = read_events(settings.events_path)
+runs = monitored_runs(records)
+events = monitored_events(read_events(settings.events_path), runs)
+if not runs:
+    st.info(
+        "No decided runs from the Analysis page yet. This page counts the runs started "
+        "there once their plan is approved, rejected or blocked; replays count from every "
+        "source.",
+        icon=":material/monitoring:",
+    )
 
 
 def percent(value: float | None) -> str:
@@ -150,22 +168,6 @@ def card(label: str, value: Any, note: str = "", status: str | None = None, help
         st.metric(label, value, **metric)
 
 
-def guardrail_chart(rows: list[dict[str, Any]], title: str, key: str) -> None:
-    """Horizontal bars of how often each guardrail fired, coloured by action."""
-    st.plotly_chart(
-        ui.action_bar_figure(
-            [f"{r['code']} {r['name']} · {r['action']}" for r in rows],
-            [r["count"] for r in rows],
-            [Action(r["action"]) for r in rows],
-            title,
-        ),
-        width="stretch",
-        theme="streamlit",
-        key=key,
-        alt=f"{title}, coloured by action",
-    )
-
-
 # ---------------------------------------------------------------- activity
 
 st.subheader("Activity")
@@ -177,29 +179,25 @@ with st.container(horizontal=True):
         card(
             label,
             f"{counts[outcome]:,} ({percent(counts[f'{outcome}_share'])})",
-            status=target_status(outcome, counts[outcome]) if outcome in KPI_TARGETS else None,
+            status=target_status(f"{outcome}_share", counts[f"{outcome}_share"])
+            if f"{outcome}_share" in KPI_TARGETS
+            else None,
         )
-if counts["awaiting"]:
-    st.caption(
-        f"{counts['awaiting']} more shown and still awaiting a decision, so the shares add "
-        "up to less than 100%."
-    )
 
 # ---------------------------------------------------------------- quality and governance
 
 st.subheader("Quality and governance")
 review = review_outcomes(runs)
 replays = replay_results(events)
-narratives = narrative_failures(runs)
+narratives = grounded_narratives(runs)
 refusals = planner_refusals(runs)
 with st.container(horizontal=True):
     card(
         "Approval rate",
         percent(review["approval_rate"]),
-        f"{review['approved']} approved · {review['rejected']} rejected · "
-        f"{review['abandoned']} abandoned",
-        help="Share of the plans shown on the Analysis page that the reviewer approved "
-        "(executed). Abandoned: shown, but neither approved nor rejected.",
+        f"{review['approved']} approved · {review['rejected']} rejected",
+        help="Share of the decided plans that the reviewer approved (executed): approved / "
+        "(approved + rejected).",
     )
     card(
         "Replay match rate",
@@ -221,39 +219,18 @@ with st.container(horizontal=True):
         help="Time from the plan being shown to its approval.",
     )
     card(
-        "N01 failure rate",
-        percent(narratives["n01_failure_rate"]),
+        "Grounded narrative (N01)",
+        percent(narratives["grounded_rate"]),
         f"of {narratives['narratives']} narratives",
-        status=target_status("n01_failure_rate", narratives["n01_failure_rate"]),
-        help="Share of narratives that failed the grounding check (N01 UNGROUNDED_NARRATIVE).",
+        status=target_status("grounded_rate", narratives["grounded_rate"]),
+        help="Share of the runs with a narrative whose narrative passed the grounding check "
+        "(no N01 UNGROUNDED_NARRATIVE).",
     )
     card(
-        "P01 refusal rate",
-        percent(refusals["p01_refusal_rate"]),
-        f"of {refusals['planned']} planned",
-        help="Share of the requests sent to the planner that it refused (P01 PLANNER_REFUSED).",
+        "Planner refused (P01)",
+        f"{refusals['refused']:,} ({percent(refusals['refused_share'])})",
+        help="Runs the planner refused (P01 PLANNER_REFUSED), and their share of all runs.",
     )
-st.caption(
-    "Approval, edit rate and approval time count plans reviewed on the Analysis page"
-    + (
-        f"; {review['headless']} headless runs (CLI, notebooks), decided by their caller, "
-        "are left out."
-        if review["headless"]
-        else "."
-    )
-)
-
-# ---------------------------------------------------------------- guardrails
-
-st.subheader("Guardrails")
-fired = guardrail_counts(events, include_unused=False)
-if fired:
-    guardrail_chart(fired, "Times each guardrail fired", "guardrails-fired")
-else:
-    st.caption("No guardrail has fired yet.")
-with st.expander("Show all guardrails (including unused)"):
-    guardrail_chart(guardrail_counts(events), "Times each guardrail fired, all guardrails",
-                    "guardrails-all")  # fmt: skip
 
 # ---------------------------------------------------------------- capabilities
 
@@ -272,6 +249,36 @@ if any(row["count"] for row in capabilities):
     )
 else:
     st.caption("No step has been executed yet.")
+
+# ---------------------------------------------------------------- guardrails
+
+st.subheader("Guardrails")
+fired = guardrail_counts(events, include_unused=False)
+if fired:
+    st.plotly_chart(
+        ui.action_bar_figure(
+            [f"{r['code']} {r['name']} · {r['action']}" for r in fired],
+            [r["count"] for r in fired],
+            [Action(r["action"]) for r in fired],
+            "Times each guardrail fired",
+        ),
+        width="stretch",
+        theme="streamlit",
+        alt="Times each guardrail fired, coloured by action",
+    )
+else:
+    st.caption("No guardrail has fired yet.")
+unused = unused_guardrails(events)
+with st.expander("Show unused guardrails"):
+    if unused:
+        st.dataframe(
+            pd.DataFrame(unused).rename(columns=str.capitalize),
+            hide_index=True,
+            height=ROW_PX * (len(unused) + 1) + 3,  # every row, no scrolling
+            alt="Guardrails that have not fired",
+        )
+    else:
+        st.caption("Every guardrail has fired at least once.")
 
 # ---------------------------------------------------------------- cost
 
@@ -342,7 +349,7 @@ if costed:
 
 st.subheader("Latency")
 latency = latency_table(runs)
-table_col, chart_col = st.columns([2, 3])
+table_col, chart_col = st.columns([2, 3], vertical_alignment="top")
 with table_col:
     number_table(
         pd.DataFrame(
@@ -358,6 +365,11 @@ with table_col:
         ),
         {"Runs": "{:,}", "Mean (ms)": "{:,.1f}", "p95 (ms)": "{:,.1f}"},
     )
+    unrecorded = [row["stage"] for row in latency if not row["recorded"]]
+    st.caption(
+        "Each stage over the runs that reached it; approval is the time a person took to "
+        f"approve the plan. Not timed in the run record: {', '.join(unrecorded)}."
+    )
 measured = [row for row in latency if row["runs"]]
 if measured:
     chart_col.plotly_chart(
@@ -369,16 +381,12 @@ if measured:
             },
             "Latency per pipeline stage",
             "milliseconds",
+            height=LATENCY_CHART_HEIGHT,
         ),
         width="stretch",
         theme="streamlit",
         alt="Mean and 95th-percentile latency per pipeline stage",
     )
-unrecorded = [row["stage"] for row in latency if not row["recorded"]]
-st.caption(
-    "Each stage over the runs that reached it; approval is the time a person took to "
-    f"approve a plan on the Analysis page. Not timed in the run record: {', '.join(unrecorded)}."
-)
 
 # ---------------------------------------------------------------- recent errors
 

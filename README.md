@@ -234,13 +234,14 @@ uv run python -m quantlab.cli replay <run_id>      # re-run without the model, c
 uv run python -m quantlab.cli trace <run_id> s8    # where does this number come from?
 ```
 
-`runs/events.jsonl` logs one event per stage. The **Monitoring** page shows, over
-all runs, activity, quality and governance (approval, replay match, edit and N01
-and P01 rates, approval time), the guardrails that fired, capability use, tokens
-and cost per stage (from hardcoded prices in `config.py`), the plan-cache
-savings, latency per pipeline stage and recent errors. The cards with a target
-(replay match 100%, N01 failures 0%, failed runs 0) are green when it is met and
-orange when it is not.
+`runs/events.jsonl` logs one event per stage. The **Monitoring** page counts the
+runs started on the Analysis page whose plan was decided (replays count from every
+source) and shows activity, quality and governance (approval, replay match and edit
+rates, approval time, grounded narratives, planner refusals), capability use, the
+guardrails that fired, tokens and cost per stage (from hardcoded prices in
+`config.py`), the plan-cache savings, latency per pipeline stage and recent errors.
+The cards with a target (replay match 100%, grounded narratives 100%, failed runs 0)
+are green when it is met and orange when it is not.
 
 ## Quickstart
 

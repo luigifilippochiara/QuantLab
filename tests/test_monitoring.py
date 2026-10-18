@@ -16,10 +16,12 @@ from quantlab.monitoring import (
     capability_counts,
     cost_table,
     failure_point,
+    grounded_narratives,
     guardrail_counts,
     latency_table,
     log_event,
-    narrative_failures,
+    monitored_events,
+    monitored_runs,
     planner_refusals,
     read_events,
     recent_failures,
@@ -28,6 +30,7 @@ from quantlab.monitoring import (
     share,
     target_status,
     token_cost,
+    unused_guardrails,
 )
 from quantlab.registry import REGISTRY
 from quantlab.types import TokenUsage
@@ -86,16 +89,16 @@ def test_read_events_skips_broken_lines(tmp_path: Path) -> None:
     [
         # Met: exactly the target.
         ("replay_match_rate", 1.0, "met"),
-        ("n01_failure_rate", 0.0, "met"),
-        ("failed", 0, "met"),
+        ("grounded_rate", 1.0, "met"),
+        ("failed_share", 0.0, "met"),
         # Missed: anything else, however close.
         ("replay_match_rate", share(9999, 10000), "missed"),
-        ("n01_failure_rate", share(1, 10000), "missed"),
-        ("failed", 1, "missed"),
-        # No data yet (no replays, no narratives): never shown as met.
+        ("grounded_rate", share(9999, 10000), "missed"),
+        ("failed_share", share(1, 10000), "missed"),
+        # No data yet (no replays, no narratives, no runs): never shown as met.
         ("replay_match_rate", None, "no_data"),
-        ("n01_failure_rate", None, "no_data"),
-        ("failed", None, "no_data"),
+        ("grounded_rate", None, "no_data"),
+        ("failed_share", None, "no_data"),
     ],
 )
 def test_target_status(metric: str, value: float | None, expected: str) -> None:
@@ -103,7 +106,9 @@ def test_target_status(metric: str, value: float | None, expected: str) -> None:
 
 
 def test_targets_and_exact_rates() -> None:
-    assert KPI_TARGETS == {"replay_match_rate": 1.0, "n01_failure_rate": 0.0, "failed": 0}
+    assert KPI_TARGETS == {"replay_match_rate": 1.0, "grounded_rate": 1.0, "failed_share": 0.0}
+    # No runs: the failed share has no data, so the Failed card is not green.
+    assert target_status("failed_share", activity([])["failed_share"]) == "no_data"
     # Rates are not rounded, so a near miss cannot round up to the target.
     assert share(99999, 100000) != 1.0 and share(1, 100000) != 0.0
     assert (share(7, 7), share(0, 7), share(1, 0)) == (1.0, 0.0, None)
@@ -118,54 +123,80 @@ def test_token_cost() -> None:
     assert token_cost("unpriced-model", 10, 10, PRICES) is None
 
 
-def test_activity_counts_and_shares() -> None:
+def test_monitored_runs_are_decided_runs_from_the_analysis_page() -> None:
+    runs = [
+        record("completed", interactive=True),
+        record("blocked", status="blocked", interactive=True),  # never reached approval
+        record("failed", status="failed", interactive=True),
+        record("rejected", status="rejected", interactive=True),
+        # Left out: undecided (pending or abandoned), headless, and of unknown origin.
+        record("ready", status="ready", interactive=True),
+        record("planned", status="planned", interactive=True),
+        record("headless", interactive=False),
+        record("old", interactive=None),
+    ]
+    assert [r.run_id for r in monitored_runs(runs)] == [
+        "completed", "blocked", "failed", "rejected"]  # fmt: skip
+
+
+def test_monitored_events_keep_replays_from_every_source() -> None:
+    counted = [record("app", interactive=True)]
+    events = [
+        {"run_id": "app", "event_type": "validation_issue", "details": {"code": "V10"}},
+        {"run_id": "cli", "event_type": "validation_issue", "details": {"code": "V08"}},
+        {"run_id": "cli", "event_type": "replay_completed", "details": {"all_match": True}},
+        {"run_id": "app", "event_type": "replay_completed", "details": {"all_match": False}},
+    ]
+    kept = monitored_events(events, counted)
+    assert kept == [events[0], events[2], events[3]]  # the headless run's V08 is dropped
+    assert replay_results(kept) == {"replays": 2, "replay_match_rate": 0.5}
+
+
+def test_activity_counts_and_shares_add_up() -> None:
     runs = [
         record("a"),
         record("b", status="blocked"),
         record("c", status="blocked"),
         record("d", status="failed"),
         record("e", status="rejected"),
-        record("f", status="ready"),  # awaiting a decision: in the total only
+        record("f"),
         record("g"),
         record("h"),
     ]
-    assert activity(runs) == {
-        "total": 8, "completed": 3, "blocked": 2, "failed": 1, "rejected": 1, "awaiting": 1,
-        "completed_share": 0.375, "blocked_share": 0.25, "failed_share": 0.125,
+    counts = activity(runs)
+    assert counts == {
+        "total": 8, "completed": 4, "blocked": 2, "failed": 1, "rejected": 1,
+        "completed_share": 0.5, "blocked_share": 0.25, "failed_share": 0.125,
         "rejected_share": 0.125,
     }  # fmt: skip
+    assert sum(v for k, v in counts.items() if k.endswith("_share")) == 1.0
     empty = activity([])
     assert empty["total"] == 0 and empty["completed_share"] is None
 
 
-def test_review_outcomes_count_only_plans_reviewed_in_the_app() -> None:
+def test_review_outcomes_approval_rate_counts_decisions_only() -> None:
     shown = "2026-10-01T10:00:00.000Z"
     edit = ParamChange(step_id="s4", param="window", original=12, final=26, edited_at=shown)
     runs = [
-        # Approved after 30 s, with an edit; approved after 90 s, unedited.
-        record("a", interactive=True, plan_shown_at=shown, decision="approved",
+        # Approved after 30 s, with an edit; approved after 90 s, unedited; one rejected.
+        record("a", plan_shown_at=shown, decision="approved",
                decided_at="2026-10-01T10:00:30.000Z", param_diff=[edit]),
-        record("b", interactive=True, plan_shown_at=shown, decision="approved",
+        record("b", plan_shown_at=shown, decision="approved",
                decided_at="2026-10-01T10:01:30.000Z"),
-        record("c", status="rejected", interactive=True, plan_shown_at=shown,
-               decision="rejected", decided_at="2026-10-01T10:00:10.000Z"),
-        record("d", status="ready", interactive=True, plan_shown_at=shown),  # abandoned
-        record("e", status="blocked", interactive=True, plan_shown_at=shown),  # abandoned
-        # Left out: a headless run, a refusal (no plan shown), a record from before.
-        record("f", interactive=False, plan_shown_at=shown, decision="approved",
-               decided_at=shown),
-        record("g", status="blocked", interactive=True, codes=("P01",)),
-        record("h"),
+        record("c", status="rejected", plan_shown_at=shown, decision="rejected",
+               decided_at="2026-10-01T10:00:10.000Z"),
+        # Blocked plans and refusals have no decision: not in the approval rate.
+        record("d", status="blocked", plan_shown_at=shown),
+        record("e", status="blocked", codes=("P01",)),
     ]  # fmt: skip
     review = review_outcomes(runs)
-    assert (review["shown"], review["approved"], review["rejected"], review["abandoned"]) == (
-        5, 2, 1, 2)  # fmt: skip
-    assert review["approval_rate"] == 0.4 and review["edit_rate"] == 0.5
+    assert (review["approved"], review["rejected"]) == (2, 1)
+    assert review["approval_rate"] == pytest.approx(2 / 3)  # approved / (approved + rejected)
+    assert review["edit_rate"] == 0.5
     assert review["approval_median_s"] == 60.0
     assert review["approval_p95_s"] == pytest.approx(87.0)  # 30 + 0.95 * (90 - 30)
-    assert review["headless"] == 1
-    assert approval_waits(runs) == [30.0, 90.0]  # a and b only: the card's population
-    empty = review_outcomes([record("h")])
+    assert approval_waits(runs) == [30.0, 90.0]
+    empty = review_outcomes([record("e", status="blocked")])
     assert empty["approval_rate"] is None and empty["approval_median_s"] is None
 
 
@@ -180,20 +211,24 @@ def test_replays_narratives_and_refusals() -> None:
 
     n01 = {"issues": [{"code": "N01"}]}
     runs = [
-        record("a", narrative=n01),
+        record("a", narrative=n01),  # an LLM narrative withheld by N01: not grounded
         record("b", narrative={"issues": []}),
-        record("c", narrative={"text": "made before N01 existed"}),  # left out
-        record("d"),  # no narrative
+        record("c", narrative={"issues": []}),
+        record("d", narrative={"text": "made before N01 existed"}),  # left out
+        record("e"),  # no narrative
     ]
-    assert narrative_failures(runs) == {"narratives": 2, "n01_failure_rate": 0.5}
+    assert grounded_narratives(runs) == {"narratives": 3, "grounded_rate": pytest.approx(2 / 3)}
+    assert grounded_narratives([])["grounded_rate"] is None
 
     runs = [
         record("a", status="blocked", codes=("P01",)),
         record("b"),
-        record("c", status="blocked", codes=("R01",)),  # never reached the planner
+        record("c", status="blocked", codes=("R01",)),
         record("d", mode="mock"),
     ]
-    assert planner_refusals(runs) == {"planned": 3, "p01_refusal_rate": pytest.approx(1 / 3)}
+    # A count, and its share of all runs.
+    assert planner_refusals(runs) == {"refused": 1, "refused_share": 0.25}
+    assert planner_refusals([]) == {"refused": 0, "refused_share": None}
 
 
 def test_guardrail_counts_list_every_guardrail_most_frequent_first() -> None:
@@ -212,6 +247,9 @@ def test_guardrail_counts_list_every_guardrail_most_frequent_first() -> None:
     fired = guardrail_counts(events, include_unused=False)
     assert [(r["code"], r["count"]) for r in fired] == [("V08", 2), ("E03", 1)]
     assert guardrail_counts([], include_unused=False) == []
+    unused = unused_guardrails(events)
+    assert [r["code"] for r in unused] == sorted(set(GUARDRAILS) - {"V08", "E03"})  # by code
+    assert unused[0] == {"code": "E01", "name": "DATASET_HASH_MISMATCH", "action": "BLOCK"}
 
 
 def test_capability_counts_list_every_capability() -> None:

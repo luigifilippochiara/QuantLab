@@ -17,9 +17,15 @@ from quantlab.config import PROJECT_ROOT, Settings
 from quantlab.data import load_catalog
 from quantlab.engine import Session, run_request
 from quantlab.guardrails import ENFORCERS, GUARDRAILS, Action
-from quantlab.lineage import LLMInfo, RunRecord, load_runs, new_run_id, save_run
+from quantlab.lineage import LLMInfo, RunRecord, load_runs, new_run_id, replay, save_run
 from quantlab.mock_scenarios import FLAGSHIP_REQUEST, SCENARIOS_BY_ID
-from quantlab.monitoring import guardrail_counts, read_events, utc_now
+from quantlab.monitoring import (
+    guardrail_counts,
+    monitored_events,
+    monitored_runs,
+    read_events,
+    utc_now,
+)
 from quantlab.narrator import NUMBERS_CHECKED_NOTE
 from quantlab.plan import Step
 from quantlab.registry import REGISTRY
@@ -527,36 +533,40 @@ def test_monitoring_page_with_no_runs_shows_a_note(app_env: Settings) -> None:
     assert not app.get("plotly_chart") and not app.metric and not app.subheader
 
 
-def test_monitoring_page_sections_cards_and_charts(app_env: Settings) -> None:
+def app_session(scenario_id: str, settings: Settings) -> Session:
+    """A session started on the Analysis page (interactive), with its plan created."""
+    scenario = SCENARIOS_BY_ID[scenario_id]
+    session = Session.start(scenario.request, list(scenario.dataset_ids), "mock", settings,
+                            interactive=True)  # fmt: skip
+    session.create_plan()
+    return session
+
+
+def headless_replayed_run(settings: Settings) -> str:
+    """A headless run (as the CLI makes), replayed once; returns its run id."""
     scenario = SCENARIOS_BY_ID["volatility_flag_success"]
-    # 1. Approved and executed on the Analysis page; 2. rejected there.
-    for decide in ("approve", "reject"):
-        session = Session.start(scenario.request, list(scenario.dataset_ids), "mock", app_env,
-                                interactive=True)  # fmt: skip
-        session.create_plan()
-        if decide == "reject":
-            session.reject()
-            continue
-        session.approve([i.issue_id for i in session.unresolved_approvals()])
-        session.execute()
-        session.narrate()
-        session.save_record()
-    # 3. A headless run blocked by V08; 4. a failed run; 5. a live run with tokens.
-    blocked = SCENARIOS_BY_ID["spread_frequency_mismatch_block"]
-    run_request(blocked.request, list(blocked.dataset_ids), "mock", settings=app_env)
+    session = run_request(scenario.request, list(scenario.dataset_ids), "mock", approve=True,
+                          settings=settings)  # fmt: skip
+    assert replay(session.run_id, settings).all_match
+    return session.run_id
+
+
+def test_monitoring_page_sections_cards_and_charts(app_env: Settings) -> None:
+    # Counted: approved and executed, rejected, blocked (V08), failed, and a live run.
+    approved = app_session("volatility_flag_success", app_env)
+    approved.approve([i.issue_id for i in approved.unresolved_approvals()])
+    approved.execute()
+    approved.narrate()
+    approved.save_record()
+    app_session("volatility_flag_success", app_env).reject()
+    app_session("spread_frequency_mismatch_block", app_env)
+    # Left out: a plan still awaiting a decision, and a headless run (whose replay counts).
+    app_session("volatility_flag_success", app_env)
+    headless_replayed_run(app_env)
     now = utc_now()
-    save_run(
-        RunRecord(
-            run_id=new_run_id(),
-            created_at=now,
-            status="failed",
-            request="x",
-            error="boom",
-            stage_timings_ms={"planning": 5.0},
-        ),
-        {},
-        app_env.runs_dir,
-    )
+    save_run(RunRecord(run_id=new_run_id(), created_at=now, status="failed", request="x",
+                       error="boom", stage_timings_ms={"planning": 5.0}, interactive=True),
+             {}, app_env.runs_dir)  # fmt: skip
     luna = {"model": "gpt-6-luna"}
     save_run(RunRecord(run_id=new_run_id() + "x", created_at=now, status="completed",
                        request="y", llm=LLMInfo(provider="openai", prompt_version="planner-v6",
@@ -565,39 +575,46 @@ def test_monitoring_page_sections_cards_and_charts(app_env: Settings) -> None:
                        stage_tokens={"planning": TokenUsage(input_tokens=1500, output_tokens=400,
                                                             **luna),
                                      "narration": TokenUsage(input_tokens=1000,
-                                                             output_tokens=200, **luna)}),
+                                                             output_tokens=200, **luna)},
+                       interactive=True),
              {}, app_env.runs_dir)  # fmt: skip
 
     app = open_page("monitoring.py")
     assert [h.value for h in app.subheader] == ["Activity", "Quality and governance",
-        "Guardrails", "Capabilities", "Cost", "Latency", "Recent errors"]  # fmt: skip
-    assert not app.date_input and not app.multiselect  # no filters: every run is shown
+        "Capabilities", "Guardrails", "Cost", "Latency", "Recent errors"]  # fmt: skip
+    assert not app.info  # there are counted runs
     cards = {m.proto.label: m.proto for m in app.metric}
     values = {
         label: cards[label].body
         for label in ("Total runs", "Completed", "Blocked", "Failed", "Rejected by human")
     }
+    # The undecided and headless runs are left out, so the shares add up to 100%.
     assert values == {"Total runs": "5", "Completed": "2 (40%)", "Blocked": "1 (20%)",
                       "Failed": "1 (20%)", "Rejected by human": "1 (20%)"}  # fmt: skip
-    # Failed runs miss their target: an orange line; a clean N01 rate has none.
-    assert "Needs attention" in cards["Failed"].delta and cards["Failed"].color == 3  # ORANGE
-    assert "Needs attention" not in cards["N01 failure rate"].delta
-    # Cards with a target: orange when missed, green when met, neutral without data
-    # (no replay has run, so the replay card is in neither).
-    assert tinted_cards(app.main, "missed") == ["Failed"]
-    assert tinted_cards(app.main, "met") == ["N01 failure rate"]
-    assert cards["Replay match rate"].body == "n/a"
-    # Two plans reviewed in the app: one approved, one rejected; the headless run is left out.
+    # One approved, one rejected: approved / (approved + rejected).
     assert cards["Approval rate"].body == "50%"
-    assert cards["Approval rate"].delta == "1 approved · 1 rejected · 0 abandoned"
-    # The guardrails that fired; all of them (in the expander); every capability; cost per
-    # stage; mean and p95 for each stage with data (all but the untimed request check).
-    fired = guardrail_counts(read_events(app_env.events_path), include_unused=False)
-    assert chart_bars(app) == [len(fired), len(GUARDRAILS), len(REGISTRY), 2, 2 * 5]
-    every = next(e for e in app.expander if e.label == "Show all guardrails (including unused)")
-    assert chart_bars(every) == [len(GUARDRAILS)]
+    assert cards["Approval rate"].delta == "1 approved · 1 rejected"
+    assert cards["Grounded narrative (N01)"].body == "100%"
+    assert cards["Planner refused (P01)"].body == "0 (0%)"
+    # The replay of the headless run counts: replays come from every source.
+    assert (cards["Replay match rate"].body, cards["Replay match rate"].delta) == (
+        "100%", "1 replays")  # fmt: skip
+    # Cards with a target: orange when missed, green when met.
+    assert "Needs attention" in cards["Failed"].delta and cards["Failed"].color == 3  # ORANGE
+    assert tinted_cards(app.main, "missed") == ["Failed"]
+    assert tinted_cards(app.main, "met") == ["Replay match rate", "Grounded narrative (N01)"]
+    # Every capability; the guardrails that fired in the counted runs; cost per stage; mean
+    # and p95 for each stage with data (all but the untimed request check).
+    runs = monitored_runs(load_runs(app_env.runs_dir))
+    events = monitored_events(read_events(app_env.events_path), runs)
+    fired = guardrail_counts(events, include_unused=False)
+    assert {r["code"] for r in fired} == {"V10", "V08"}  # not the undecided plan's or the CLI's
+    assert chart_bars(app) == [len(REGISTRY), len(fired), 2, 2 * 5]
+    # The unused guardrails: a compact table sorted by code, no chart.
+    unused = next(e for e in app.expander if e.label == "Show unused guardrails")
+    assert not unused.get("plotly_chart")
+    assert unused.dataframe[0].value["Code"].tolist() == sorted(set(GUARDRAILS) - {"V10", "V08"})
     cost, latency = [t.value for t in app.table]
-    errors = app.dataframe[0].value
     assert cost.loc["planner", "Cost, US$ (mean)"] == pytest.approx(0.00035)
     assert cost.loc["total", "Input tokens (mean)"] == 2500
     assert latency.index.tolist() == [
@@ -606,14 +623,29 @@ def test_monitoring_page_sections_cards_and_charts(app_env: Settings) -> None:
     # Dollar signs in a caption are escaped, or a pair of them would render as LaTeX.
     (prices,) = [c.value for c in app.caption if c.value.startswith("Per run")]
     assert r"Total \$0.000550" in prices and r"gpt-6-luna \$0.10 input" in prices
+    errors = next(d.value for d in app.dataframe if "stage" in d.value.columns)
     assert errors["code"].tolist() == ["—", "V08"] and errors["message"][0] == "boom"
+
+
+def test_monitoring_page_with_no_counted_run_still_shows_replays(app_env: Settings) -> None:
+    headless_replayed_run(app_env)
+    app_session("volatility_flag_success", app_env)  # awaiting a decision
+    app = open_page("monitoring.py")
+    assert app.info[0].value.startswith("No decided runs from the Analysis page yet")
+    cards = {m.proto.label: m.proto for m in app.metric}
+    assert cards["Total runs"].body == "0" and cards["Completed"].body == "0 (n/a)"
+    assert (cards["Replay match rate"].body, cards["Replay match rate"].delta) == (
+        "100%", "1 replays")  # fmt: skip
+    # No counted run: the Failed card has no data, so it is not green.
+    assert tinted_cards(app.main, "met") == ["Replay match rate"]
+    assert tinted_cards(app.main, "missed") == []
 
 
 def test_monitoring_page_before_any_guardrail_fired(app_env: Settings) -> None:
     save_run(RunRecord(run_id=new_run_id(), created_at=utc_now(), status="completed",
-                       request="x"), {}, app_env.runs_dir)  # fmt: skip
+                       request="x", interactive=True), {}, app_env.runs_dir)  # fmt: skip
     app = open_page("monitoring.py")
     assert any(c.value == "No guardrail has fired yet." for c in app.caption)
-    # The expander still lists every guardrail, at zero.
-    every = next(e for e in app.expander if e.label == "Show all guardrails (including unused)")
-    assert chart_bars(every) == [len(GUARDRAILS)]
+    # The expander lists every guardrail, none having fired.
+    unused = next(e for e in app.expander if e.label == "Show unused guardrails")
+    assert len(unused.dataframe[0].value) == len(GUARDRAILS)

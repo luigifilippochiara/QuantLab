@@ -1516,3 +1516,25 @@ which takes no space on the page). The tints are translucent, like Streamlit's o
 alerts, so the text keeps the theme's colour: contrast stays above 11:1 in the light
 theme and 13:1 in the dark one. This replaces the earlier note that a whole card could
 not be coloured without custom CSS.
+
+## The Monitoring page counts decided runs from the Analysis page
+
+**What it counts** (`monitored_runs`): runs started on the Analysis page
+(`interactive` True) whose plan was decided. A plan that reached approval with no
+decision (status `ready`: pending or abandoned) is left out of every card and chart;
+blocked runs never reach approval and still count as blocked, so the activity shares
+add up to 100%. Headless runs (CLI, notebooks, demo) are left out. Records made before
+`interactive` existed have no origin and are left out too: the only clue, an approval's
+`approved_by`, exists only for plans that needed an approval, so inferring would be
+partial. **Replays count from every source** (`monitored_events` keeps every
+`replay_completed` event), since they are usually started from Run history or the CLI.
+
+**Cards.** Approval rate is approved / (approved + rejected), without the abandoned
+count. "Grounded narrative (N01)" (share of narratives that raised no N01, target
+100%) replaces the N01 failure rate; "Planner refused (P01)" shows the count of
+refusals and its share of runs, with no target. The failed target is checked as a
+share (`failed_share`, 0%), so a page with no counted runs has no data instead of a
+green 0. **Layout.** Capabilities come before Guardrails; the guardrail legend sits
+above the bars (it overlapped the first one); the expander lists only the unused
+guardrails as a table sorted by code, and is labelled "Show unused guardrails"; the
+latency chart matches the height of its table and caption.
