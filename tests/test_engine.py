@@ -174,7 +174,7 @@ def test_run_request_without_approval_executes_nothing(settings: Settings) -> No
 
 def test_monitoring_sees_every_stage(settings: Settings) -> None:
     run_request(SUCCESS.request, list(SUCCESS.dataset_ids), "mock", True, settings)
-    start(settings, "prompt_injection_block")
+    start(settings, "prompt_injection_unknown_capability")
     events = read_events(settings.events_path)
     types = {e["event_type"] for e in events}
     assert {"request_received", "plan_generated", "plan_validated", "approval_granted",

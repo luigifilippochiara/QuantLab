@@ -186,7 +186,11 @@ def test_datasets_are_labelled_id_first_with_full_names_on_hover(app_env: Settin
 
 @pytest.mark.parametrize(
     "scenario_id",
-    ["arima_forecast_block", "prompt_injection_block", "spread_frequency_mismatch_block"],
+    [
+        "arima_forecast_block",
+        "prompt_injection_unknown_capability",
+        "spread_frequency_mismatch_block",
+    ],
 )
 def test_blocked_scenario_cannot_execute(scenario_id: str, app_env: Settings) -> None:
     app = open_page("analysis.py")
@@ -195,8 +199,31 @@ def test_blocked_scenario_cannot_execute(scenario_id: str, app_env: Settings) ->
     assert button(app, "Execute").disabled
     assert any("blocked" in m.value for m in app.markdown if "Run `" in m.value)
     # A blocked plan can still be rejected; a refusal holds no plan to reject.
-    refusal = scenario_id != "spread_frequency_mismatch_block"
+    refusal = scenario_id == "arima_forecast_block"
     assert button(app, "Reject plan").disabled is refusal
+
+
+def test_scenario_4_shows_a_simulated_planner_blocked_by_v02(app_env: Settings) -> None:
+    scenario = SCENARIOS_BY_ID["prompt_injection_unknown_capability"]
+    app = open_page("analysis.py")
+    assert "simulated planner" in app.sidebar.button(key=f"scenario-{scenario.id}").label
+    app.sidebar.button(key=f"scenario-{scenario.id}").click().run()
+    button(app, "Generate plan").click().run()
+    # The planner output is labelled as simulated, above the plan.
+    assert scenario.note.startswith("Simulated misbehaving planner")
+    assert [w.value for w in app.warning] == [scenario.note]
+    # Blocked at validation by V02 alone: nothing can be approved or executed.
+    issues = [m.value for m in app.markdown if "UNKNOWN_CAPABILITY" in m.value]
+    assert len(issues) == 1 and "V02" in issues[0]
+    # The message, as escaped for Markdown (ui.escape_md).
+    assert "'run\\_python' is not a registered capability\\." in [m.value for m in app.markdown]
+    assert button(app, "Execute").disabled
+    assert "Resolve 1 blocking issue first." in [c.value for c in app.caption]
+    assert "Results" not in [h.value for h in app.subheader]
+    # A canned plan without a note (scenario 3's refusal) shows no such notice.
+    app.sidebar.button(key="scenario-arima_forecast_block").click().run()
+    button(app, "Generate plan").click().run()
+    assert not app.warning
 
 
 def test_the_reviewer_can_reject_a_plan(app_env: Settings) -> None:

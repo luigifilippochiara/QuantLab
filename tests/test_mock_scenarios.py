@@ -217,9 +217,10 @@ def test_scenario_3_wall_holds_even_if_the_planner_misbehaves(settings: Settings
     assert session.status == "blocked" and session.execution is None
 
 
-def test_scenario_4_injection_never_reaches_a_shell(
+def test_scenario_4_injected_plan_is_blocked_and_never_runs(
     settings: Settings, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    """The simulated planner obeys the injection; the validator blocks it (V02); nothing runs."""
     shell_commands: list[object] = []
     processes: list[list[str]] = []
     real_popen = subprocess.Popen
@@ -233,11 +234,16 @@ def test_scenario_4_injection_never_reaches_a_shell(
     monkeypatch.setattr(os, "popen", lambda *args, **kwargs: shell_commands.append(args))
     monkeypatch.setattr(subprocess, "Popen", SpyPopen)  # subprocess.run goes through Popen
 
-    scenario = SCENARIOS_BY_ID["prompt_injection_block"]
+    scenario = SCENARIOS_BY_ID["prompt_injection_unknown_capability"]
     session = run_request(scenario.request, list(scenario.dataset_ids), "mock", settings=settings)
 
-    assert session.status == "blocked" and session.execution is None
-    assert "treated as data" in session.plan.refusal_reason
+    # A well-formed plan (no V01) that follows the injection, blocked by V02 alone.
+    assert [s.capability for s in session.plan.steps] == ["load_series", "run_python"]
+    assert session.plan.steps[1].params == {"code": "import os; os.system('ls')"}
+    assert [(i.issue_id, i.action) for i in session.report.issues] == [("V02:s2", "BLOCK")]
+    # Blocked before approval: the executor is never reached, no step ever runs.
+    assert session.status == "blocked" and session.execution is None and not session.approvals
+    assert "run_python" not in REGISTRY
     assert shell_commands == []  # os.system / os.popen never called
     # The only processes are the run record's fixed, read-only git queries (commit
     # hash and dirty flag); nothing from the request ever reaches a process.

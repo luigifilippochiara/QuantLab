@@ -11,7 +11,7 @@ from quantlab.config import LLM_MODES
 from quantlab.engine import Session
 from quantlab.guardrails import Action
 from quantlab.lineage import replay
-from quantlab.mock_scenarios import SCENARIOS
+from quantlab.mock_scenarios import SCENARIOS, match_scenario
 from quantlab.registry import REGISTRY
 
 import ui
@@ -109,6 +109,11 @@ finished = session.status in ("completed", "rejected")
 pending: dict[str, dict] = {}
 
 st.subheader("Plan")
+# A canned plan that simulates a planner behaviour (e.g. one that follows an
+# injection) says so, so it is never mistaken for what a real model produced.
+simulated = match_scenario(session.request) if session.mode == "mock" else None
+if simulated is not None and simulated.note:
+    st.warning(simulated.note, icon=":material/smart_toy:")
 if plan is None:
     st.error(result.error if result else "No plan.", title="The planner returned no usable plan")
 elif plan.cannot_fulfill:

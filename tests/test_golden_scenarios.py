@@ -1,6 +1,6 @@
 """The example workflows and the mock eval set give exactly the results of their golden records.
 
-tests/fixtures/golden_scenarios.json holds four records. For each example
+tests/fixtures/golden_scenarios.json holds five records. For each example
 workflow, run in mock mode and auto-approved as `cli demo` does, each holds: the
 status, every static and runtime issue, the plan, every step's input and output
 hashes and metadata, the numbers of every output table and the facts sheet, on
@@ -19,13 +19,18 @@ snapshots.
 - "before_stage_codes": the same, recorded at commit 81078a9, before the codes
   were named by pipeline stage (R request check, P planner, V validator, E
   executor, N narrator check) and the request check R01 was added.
+- "simulated_injection": example 4 and its eval case, which replaced the earlier
+  ones after commit a0dc779: a simulated planner follows the prompt injection and
+  proposes an unregistered capability, which the validator blocks (V02).
 
 Every result must be the same as recorded. The only allowed differences are the
 changes made on purpose since a record was made (MIGRATIONS), applied in order:
 the simplification translated guardrail codes and removed two parameters from
 the plans; the restructure translated two more codes and renamed an issue's
 "severity" to "action" (APPROVAL to APPROVE); the stage naming translated every
-code but N01. No narrative raises N01, and no example or eval request raises R01.
+code but N01; the simulated injection replaced example 4 and its eval case, which
+the older records then no longer vouch for. No narrative raises N01, and no
+example or eval request raises R01.
 
 The fixture is a frozen reference: a record is never regenerated.
 """
@@ -41,7 +46,7 @@ from quantlab.config import PROJECT_ROOT, Settings
 from quantlab.data import load_catalog
 from quantlab.engine import Session, run_request
 from quantlab.evaluation import load_golden, score_case
-from quantlab.guardrails import Issue, fill_defaults, validate_plan
+from quantlab.guardrails import GUARDRAILS, Issue, fill_defaults, validate_plan
 from quantlab.mock_scenarios import SCENARIOS
 from quantlab.planner import generate_plan
 from quantlab.types import DataType, canonical_text
@@ -82,11 +87,14 @@ class Migration:
         codes: old guardrail code -> new code (every code an issue may have).
         removed_params: capability -> parameters removed from its plan steps.
         severity_to_action: whether issues' "severity" became "action".
+        replaced: example workflows and eval cases replaced on purpose: what an older
+            record holds for them no longer applies, and a newer record covers them.
     """
 
     codes: dict[str, str]
     removed_params: dict[str, tuple[str, ...]]
     severity_to_action: bool
+    replaced: tuple[str, ...] = ()
 
 
 # Stage naming: L planner -> P, G validator -> V, R executor -> E (same numbers),
@@ -98,19 +106,27 @@ STAGE_CODES = {
     "N01": "N01",
 }
 
+# Simulated injection: example 4 (a planner refusal, P01) became a simulated
+# planner that follows the injection and is blocked by V02; codes are unchanged.
+REPLACED_BY_SIMULATED_INJECTION = ("prompt_injection_block", "s4_prompt_injection")
+
 SIMPLIFICATION = Migration(SIMPLIFICATION_CODES, REMOVED_PARAMS, severity_to_action=False)
 RESTRUCTURE = Migration(RESTRUCTURE_CODES, {}, severity_to_action=True)
 STAGES = Migration(STAGE_CODES, {}, severity_to_action=False)
+INJECTION = Migration(
+    {code: code for code in GUARDRAILS}, {}, False, REPLACED_BY_SIMULATED_INJECTION
+)
 
 # The changes made since each record was recorded, oldest first.
 MIGRATIONS = {
-    "before_simplification": (SIMPLIFICATION, RESTRUCTURE, STAGES),
-    "final_examples": (RESTRUCTURE, STAGES),
-    "before_restructure": (RESTRUCTURE, STAGES),
-    "before_stage_codes": (STAGES,),
+    "before_simplification": (SIMPLIFICATION, RESTRUCTURE, STAGES, INJECTION),
+    "final_examples": (RESTRUCTURE, STAGES, INJECTION),
+    "before_restructure": (RESTRUCTURE, STAGES, INJECTION),
+    "before_stage_codes": (STAGES, INJECTION),
+    "simulated_injection": (),
 }
-# The records that hold the mock eval set.
-EVAL_RECORDS = ("before_restructure", "before_stage_codes")
+# The records that hold (part of) the mock eval set.
+EVAL_RECORDS = ("before_restructure", "before_stage_codes", "simulated_injection")
 
 # Output metadata compared step by step (the notes are free text and are not).
 META_FIELDS = ("kind", "frequency", "return_method", "periods", "horizon", "source_dataset_ids")
@@ -317,6 +333,11 @@ def golden() -> dict[str, Any]:
     return json.loads(FIXTURE.read_text(encoding="utf-8"))
 
 
+def replaced_since(record: str) -> set[str]:
+    """The example workflows and eval cases replaced since a record was made."""
+    return {name for migration in MIGRATIONS[record] for name in migration.replaced}
+
+
 def expected_results(golden: dict[str, Any], data: str) -> dict[str, list[dict[str, Any]]]:
     """Scenario id -> the results each example workflow must give now (one per record).
 
@@ -327,6 +348,8 @@ def expected_results(golden: dict[str, Any], data: str) -> dict[str, list[dict[s
     expected: dict[str, list[dict[str, Any]]] = {}
     for record, migrations in MIGRATIONS.items():
         for scenario_id, result in golden[record][data]["scenarios"].items():
+            if scenario_id in replaced_since(record):
+                continue  # a newer record covers what replaced it
             for migration in migrations:
                 result = migrate_result(result, migration)
             # N01 did not exist when the older records were made; it must never fire
@@ -364,11 +387,15 @@ def test_scenarios_match_the_golden_record_on_the_committed_snapshots(
 
 def test_mock_eval_matches_the_golden_record(golden: dict[str, Any], tmp_path: Path) -> None:
     actual = describe_eval_cases(committed_data_settings(tmp_path / "runs"))
+    covered = set()
     for record in EVAL_RECORDS:
         recorded = golden[record]["eval"]["cases"]
-        assert sorted(actual) == sorted(recorded)  # the eval set itself is unchanged
         for case_id, case in recorded.items():
+            if case_id in replaced_since(record):
+                continue  # a newer record covers what replaced it
+            covered.add(case_id)
             for migration in MIGRATIONS[record]:
                 case = migrate_case(case, migration)
             for part, value in case.items():
                 assert actual[case_id][part] == value, f"{record}: {case_id}: {part} differs"
+    assert sorted(actual) == sorted(covered)  # every eval case has a golden record

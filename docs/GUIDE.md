@@ -142,11 +142,18 @@ app or with `cli demo`.
    capability that fits a model or makes a forecast, so the planner declines
    (P01) and lists the registered capabilities instead. If a planner ever
    proposed such a step anyway, the validator would block it independently (V02).
-4. **Prompt-injection protection** (`prompt_injection_block`): a request that
-   tells the assistant to ignore its rules and run Python is treated as data,
-   not as instructions, and declined (P01). There is no code path that could run
-   it, and automated tests confirm that nothing from the request reaches a shell
-   or a subprocess.
+4. **Prompt injection, simulated planner** (`prompt_injection_unknown_capability`):
+   a request that tells the assistant to ignore its rules and run Python. Here
+   the mock planner is a *simulated misbehaving planner*: it follows the
+   injection and proposes a well-formed plan whose second step names an
+   unregistered capability, `run_python`, with the request's code as its
+   parameter. The validator blocks it deterministically (V02 UNKNOWN_CAPABILITY)
+   before approval, so the executor is never reached; even if it were, no
+   function is registered under that name. The app labels this planner output as
+   simulated. A real planner is expected to refuse such a request (P01, as in
+   example 3); this example shows the wall that holds when it does not, and
+   automated tests confirm that nothing from the request reaches a shell or a
+   subprocess.
 5. **Frequency-alignment protection** (`spread_frequency_mismatch_block`):
    "Compute the spread between the weekly 10-year Treasury yield and the daily
    2-year Treasury yield." Planned exactly as asked, the spread of a weekly and a

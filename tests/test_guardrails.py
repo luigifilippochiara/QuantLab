@@ -356,10 +356,17 @@ def test_v10_message_names_the_chosen_value(catalog: Catalog) -> None:
 # --- P01 PLANNER_REFUSED --------------------------------------------------------
 
 
-@pytest.mark.parametrize("scenario_id", ["arima_forecast_block", "prompt_injection_block"])
-def test_p01_refusal(scenario_id: str, catalog: Catalog) -> None:
-    report = validate(raw_plan(scenario_id), catalog)
+def test_p01_refusal(catalog: Catalog) -> None:
+    report = validate(raw_plan("arima_forecast_block"), catalog)
     assert report.codes() == ["P01"] and report.is_blocked
+
+
+def test_v02_blocks_a_planner_that_follows_an_injection(catalog: Catalog) -> None:
+    # Scenario 4 simulates a planner that obeys the injection: a well-formed plan
+    # whose second step names a capability that does not exist. Only V02 fires.
+    report = validate(raw_plan("prompt_injection_unknown_capability"), catalog)
+    assert [(i.issue_id, i.action) for i in report.issues] == [("V02:s2", "BLOCK")]
+    assert "'run_python' is not a registered capability" in report.issues[0].message
 
 
 # --- V11 FORWARD_DATA_AS_SIGNAL ---------------------------------------------------
