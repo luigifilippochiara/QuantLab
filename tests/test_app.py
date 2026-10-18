@@ -492,6 +492,34 @@ def test_weekly_to_daily_edit_re_validates_and_runs_after_re_approval(app_env: S
     assert "(edited" not in params["s4"]  # planner-proposed values are not marked
 
 
+def test_one_click_applies_a_typed_value(app_env: Settings) -> None:
+    app = plan_scenario_1(app_env)
+    # Apply is enabled before any change is seen: a number field sends a typed value only
+    # with the next interaction, so a disabled button would swallow the first click.
+    assert not button(app, "Apply changes").disabled
+    button(app, "Apply changes").click().run()  # nothing changed yet
+    assert any(i.value.startswith("No changes to apply") for i in app.info)
+    assert issue_codes(app) == {"V10"}
+    # The typed value and the click arrive in the same run: one click applies it.
+    window = next(n for n in app.number_input if n.key.endswith("-s4-window"))
+    window.set_value(26)
+    button(app, "Apply changes").click().run()
+    assert any("Changes applied and re-validated" in i.value for i in app.info)
+    assert any(c.value == ":blue[edited (was 12)]" for c in app.caption)
+
+
+def test_execute_ignores_a_click_while_a_change_is_not_applied(app_env: Settings) -> None:
+    app = plan_scenario_1(app_env)
+    approve_all(app)
+    # A value typed, then Execute clicked straight away: both reach the same run, where
+    # the unapplied change disables Execute, so Streamlit does not count the click.
+    next(n for n in app.number_input if n.key.endswith("-s4-window")).set_value(26)
+    button(app, "Execute").click().run()
+    assert not app.exception, app.exception
+    assert "Results" not in [h.value for h in app.subheader]  # nothing ran
+    assert any(c.value == "Apply or reset your parameter changes to continue." for c in app.caption)
+
+
 def test_full_sample_edit_raises_v09_and_reset_clears_it(app_env: Settings) -> None:
     app = plan_scenario_1(app_env)
     next(s for s in app.selectbox if s.key.endswith("-s5-method")).select("full_sample").run()

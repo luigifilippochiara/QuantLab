@@ -216,18 +216,25 @@ else:
         for name, value in step.params.items()
     )
     left, right = st.columns(2)
+    # Enabled whenever the plan can change, not only once a change is seen: a number
+    # field sends its typed value only when it loses focus, so a button disabled until
+    # then would swallow the first click (which only moves the focus) and need a second.
+    # The click itself sends the value, and this run already sees it in `pending`.
     if left.button(
         "Apply changes & re-validate",
         type="primary",
         icon=":material/rule:",
-        disabled=finished or not pending,
+        disabled=finished,
         width="stretch",
     ):
-        session.apply_param_edits(pending)
-        st.session_state.flash = (
-            "Changes applied and re-validated. Approvals were reset: they belong to the "
-            "previous plan version, so approve this one again."
-        )
+        if pending:
+            session.apply_param_edits(pending)
+            st.session_state.flash = (
+                "Changes applied and re-validated. Approvals were reset: they belong to the "
+                "previous plan version, so approve this one again."
+            )
+        else:
+            st.session_state.flash = "No changes to apply: edit a parameter above first."
         st.rerun()
     if right.button(
         "Reset to planner's proposal",
