@@ -206,9 +206,9 @@ ARIMA_PLAN: dict[str, Any] = {
     "cannot_fulfill": False,
 }
 
-# The approvals the flagship (scenario 1) needs: the return-method assumption of
-# compute_returns (s5, NASDAQ log returns) and of forward_return (s8, USD/CHF simple).
-SCENARIO_1_APPROVALS = ["V10:s5:return_method", "V10:s8:return_method"]
+# The approval the flagship (scenario 1) needs: the return-method assumption of its
+# outcome, forward_return (s6, next week's simple USD/CHF return).
+SCENARIO_1_APPROVALS = ["V10:s6:return_method"]
 
 # The approvals scenario 6 (the NASDAQ-only analysis) needs: the return-method
 # assumption of compute_returns (s3) and of forward_return (s6).

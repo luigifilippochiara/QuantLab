@@ -1,6 +1,6 @@
 """The example workflows and the mock eval set give exactly the results of their golden records.
 
-tests/fixtures/golden_scenarios.json holds seven records. For each example
+tests/fixtures/golden_scenarios.json holds eight records. For each example
 workflow, run in mock mode and auto-approved as `cli demo` does, each holds: the
 status, every static and runtime issue, the plan, every step's input and output
 hashes and metadata, the numbers of every output table and the facts sheet, on
@@ -29,6 +29,9 @@ snapshots.
 - "yield_curve_below": all six examples and the mock eval set, recorded after
   commit 24372ea, when flag_regime gained `direction` (below: the lower tail) and
   example 2 asked for the weeks when the yield curve was most negative.
+- "vix_flagship": all six examples and the mock eval set, recorded after commit
+  1754629, when the flagship flagged stress weeks with the VIX level (example 1) and
+  example 5 became the same question with a full-history threshold.
 
 Every result must be the same as recorded. The only allowed differences are the
 changes made on purpose since a record was made (MIGRATIONS), applied in order:
@@ -42,8 +45,9 @@ new flagship moved the earlier one, unchanged, to example 6 under a new id (and 
 eval case with it). Example 3's new request leaves its recorded result as it was (a
 refusal records no dataset). flag_regime's new `direction` parameter adds
 direction="above" (the default, the old behaviour) to every recorded flag step, and
-example 2's new question replaced it and its eval case. No narrative raises N01, and
-no example or eval request raises R01.
+example 2's new question replaced it and its eval case; the VIX flagship replaced
+examples 1 and 5 and their eval cases. No narrative raises N01, and no example or
+eval request raises R01.
 
 The fixture is a frozen reference: a record is never regenerated.
 """
@@ -169,6 +173,18 @@ DIRECTION = Migration(
     added_params={"flag_regime": {"direction": "above"}},
 )
 
+# VIX flagship: example 1 flags stress weeks with the VIX level instead of NASDAQ
+# volatility, and example 5 asks the same question with a full-history threshold, so
+# both and their eval cases (under every id they have had) were replaced.
+REPLACED_BY_VIX = (
+    "chf_safe_haven_success",
+    "s1_chf_safe_haven",
+    "vix_full_sample_lookahead",
+    "s2_vix_full_sample_lookahead",
+    "s5_vix_full_sample_lookahead",
+)
+VIX_FLAGSHIP = Migration({code: code for code in GUARDRAILS}, {}, False, REPLACED_BY_VIX)
+
 # The changes made since each record was recorded, oldest first.
 MIGRATIONS = {
     "before_simplification": (
@@ -179,13 +195,31 @@ MIGRATIONS = {
         RENUMBERING,
         FLAGSHIP_MOVE,
         DIRECTION,
+        VIX_FLAGSHIP,
     ),
-    "final_examples": (RESTRUCTURE, STAGES, INJECTION, RENUMBERING, FLAGSHIP_MOVE, DIRECTION),
-    "before_restructure": (RESTRUCTURE, STAGES, INJECTION, RENUMBERING, FLAGSHIP_MOVE, DIRECTION),
-    "before_stage_codes": (STAGES, INJECTION, RENUMBERING, FLAGSHIP_MOVE, DIRECTION),
-    "simulated_injection": (RENUMBERING, FLAGSHIP_MOVE, DIRECTION),
-    "safe_haven_flagship": (DIRECTION,),
-    "yield_curve_below": (),
+    "final_examples": (
+        RESTRUCTURE,
+        STAGES,
+        INJECTION,
+        RENUMBERING,
+        FLAGSHIP_MOVE,
+        DIRECTION,
+        VIX_FLAGSHIP,
+    ),
+    "before_restructure": (
+        RESTRUCTURE,
+        STAGES,
+        INJECTION,
+        RENUMBERING,
+        FLAGSHIP_MOVE,
+        DIRECTION,
+        VIX_FLAGSHIP,
+    ),
+    "before_stage_codes": (STAGES, INJECTION, RENUMBERING, FLAGSHIP_MOVE, DIRECTION, VIX_FLAGSHIP),
+    "simulated_injection": (RENUMBERING, FLAGSHIP_MOVE, DIRECTION, VIX_FLAGSHIP),
+    "safe_haven_flagship": (DIRECTION, VIX_FLAGSHIP),
+    "yield_curve_below": (VIX_FLAGSHIP,),
+    "vix_flagship": (),
 }
 # The records that hold (part of) the mock eval set.
 EVAL_RECORDS = (
@@ -194,6 +228,7 @@ EVAL_RECORDS = (
     "simulated_injection",
     "safe_haven_flagship",
     "yield_curve_below",
+    "vix_flagship",
 )
 
 # Output metadata compared step by step (the notes are free text and are not).

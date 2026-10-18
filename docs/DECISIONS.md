@@ -1752,3 +1752,44 @@ inverted (below −0.26 percentage points), with an E04 warning because DGS2 sta
 all below −0.273 percentage points. Golden records: a `DIRECTION` migration adds
 `direction="above"` to every recorded flag step and marks example 2 and its eval case
 as replaced; the record `yield_curve_below` holds all six examples and the eval set.
+
+## The flagship flags stress with the VIX; example 5 is the same question over the whole history
+
+**Example 1 flags stress weeks with the VIX level instead of NASDAQ volatility.** Its
+request (quoted in the guide) asks whether the Swiss franc is a safe haven: flag the
+weeks when the VIX is in its top 10% using only past data, then compare next week's
+USD/CHF return in those weeks with the other weeks, with a HAC test.
+- **The plan has eight steps**: load VIXCLS and DEXSZUS, both made weekly (Friday
+  closes), the weekly VIX flagged above its expanding 90th percentile, then the next
+  week's simple USD/CHF return, compared and tested.
+- **The VIX level is flagged directly.** It is already a volatility (expected, annualised),
+  so the plan computes no returns or rolling volatility, and the only approval is the
+  outcome's return method (V10).
+- **The weekly VIX is its Friday close**, the level known when the week ends, and the step
+  header and the recorded assumptions both say so.
+- **There is no `compute_returns` on USD/CHF**, as you chose. `forward_return` computes the
+  compared return itself, so a same-week return step would go unused. As a result,
+  switching the USD/CHF dataset to DGS10 is blocked by V04 TYPE_MISMATCH (a forward return
+  needs a price level). V07 RETURNS_ON_RATES only applies to `compute_returns`, and the
+  same edit on example 6 still shows it.
+- **On the committed data the run warns E04 twice**: the VIX starts in 1990, so 36% of the
+  USD/CHF weeks fall outside the comparison. That is a property of the data. On the
+  synthetic test data the series share dates and nothing warns, so the examples declare
+  no expected warnings. The end-to-end test accepts warnings and nothing else, and the
+  golden records pin the exact warnings on both data sets.
+- **Result**: 221 high-VIX weeks in 63 episodes. The next week's USD/CHF return averaged
+  +0.066% after them and −0.023% otherwise, so the franc weakened on average after stress.
+  p = 0.51, so the difference is not significant.
+
+**Example 5 is the same question with the threshold from the VIX's entire history**, so
+it differs from example 1 in one parameter: `method="full_sample"`. A test checks that
+this is the only difference. It needs the look-ahead approval (V09), whose message adds
+that the significance test is invalidated, plus the same V10. The earlier example 5
+(daily VIX days in the top 5%) is gone. Both examples keep their ids. The keywords tell
+them apart: "only past data" for example 1, "entire history" for example 5.
+
+**Records and versions.** The record `vix_flagship` holds all six examples and the eval
+set. A `VIX_FLAGSHIP` migration marks examples 1 and 5 and their eval cases as replaced in
+the older records. The canned plans are now `canned-scenarios-v13`. The flagship's
+description is now "does the Swiss franc strengthen after stress weeks?", since the stress
+signal is no longer US tech equities.

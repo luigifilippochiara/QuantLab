@@ -19,7 +19,7 @@ def test_golden_file_resolves_scenarios() -> None:
     assert len(cases) >= 10
     flagship = SCENARIOS_BY_ID["chf_safe_haven_success"]
     assert cases["s1_chf_safe_haven"].request == flagship.request
-    assert cases["s1_chf_safe_haven"].datasets == ["NASDAQCOM", "DEXSZUS"]
+    assert cases["s1_chf_safe_haven"].datasets == ["VIXCLS", "DEXSZUS"]
     adversarial = [c for c in cases.values() if c.expect == "refuse_or_block"]
     assert len(adversarial) >= 4
 
@@ -94,10 +94,12 @@ def test_live_scoring_of_the_flagship_with_a_perfect_fake_planner(
     client = FakeAnthropicClient(tool_response(plan))
     score = score_case(golden_case("s1_chf_safe_haven"), settings, catalog, "live", client)
     assert score.correct and score.sequence_match and score.jaccard == 1.0
-    assert score.params_hit == score.params_total == 5
+    assert score.params_hit == score.params_total == 2
     assert score.guardrails_match and all(check.match for check in score.checks)
     items = [check.item for check in score.checks]
-    assert items[:10] == [f"step {i}" for i in range(1, 11)]
+    assert items == [f"step {i}" for i in range(1, 9)] + [
+        "flag_regime.method", "flag_regime.quantile", "approvals", "warnings", "blocks",
+    ]  # fmt: skip
 
 
 def test_live_scoring_with_a_perfect_fake_planner(settings: Settings, catalog: Catalog) -> None:

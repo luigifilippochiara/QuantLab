@@ -329,9 +329,9 @@ def test_v08_spread_of_weekly_and_daily_series(catalog: Catalog) -> None:
 def test_v09_full_sample_threshold_needs_approval_and_explains_why(catalog: Catalog) -> None:
     report = validate(raw_plan("vix_full_sample_lookahead"), catalog)  # scenario 5
     assert not report.is_blocked
-    assert [i.issue_id for i in report.approvals_required] == ["V09:s2"]
+    assert [i.issue_id for i in report.approvals_required] == ["V09:s5", "V10:s6:return_method"]
     v09 = report.approvals_required[0]
-    assert "judges past days using information from the future" in v09.message
+    assert "judges past weeks using information from the future" in v09.message
     assert "expanding" in v09.suggestion
 
 
@@ -345,9 +345,11 @@ def test_v09_says_when_it_also_invalidates_the_significance_test(catalog: Catalo
     assert v09.issue_id == "V09:s5"  # unchanged id: the message is extra, the approval the same
     assert "It also invalidates the significance test in s8" in v09.message
     assert "would not have been" in v09.message
-    # Without a test downstream (scenario 5), the message does not mention one.
-    plain = validate(raw_plan("vix_full_sample_lookahead"), catalog).approvals_required[0]
-    assert "significance test" not in plain.message
+    # Without a test downstream (scenario 5's VIX flags alone), it does not mention one.
+    raw = raw_plan("vix_full_sample_lookahead")
+    raw["steps"] = [step(raw, "s1"), step(raw, "s3"), step(raw, "s5")]
+    plain = validate(raw, catalog).approvals_required[0]
+    assert plain.code == "V09" and "significance test" not in plain.message
 
 
 def test_v10_message_names_the_chosen_value(catalog: Catalog) -> None:

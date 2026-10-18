@@ -27,26 +27,26 @@ def test_demo_behaves_as_expected(cli_env: Settings, capsys: pytest.CaptureFixtu
         assert scenario_id in output
     # The audit trail: scenario 1's significance test traced down to both files.
     trace = output.split("Audit trail (traceability)")[1]
-    for line in ["s10 C10 hac_mean_difference", "s8 C08 forward_return", "s7 C07 flag_regime",
-                 "s6 C06 rolling_volatility", "s5 C03 compute_returns", "s4 C02 resample",
-                 "s3 C02 resample", "s2 C01 load_series", "s1 C01 load_series",
-                 "NASDAQCOM (FRED NASDAQCOM) sha256", "DEXSZUS (FRED DEXSZUS) sha256"]:  # fmt: skip
+    for line in ["s8 C10 hac_mean_difference", "s6 C08 forward_return", "s5 C07 flag_regime",
+                 "s4 C02 resample", "s3 C02 resample", "s2 C01 load_series", "s1 C01 load_series",
+                 "VIXCLS (FRED VIXCLS) sha256", "DEXSZUS (FRED DEXSZUS) sha256"]:  # fmt: skip
         assert line in trace
 
 
 def test_run_replay_and_trace(cli_env: Settings, capsys: pytest.CaptureFixture) -> None:
-    run = ["run", "1", "--datasets", "NASDAQCOM", "DEXSZUS", "--mode", "mock", "--approve-all"]
+    run = ["run", "1", "--datasets", "VIXCLS", "DEXSZUS", "--mode", "mock", "--approve-all"]
     assert main(run) == 0
     run_id = list_runs(cli_env.runs_dir)[0]["run_id"]
     assert f"  Note: {NUMBERS_CHECKED_NOTE}" in capsys.readouterr().out  # under the narrative
     assert main(["replay", run_id]) == 0
     replayed = capsys.readouterr().out
     assert "ALL HASHES MATCH" in replayed and "C10" in replayed
-    assert main(["trace", run_id, "s10"]) == 0
+    assert main(["trace", run_id, "s8"]) == 0
     output = capsys.readouterr().out
-    assert "s10 C10 hac_mean_difference" in output and "DEXSZUS (FRED DEXSZUS)" in output
+    assert "s8 C10 hac_mean_difference" in output and "DEXSZUS (FRED DEXSZUS)" in output
+    assert "VIXCLS (FRED VIXCLS)" in output
 
 
 def test_run_without_approval_exits_nonzero(cli_env: Settings, capsys) -> None:
-    assert main(["run", "1", "--datasets", "NASDAQCOM", "DEXSZUS", "--mode", "mock"]) == 1
+    assert main(["run", "1", "--datasets", "VIXCLS", "DEXSZUS", "--mode", "mock"]) == 1
     assert "--approve-all" in capsys.readouterr().out

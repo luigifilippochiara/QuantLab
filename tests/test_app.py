@@ -65,7 +65,7 @@ def button(app: AppTest, label: str):
 
 
 def approve_all(app: AppTest) -> None:
-    """Tick every approval checkbox (scenarios 1 and 6 have two: their return methods)."""
+    """Tick every approval checkbox (e.g. scenario 6's two return methods)."""
     for key in [c.key for c in app.checkbox if c.key.startswith("approve-")]:
         app.checkbox(key=key).check()
     app.run()
@@ -93,11 +93,11 @@ def test_scenario_1_full_flow(app_env: Settings) -> None:
     assert NUMBERS_CHECKED_NOTE in captions
     # Results and trace name each capability by code and name.
     results = [e.label for e in app.expander if e.label.startswith("s")]
-    assert results[5].startswith("s6 · C06 · rolling_volatility · completed")
-    assert results[9].startswith("s10 · C10 · hac_mean_difference · completed")
+    assert results[4].startswith("s5 · C07 · flag_regime · completed")
+    assert results[7].startswith("s8 · C10 · hac_mean_difference · completed")
     # Under each USD/CHF result, and in the narrative: which way the rate reads.
     quote = "DEXSZUS is quoted as USD/CHF, in Swiss francs per US dollar"
-    assert sum(c.value.startswith(quote) for c in app.caption) == 5  # s2, s4, s8, s9, s10
+    assert sum(c.value.startswith(quote) for c in app.caption) == 5  # s2, s4, s6, s7, s8
     assert any(quote in m.value for m in app.markdown)
     # The significance test's table, every number formatted as in the facts sheet.
     test = next(
@@ -108,12 +108,12 @@ def test_scenario_1_full_flow(app_env: Settings) -> None:
         assert statistic in test["statistic"].tolist()
     # The trace starts at the final result, the test with its p-value.
     picker = next(b for b in app.selectbox if b.label == "Step to trace")
-    assert picker.value == "s10" and picker.options[-1] == "s10 · C10 · hac_mean_difference"
+    assert picker.value == "s8" and picker.options[-1] == "s8 · C10 · hac_mean_difference"
     trace = next(d.value for d in app.dataframe if "library call" in d.value.columns)
     assert trace[["step", "code", "capability"]].values.tolist()[:3] == [
-        ["s10", "C10", "hac_mean_difference"],
-        ["s8", "C08", "forward_return"],
-        ["s7", "C07", "flag_regime"],
+        ["s8", "C10", "hac_mean_difference"],
+        ["s6", "C08", "forward_return"],
+        ["s5", "C07", "flag_regime"],
     ]
     subheaders = [h.value for h in app.subheader]
     # The narrative (with its note) comes right after the results, then the trace.
@@ -123,7 +123,7 @@ def test_scenario_1_full_flow(app_env: Settings) -> None:
     assert len(app.get("plotly_chart")) >= 5  # daily, weekly, returns, volatility, forward
 
     button(app, "Replay this run").click().run()
-    assert any("10 of 10 step outputs match" in s.value for s in app.success)
+    assert any("8 of 8 step outputs match" in s.value for s in app.success)
 
 
 def test_example_1_button_fills_in_the_flagship_request(app_env: Settings) -> None:
@@ -156,7 +156,7 @@ def test_no_dataset_is_selected_when_the_app_opens(app_env: Settings) -> None:
     assert not any("title=" in c.value for c in app.sidebar.caption)  # no dataset lines
     app.sidebar.button(key="scenario-chf_safe_haven_success").click().run()
     # An example fills in its own.
-    assert app.sidebar.multiselect[0].value == ["NASDAQCOM", "DEXSZUS"]
+    assert app.sidebar.multiselect[0].value == ["VIXCLS", "DEXSZUS"]
 
 
 def test_datasets_are_labelled_id_first_with_full_names_on_hover(app_env: Settings) -> None:

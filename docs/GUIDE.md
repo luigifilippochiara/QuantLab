@@ -24,7 +24,7 @@ uv sync                                           # environment from uv.lock
 uv run streamlit run app/streamlit_app.py         # the app (works in mock mode)
 
 uv run python -m quantlab.cli demo                # run the example workflows, then trace example 1
-uv run python -m quantlab.cli run 1 --datasets NASDAQCOM DEXSZUS --mode mock --approve-all   # example 1 by number
+uv run python -m quantlab.cli run 1 --datasets VIXCLS DEXSZUS --mode mock --approve-all   # example 1 by number
 uv run python -m quantlab.cli replay <run_id>     # re-run without the model, compare hashes
 uv run python -m quantlab.cli trace <run_id> s5   # where does this number come from?
 uv run python -m quantlab.cli eval --mode mock    # planner evaluation -> eval/reports/
@@ -86,17 +86,18 @@ and input references are locked, and the engine rejects any other edit with a
 BLOCK. **Apply changes & re-validate** is highlighted only while a field differs
 from the last validated plan (a value changed back counts as no change); it runs
 the same validator again, so issues appear and clear as the plan changes: in
-example 1, switching
-`flag_regime.method` to `full_sample` raises V09, which then also says the
-significance test is invalidated, and changing the first `load_series.dataset_id`
-from NASDAQCOM to DGS10 is a legal edit that the validator then blocks (V07:
-returns of a yield are meaningless); a quantile outside the registry's range
-would be blocked too (V03), and its field does not accept one. Windows are counted
-in periods of the series' frequency, as their fields and the step summaries say:
-in example 6, switching `resample.freq` from W to D keeps `window` at 12, which
-then means 12 trading days instead of 12 weeks (in example 1, changing only one of
-its two `resample` steps raises V08: the flags and the returns would no longer
-share a frequency). Any edit resets the
+example 1, switching `flag_regime.method` to `full_sample` raises V09, which then
+also says the significance test is invalidated; changing the USD/CHF
+`load_series.dataset_id` to DGS10 is a legal edit that the validator then blocks
+(V04: a forward return needs a price level, and a yield is a rate); changing only
+one of its two `resample` steps raises V08 (the flags and the returns would no
+longer share a frequency); and a quantile outside the registry's range would be
+blocked too (V03), though its field does not accept one. In example 6, changing
+`load_series.dataset_id` from NASDAQCOM to DGS10 is blocked by V07 (returns of a
+yield are meaningless). Windows are counted in periods of the series' frequency, as
+their fields and the step summaries say: in example 6, switching `resample.freq`
+from W to D keeps `window` at 12, which then means 12 trading days instead of 12
+weeks. Any edit resets the
 approvals, which are recorded with the hash of the plan version they were given
 for. Execute stays disabled, with a one-line reason, while changes are unapplied,
 a BLOCK remains or an approval is unticked. Edited values are marked ("edited
@@ -114,26 +115,29 @@ canned plans in mock mode (`mock_scenarios.py`) or with the live planner, from t
 app or with `cli demo`.
 
 1. **Is the Swiss franc a safe haven?** (`chf_safe_haven_success`), the flagship:
-   does the Swiss franc strengthen after high-volatility weeks in US tech
-   equities? The request states the choices that have no default; the registry
-   defaults supply the rest (annualised volatility, a threshold after 52 weeks),
-   and forward returns always cover the next week with the test's lags set by the
-   Newey-West rule, so the live planner can reach the same plan as the canned one:
+   does the Swiss franc strengthen after stress weeks? The request states the
+   choices that have no default; the registry defaults supply the rest (a threshold
+   after 52 weeks), and forward returns always cover the next week with the test's
+   lags set by the Newey-West rule, so the live planner can reach the same plan as
+   the canned one:
 
-   > Is the Swiss franc a safe haven? Using weekly data, compute NASDAQ log returns and their 12-week rolling volatility, flag the weeks in the top 10% of volatility using only past data, then compare next week's USD/CHF simple return in high-volatility weeks against the other weeks, with a HAC test for the difference.
+   > Is the Swiss franc a safe haven? Using weekly data, flag the weeks when the VIX is in its top 10%, using only past data, then compare next week's USD/CHF return in those weeks against the other weeks, with a HAC test for the difference.
 
-   Both series as weekly Friday closes by the same rule, so each flag meets the
-   USD/CHF return of the following week on the same date; weekly NASDAQ log
-   returns for the volatility (they add up over time, as square-root-of-time
-   annualisation assumes); 12-week annualised rolling volatility; flags above the
-   90th percentile of past volatility only (expanding, after 52 weeks); the
-   following week's simple USD/CHF return (`forward_return`, from the weekly
-   rates); a descriptive comparison (`compare_groups`), then the significance test
+   Both series as weekly Friday closes by the same rule (the weekly VIX is its
+   Friday close, the level known when the week ends), so each flag meets the USD/CHF
+   return of the following week on the same date; the VIX level flagged directly
+   (it is already a volatility) above the 90th percentile of its past levels only
+   (expanding, after 52 weeks); the following week's simple USD/CHF return
+   (`forward_return`, from the weekly rates: a mean of log returns would be lower
+   by about half the variance and bias the comparison against volatile weeks); a
+   descriptive comparison (`compare_groups`), then the significance test
    (`hac_mean_difference`), both on the weeks the two series share. The analyst
-   confirms the two return-method choices (V10); there is no warning and no block.
-   DEXSZUS is quoted in Swiss francs per US dollar (USD/CHF), so a negative return
-   means the franc strengthened: the narrative states this convention, read from
-   the dataset catalog, and so does every USD/CHF result.
+   confirms the outcome's return method (V10). The VIX starts in 1990, so the
+   earlier USD/CHF weeks are dropped when the two are aligned, and the run says so
+   (E04 ALIGNMENT_LOSS, a warning). DEXSZUS is quoted in Swiss francs per US dollar
+   (USD/CHF), so a negative return means the franc strengthened: the narrative
+   states this convention, read from the dataset catalog, and so does every
+   USD/CHF result.
 2. **Frequency-alignment protection** (`spread_frequency_mismatch_block`):
    "Compute the spread between the weekly 10-year Treasury yield and the daily
    2-year Treasury yield, and show the weeks when the curve was most negative."
@@ -165,17 +169,21 @@ app or with `cli demo`.
    example 3); this example shows the wall that holds when it does not, and
    automated tests confirm that nothing from the request reaches a shell or a
    subprocess.
-5. **Look-ahead protection** (`vix_full_sample_lookahead`): "Flag the days when
-   the VIX was in the top 5% of its entire history." The plan flags the days above
-   the 95th percentile of the whole VIX history, a full-sample threshold that uses
-   data nobody had on the flagged day. QuantLab runs it only with explicit approval
-   (V09), explains that such a threshold judges past days using information from
-   the future, and recommends the expanding method. It is an approval, not a
-   block: a full-sample threshold is fine for labelling past stress days but
-   invalid as a signal or in a backtest, and only the analyst knows which is meant.
+5. **Look-ahead protection** (`vix_full_sample_lookahead`): example 1's question
+   with one difference, the VIX threshold from its entire history:
+
+   > Is the Swiss franc a safe haven? Using weekly data, flag the weeks when the VIX is in the top 10% of its entire history, then compare next week's USD/CHF return in those weeks against the other weeks, with a HAC test for the difference.
+
+   The plan is example 1's with a full-sample threshold, which uses data nobody had
+   in the flagged week. QuantLab runs it only with explicit approval (V09), explains
+   that such a threshold judges past weeks using information from the future and
+   also invalidates the significance test, and recommends the expanding method. It
+   is an approval, not a block: a full-sample threshold is fine for labelling past
+   stress weeks but invalid as a signal or in a backtest, and only the analyst knows
+   which is meant. The outcome's return method is approved as in example 1 (V10).
 6. **NASDAQ after volatile weeks** (`nasdaq_volatility_success`), the earlier
-   flagship on the NASDAQ alone: the same flags, compared with the following week's
-   NASDAQ return.
+   flagship, on the NASDAQ alone: weeks of high NASDAQ volatility, compared with the
+   following week's NASDAQ return.
 
    > Using NASDAQ, calculate weekly log returns, 12-week volatility, and flag unusually volatile weeks. Compare next-week simple returns after volatile weeks with those after normal weeks, then test whether the difference in means is statistically significant.
 
@@ -192,29 +200,26 @@ app or with `cli demo`.
    the number of distinct episodes, and the test's difference, p-value and 95%
    confidence interval.
 
-**Example output.** For example workflow 1 on the committed snapshots (1971 to
-2026), QuantLab flags 446 of 2,842 weeks (15.7%) whose 12-week annualised NASDAQ
-volatility was above the 90th percentile of its own past, in 40 distinct
-episodes. Over the 2,841 weeks both series share, the following week's simple
-USD/CHF return averaged -0.038% after a flagged week and -0.043% after a normal
-week: the franc strengthened on average after both, very slightly less after a
-volatile week. The difference, +0.0041 percentage points, has a Newey-West
-standard error of 0.091 percentage points (8 lags) and a p-value of 0.96, so
-there is no statistically significant difference: in this sample the franc does
-not strengthen more in the week after US tech stress. The test looks at the
-following week, not at the stress week itself. The share of flagged weeks exceeds
-10% because each week is compared only with the history available at the time,
-so the more volatile decades after the 1970s cross the earlier thresholds more
-often. Example 6, on the same flags, finds the following week's NASDAQ return
-averaging 0.209% after a flagged week and 0.230% after a normal week (p-value
-0.93).
+**Example output.** For example workflow 1 on the committed snapshots, QuantLab
+flags 221 of 1,867 weeks (11.8%) whose VIX close was above the 90th percentile of
+its past levels, in 63 distinct episodes. Over the 1,866 weeks both series share
+(1991 to 2026; the VIX starts in 1990, so the run warns that the earlier USD/CHF
+weeks were dropped, E04), the following week's simple USD/CHF return averaged
++0.066% after a high-VIX week and -0.023% after another week: the franc weakened
+on average after stress weeks, the opposite of a safe haven. The difference, +0.088
+percentage points, has a Newey-West standard error of 0.133 percentage points (7
+lags) and a p-value of 0.51, so there is no statistically significant difference:
+in this sample the franc does not strengthen in the week after a stress week. The
+test looks at the following week, not at the stress week itself. Example 6, on
+NASDAQ volatility flags, finds the following week's NASDAQ return averaging 0.209%
+after a flagged week and 0.230% after a normal week (p-value 0.93).
 
 **Audit trail.** For any executed result, such as example 1's p-value, **Trace a
 result** shows the full chain: `hac_mean_difference` -> `forward_return` ->
 `resample` -> `load_series` -> the USD/CHF snapshot file, and `flag_regime` ->
-`rolling_volatility` -> `compute_returns` -> `resample` -> `load_series` -> the
-NASDAQ snapshot file, with each step's library call, parameters (user edits
-marked) and output hash. `cli demo` prints the same chain.
+`resample` -> `load_series` -> the VIX snapshot file, with each step's library
+call, parameters (user edits marked) and output hash. `cli demo` prints the same
+chain.
 
 ## Live mode
 
