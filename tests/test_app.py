@@ -66,6 +66,8 @@ def test_scenario_1_full_flow(app_env: Settings) -> None:
     app.sidebar.button(key="scenario-volatility_flag_success").click().run()
     button(app, "Generate plan").click().run()
     assert not app.exception, app.exception
+    # The plan is reviewed in the readable view only: no raw JSON of it on this page.
+    assert not any("JSON" in e.label for e in app.expander) and not app.json
 
     assert button(app, "Execute").disabled  # the V10 approvals are not ticked yet
     approve_all(app)

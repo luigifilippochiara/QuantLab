@@ -4,8 +4,6 @@ All state lives in st.session_state.session (a quantlab.engine.Session). Each
 button calls one engine method; the page then redraws from the session's state.
 """
 
-import json
-
 import pandas as pd
 import streamlit as st
 
@@ -219,13 +217,6 @@ if plan is not None and plan.planner_notes:
     st.caption(
         f"Planner notes (shown for context, never trusted): {ui.escape_md(plan.planner_notes)}"
     )
-with st.expander("Raw JSON", icon=":material/data_object:"):
-    st.markdown("Plan as proposed by the planner:")
-    st.json(session.plan_original.model_dump() if session.plan_original else {}, expanded=False)
-    st.markdown("Plan as it will run (defaults filled in, edits applied):")
-    st.json(plan.model_dump() if plan else {}, expanded=False)
-    st.markdown("Raw planner output:")
-    st.code(json.dumps(result.raw_output if result else None, indent=2, default=str), "json")
 
 # ---------------------------------------------------------------- validation
 

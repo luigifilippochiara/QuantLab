@@ -1375,3 +1375,15 @@ mock eval set as they were just before it.
 | R04 | E04 | ALIGNMENT_LOSS |
 | R05 | E05 | LOW_EFFECTIVE_SAMPLE |
 | N01 | N01 | UNGROUNDED_NARRATIVE |
+
+## No raw JSON in the plan view
+
+**The Analysis page no longer shows the plan as raw JSON.** The analyst reviews the
+plan in the readable view (one block per step, with editable fields), so the "Raw
+JSON" expander under it (the plan as proposed, as it will run, and the planner's raw
+output) was removed. Nothing about how the plan is stored changed: the plan JSON, its
+hash and the run record are as before, the planner's raw output is still kept in the
+plan cache, and the full record, plans included, stays one click away: the
+**Download manifest** button under the results and the **Manifest (JSON)** expander
+on the Run history page. The v1 specification asked for the expander; this replaces
+that requirement.
