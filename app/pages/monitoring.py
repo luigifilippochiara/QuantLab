@@ -41,14 +41,11 @@ from quantlab.monitoring import (
 
 import ui
 
-# Column ratios of the KPI cards, so every label and caption fits on one line (the
-# font is unchanged). Activity: one row, wider for Total runs (its mode breakdown)
-# and Failed (its "Needs attention" line). Quality and governance: two rows of three
-# columns with the same ratios, so they align (its six labels need about 1,260 px in
-# one row, more than the page has on a laptop screen); the third column is the
-# widest, for Approval time's median and p95, e.g. "27.5 min (p95 43.2 min)".
-ACTIVITY_COLUMNS = [1.4, 1, 1, 1.05, 1.45]
-QUALITY_COLUMNS = [1, 0.8, 1.2]
+# The KPI cards of a section are all the same size: equal columns. Activity is one
+# row of five; Quality and governance two rows of three (its six labels need about
+# 1,260 px in one row, more than the page has on a laptop screen).
+ACTIVITY_COLUMNS = 5
+QUALITY_COLUMNS = 3
 # The cost and latency sections set a table beside a chart. A small gap under the
 # section header moves both columns down; the chart's title sits higher in its column
 # (a smaller top margin than the default 50 px), so the chart's top lines up with the
@@ -168,6 +165,11 @@ def number_table(frame: pd.DataFrame, formats: dict[str, str]) -> None:
     st.table(styled.set_table_styles(NUMBERS_RIGHT))
 
 
+def count_and_share(count: int, rate: float | None) -> str:
+    """A card's value: the absolute number, then its percentage in brackets, e.g. "4 (80%)"."""
+    return f"{count:,} ({percent(rate)})"
+
+
 def card(label: str, value: Any, note: str = "", status: str | None = None, help: str = "") -> None:
     """A KPI card with an optional grey note under the value.
 
@@ -176,13 +178,14 @@ def card(label: str, value: Any, note: str = "", status: str | None = None, help
         value: the value shown.
         note: a short grey line under the value.
         status: for a card with a target, monitoring.target_status: "met" tints it green;
-            "missed" tints it orange and adds "Needs attention" and a warning icon, so
-            colour is never the only cue; "no_data" or None keeps the neutral card.
+            "missed" tints it orange, colours its note orange and adds a warning icon to
+            its title, so colour is never the only cue; "no_data" or None keeps the
+            neutral card.
         help: the tooltip next to the label.
     """
     missed = status == "missed"
     metric = {
-        "delta": f"Needs attention{' · ' + note if note else ''}" if missed else note or None,
+        "delta": note or None,
         "delta_color": "orange" if missed else "gray",
         "delta_arrow": "off",
         "icon": ":material/warning:" if missed else None,
@@ -204,14 +207,14 @@ counts = activity(runs)
 modes = mode_counts(runs)
 total_col, *outcome_cols = st.columns(ACTIVITY_COLUMNS)
 with total_col:
-    card("Total runs", f"{counts['total']:,}", " · ".join(f"{n:,} {m}" for m, n in modes.items()))
+    card("Total runs", f"{counts['total']:,}", ", ".join(f"{n:,} {m}" for m, n in modes.items()))
 for column, (outcome, label) in zip(outcome_cols, [("completed", "Completed"),
         ("blocked", "Blocked"), ("rejected", "Rejected by human"), ("failed", "Failed")],
         strict=True):  # fmt: skip
     with column:
         card(
             label,
-            f"{counts[outcome]:,} ({percent(counts[f'{outcome}_share'])})",
+            count_and_share(counts[outcome], counts[f"{outcome}_share"]),
             out_of(counts["total"], "run"),
             status=target_status(f"{outcome}_share", counts[f"{outcome}_share"])
             if f"{outcome}_share" in KPI_TARGETS
@@ -230,51 +233,51 @@ refused_col, grounded_col, replay_col = st.columns(QUALITY_COLUMNS)
 with approval_col:
     card(
         "Approval rate",
-        percent(review["approval_rate"]),
+        count_and_share(review["approved"], review["approval_rate"]),
         out_of(review["approved"] + review["rejected"], "plan reviewed", "plans reviewed"),
-        help="Share of the decided plans that the reviewer approved (executed): approved / "
-        "(approved + rejected).",
+        help="Plans the reviewer approved (executed), and their share of the decided plans: "
+        "approved / (approved + rejected).",
     )
 with edit_col:
     card(
         "Edit rate",
-        percent(review["edit_rate"]),
+        count_and_share(review["edited"], review["edit_rate"]),
         out_of(review["approved"], "plan approved", "plans approved"),
-        help="Share of approved plans whose parameters the reviewer changed first.",
+        help="Approved plans whose parameters the reviewer changed first, and their share.",
     )
 with time_col:
     median, p95 = review["approval_median_s"], review["approval_p95_s"]
     card(
-        "Approval time (median)",
-        duration(median) if median is None else f"{duration(median)} (p95 {duration(p95)})",
+        "Approval time: median, p95",
+        duration(median) if median is None else f"{duration(median)}, {duration(p95)}",
         out_of(len(approval_waits(runs)), "plan approved", "plans approved", "over"),
-        help="Median time from the plan being shown to its approval; in brackets, the 95th "
+        help="Time from the plan being shown to its approval: the median, then the 95th "
         "percentile.",
     )
 with refused_col:
     # The share's denominator is every counted run, the Total runs card.
     card(
         "Planner refused (P01)",
-        f"{refusals['refused']:,} ({percent(refusals['refused_share'])})",
+        count_and_share(refusals["refused"], refusals["refused_share"]),
         out_of(counts["total"], "run"),
         help="Runs the planner refused (P01 PLANNER_REFUSED), and their share of all runs.",
     )
 with grounded_col:
     card(
         "Grounded narrative (N01)",
-        percent(narratives["grounded_rate"]),
+        count_and_share(narratives["grounded"], narratives["grounded_rate"]),
         out_of(narratives["narratives"], "narrative"),
         status=target_status("grounded_rate", narratives["grounded_rate"]),
-        help="Share of the runs with a narrative whose narrative passed the grounding check "
-        "(no N01 UNGROUNDED_NARRATIVE).",
+        help="Narratives that passed the grounding check (no N01 UNGROUNDED_NARRATIVE), and "
+        "their share.",
     )
 with replay_col:
     card(
         "Replay match rate",
-        percent(replays["replay_match_rate"]),
+        count_and_share(replays["matching"], replays["replay_match_rate"]),
         out_of(replays["replays"], "replay"),
         status=target_status("replay_match_rate", replays["replay_match_rate"]),
-        help="Share of replays whose every output hash matched the original run.",
+        help="Replays whose every output hash matched the original run, and their share.",
     )
 
 # ---------------------------------------------------------------- capabilities

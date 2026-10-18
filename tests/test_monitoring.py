@@ -150,7 +150,7 @@ def test_monitored_events_keep_replays_from_every_source() -> None:
     ]
     kept = monitored_events(events, counted)
     assert kept == [events[0], events[2], events[3]]  # the headless run's V08 is dropped
-    assert replay_results(kept) == {"replays": 2, "replay_match_rate": 0.5}
+    assert replay_results(kept) == {"replays": 2, "matching": 1, "replay_match_rate": 0.5}
 
 
 def test_activity_counts_and_shares_add_up() -> None:
@@ -203,7 +203,7 @@ def test_review_outcomes_approval_rate_counts_decisions_only() -> None:
     review = review_outcomes(runs)
     assert (review["approved"], review["rejected"]) == (2, 1)
     assert review["approval_rate"] == pytest.approx(2 / 3)  # approved / (approved + rejected)
-    assert review["edit_rate"] == 0.5
+    assert (review["edited"], review["edit_rate"]) == (1, 0.5)
     assert review["approval_median_s"] == 60.0
     assert review["approval_p95_s"] == pytest.approx(87.0)  # 30 + 0.95 * (90 - 30)
     assert approval_waits(runs) == [30.0, 90.0]
@@ -217,7 +217,7 @@ def test_replays_narratives_and_refusals() -> None:
         {"run_id": "a", "event_type": "replay_completed", "details": {"all_match": False}},
         {"run_id": "a", "event_type": "run_completed", "details": {}},
     ]
-    assert replay_results(events) == {"replays": 2, "replay_match_rate": 0.5}
+    assert replay_results(events) == {"replays": 2, "matching": 1, "replay_match_rate": 0.5}
     assert replay_results([])["replay_match_rate"] is None
 
     n01 = {"issues": [{"code": "N01"}]}
@@ -228,7 +228,8 @@ def test_replays_narratives_and_refusals() -> None:
         record("d", narrative={"text": "made before N01 existed"}),  # left out
         record("e"),  # no narrative
     ]
-    assert grounded_narratives(runs) == {"narratives": 3, "grounded_rate": pytest.approx(2 / 3)}
+    assert grounded_narratives(runs) == {
+        "narratives": 3, "grounded": 2, "grounded_rate": pytest.approx(2 / 3)}  # fmt: skip
     assert grounded_narratives([])["grounded_rate"] is None
 
     runs = [

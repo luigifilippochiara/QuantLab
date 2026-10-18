@@ -675,28 +675,31 @@ def test_monitoring_page_sections_cards_and_charts(app_env: Settings) -> None:
     # The activity cards, then the quality and governance cards, in order.
     assert [m.proto.label for m in app.metric][:11] == [
         "Total runs", "Completed", "Blocked", "Rejected by human", "Failed",
-        "Approval rate", "Edit rate", "Approval time (median)", "Planner refused (P01)",
+        "Approval rate", "Edit rate", "Approval time: median, p95", "Planner refused (P01)",
         "Grounded narrative (N01)", "Replay match rate"]  # fmt: skip
     # Every card says what its number is out of; Total runs splits by LLM mode.
-    assert cards["Total runs"].delta == "1 live · 0 cached · 4 mock"
+    assert cards["Total runs"].delta == "1 live, 0 cached, 4 mock"
     assert cards["Completed"].delta == "of 5 runs"
-    assert cards["Failed"].delta == "Needs attention · of 5 runs"
+    # Each quality card: the absolute number, then the percentage in brackets.
     # One approved, one rejected: approved / (approved + rejected).
     assert (cards["Approval rate"].body, cards["Approval rate"].delta) == (
-        "50%", "of 2 plans reviewed")  # fmt: skip
-    assert cards["Edit rate"].delta == "of 1 plan approved"
-    assert cards["Approval time (median)"].delta == "over 1 plan approved"
-    # The median, with the 95th percentile in brackets.
-    assert re.fullmatch(r"\d+\.\d s \(p95 \d+\.\d s\)", cards["Approval time (median)"].body)
+        "1 (50%)", "of 2 plans reviewed")  # fmt: skip
+    assert (cards["Edit rate"].body, cards["Edit rate"].delta) == ("0 (0%)", "of 1 plan approved")
+    # The median, then the 95th percentile.
+    time = cards["Approval time: median, p95"]
+    assert re.fullmatch(r"\d+\.\d s, \d+\.\d s", time.body)
+    assert time.delta == "over 1 plan approved"
     assert (cards["Grounded narrative (N01)"].body, cards["Grounded narrative (N01)"].delta) == (
-        "100%", "of 1 narrative")  # fmt: skip
+        "1 (100%)", "of 1 narrative")  # fmt: skip
     assert (cards["Planner refused (P01)"].body, cards["Planner refused (P01)"].delta) == (
         "0 (0%)", "of 5 runs")  # fmt: skip
     # The replay of the headless run counts: replays come from every source.
     assert (cards["Replay match rate"].body, cards["Replay match rate"].delta) == (
-        "100%", "of 1 replay")  # fmt: skip
-    # Cards with a target: orange when missed, green when met.
-    assert "Needs attention" in cards["Failed"].delta and cards["Failed"].color == 3  # ORANGE
+        "1 (100%)", "of 1 replay")  # fmt: skip
+    # Cards with a target: orange when missed (its note orange, a warning icon on its
+    # title), green when met.
+    assert (cards["Failed"].delta, cards["Failed"].color) == ("of 5 runs", 3)  # 3: ORANGE
+    assert cards["Failed"].icon == ":material/warning:"
     assert tinted_cards(app.main, "missed") == ["Failed"]
     assert tinted_cards(app.main, "met") == ["Grounded narrative (N01)", "Replay match rate"]
     # Every capability; the guardrails that fired in the counted runs; cost per stage; mean
@@ -730,10 +733,10 @@ def test_monitoring_page_with_no_counted_run_still_shows_replays(app_env: Settin
     assert app.info[0].value.startswith("No decided runs from the Analysis page yet")
     cards = {m.proto.label: m.proto for m in app.metric}
     assert cards["Total runs"].body == "0" and cards["Completed"].body == "0 (n/a)"
-    assert cards["Approval time (median)"].body == "n/a"  # no p95 without data
+    assert cards["Approval time: median, p95"].body == "n/a"  # no p95 without data
     assert (cards["Replay match rate"].body, cards["Replay match rate"].delta) == (
-        "100%", "of 1 replay")  # fmt: skip
-    assert cards["Total runs"].delta == "0 live · 0 cached · 0 mock"
+        "1 (100%)", "of 1 replay")  # fmt: skip
+    assert cards["Total runs"].delta == "0 live, 0 cached, 0 mock"
     # No counted run: the Failed card has no data, so it is not green.
     assert tinted_cards(app.main, "met") == ["Replay match rate"]
     assert tinted_cards(app.main, "missed") == []

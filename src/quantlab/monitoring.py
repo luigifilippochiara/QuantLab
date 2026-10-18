@@ -349,12 +349,14 @@ def review_outcomes(records: list["RunRecord"]) -> dict[str, Any]:
 
     Returns:
         Dict with approved, rejected, approval_rate (approved / (approved +
-        rejected)), edit_rate (approved plans whose parameters the reviewer changed /
-        approved), approval_median_s and approval_p95_s (seconds from plan shown to
-        approved).
+        rejected)), edited (approved plans whose parameters the reviewer changed),
+        edit_rate (edited / approved), approval_median_s and approval_p95_s (seconds
+        from plan shown to approved).
     """
     approved = [r for r in records if r.decision == "approved"]
     rejected = [r for r in records if r.decision == "rejected"]
+    # param_diff: parameters whose final value differs from the planner's proposal.
+    edited = sum(1 for r in approved if r.param_diff)
     waits = approval_waits(records)
     median, p95 = (
         (float(np.median(waits)), float(np.percentile(waits, 95))) if waits else (None, None)
@@ -363,8 +365,8 @@ def review_outcomes(records: list["RunRecord"]) -> dict[str, Any]:
         "approved": len(approved),
         "rejected": len(rejected),
         "approval_rate": share(len(approved), len(approved) + len(rejected)),
-        # param_diff: parameters whose final value differs from the planner's proposal.
-        "edit_rate": share(sum(1 for r in approved if r.param_diff), len(approved)),
+        "edited": edited,
+        "edit_rate": share(edited, len(approved)),
         "approval_median_s": median,
         "approval_p95_s": p95,
     }
@@ -377,11 +379,16 @@ def replay_results(events: list[dict[str, Any]]) -> dict[str, Any]:
         events: monitoring events.
 
     Returns:
-        Dict with replays and replay_match_rate (None without replays).
+        Dict with replays, matching (replays whose every output hash matched) and
+        replay_match_rate (matching / replays; None without replays).
     """
     replays = [e for e in events if e["event_type"] == "replay_completed"]
     matching = sum(1 for e in replays if e["details"].get("all_match"))
-    return {"replays": len(replays), "replay_match_rate": share(matching, len(replays))}
+    return {
+        "replays": len(replays),
+        "matching": matching,
+        "replay_match_rate": share(matching, len(replays)),
+    }
 
 
 def grounded_narratives(records: list["RunRecord"]) -> dict[str, Any]:
@@ -394,11 +401,16 @@ def grounded_narratives(records: list["RunRecord"]) -> dict[str, Any]:
         records: run records (narratives recorded before N01 existed are left out).
 
     Returns:
-        Dict with narratives and grounded_rate (None without narratives).
+        Dict with narratives, grounded (narratives that raised no N01) and grounded_rate
+        (grounded / narratives; None without narratives).
     """
     narratives = [r.narrative for r in records if r.narrative and "issues" in r.narrative]
     grounded = sum(1 for n in narratives if not any(i["code"] == "N01" for i in n["issues"]))
-    return {"narratives": len(narratives), "grounded_rate": share(grounded, len(narratives))}
+    return {
+        "narratives": len(narratives),
+        "grounded": grounded,
+        "grounded_rate": share(grounded, len(narratives)),
+    }
 
 
 def planner_refusals(records: list["RunRecord"]) -> dict[str, Any]:

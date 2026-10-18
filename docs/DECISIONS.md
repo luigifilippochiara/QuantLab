@@ -1614,3 +1614,16 @@ their reason is methodological (rates are differenced; one statistic must not mi
 frequencies); E05 LOW_EFFECTIVE_SAMPLE is also about having enough data, but it judges
 the strength of the inference (independent episodes). Output grounding has one member,
 N01, the only check on the output; merging it into another category would mislabel it.
+
+## Monitoring cards: same size, count then share
+
+**Within each section every card has the same size**: equal columns (Activity one row
+of five, Quality and governance two rows of three). **Each card shows the absolute
+number, then its percentage in brackets** ("4 (80%)": approved, edited, planner
+refusals, grounded narratives, matching replays, as `review_outcomes`,
+`grounded_narratives` and `replay_results` now also return the counts), except
+Approval time, titled "Approval time: median, p95" with the two values separated by a
+comma. To fit five equal cards at laptop width, two captions got shorter: the
+modes read "1 live, 0 cached, 7 mock", and a card that misses its target no longer
+writes "Needs attention" (earlier sections): its orange background, orange caption
+and the warning icon on its title signal it, so colour is still not the only cue.
