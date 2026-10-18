@@ -234,12 +234,12 @@ uv run python -m quantlab.cli replay <run_id>      # re-run without the model, c
 uv run python -m quantlab.cli trace <run_id> s8    # where does this number come from?
 ```
 
-`runs/events.jsonl` logs one event per stage. The **Monitoring** page, filtered
-by date, planner model and prompt version, shows activity, quality and governance
-(approval, replay match, edit and N01 and P01 rates, approval time), every
-guardrail's and capability's count, tokens and cost per stage (from hardcoded
-prices in `config.py`), the plan-cache savings, latency and recent errors; a
-card turns amber when it needs attention.
+`runs/events.jsonl` logs one event per stage. The **Monitoring** page shows, over
+all runs, activity, quality and governance (approval, replay match, edit and N01
+and P01 rates, approval time), the guardrails that fired, capability use, tokens
+and cost per stage (from hardcoded prices in `config.py`), the plan-cache
+savings, latency per pipeline stage and recent errors; a card turns amber when
+it needs attention.
 
 ## Quickstart
 

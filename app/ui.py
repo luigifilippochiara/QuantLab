@@ -32,14 +32,6 @@ REGIME_COLOR = "#d95926"  # orange: flagged regimes, and the second measure in g
 # Monitoring charts. Guardrail bars take the colour of their action's badge; the
 # action is also written in each bar's label, so colour is never the only cue.
 ACTION_COLORS = {Action.BLOCK: "#e03e3e", Action.APPROVE: "#f28c28", Action.WARN: "#d4b106"}
-# Latency segments: the two LLM stages in the series pair, the fast deterministic
-# stages in muted tones (the stage is named in the legend and the hover text).
-STAGE_COLORS = {
-    "planning": SERIES_COLOR,
-    "validation": "#9aa0a6",
-    "execution": "#2a9d8f",
-    "narration": REGIME_COLOR,
-}
 
 ACTION_BADGE = {
     Action.BLOCK: ":red-badge[BLOCK]",
@@ -348,7 +340,11 @@ def value_label(value: float) -> str:
 
 
 def bar_figure(
-    labels: list[str], values: list[float], title: str, text: list[str] | None = None
+    labels: list[str],
+    values: list[float],
+    title: str,
+    text: list[str] | None = None,
+    height: int | None = None,
 ) -> go.Figure:
     """Horizontal bar chart of one measure, each bar labelled with its value.
 
@@ -360,6 +356,8 @@ def bar_figure(
         values: one value per category.
         title: chart title (names the measure).
         text: the bar labels, if the values need their own format (e.g. dollars).
+        height: the chart height in pixels (default: grows with the number of bars), to
+            line a chart up with what stands beside it.
 
     Returns:
         A plotly Figure.
@@ -378,7 +376,7 @@ def bar_figure(
     )
     figure.update_layout(
         title=title,
-        height=max(220, 32 * len(labels) + 90),
+        height=height or max(220, 32 * len(labels) + 90),
         margin={"l": 10, "r": 40, "t": 50, "b": 10},
         xaxis={"visible": False},
         yaxis={"autorange": "reversed"},
@@ -444,6 +442,8 @@ def action_bar_figure(
     figure = go.Figure()
     for action, color in ACTION_COLORS.items():
         rows = [i for i, a in enumerate(actions) if a == action]
+        if not rows:
+            continue  # the legend lists only the actions shown
         figure.add_trace(
             go.Bar(
                 x=[values[i] for i in rows],
@@ -466,69 +466,6 @@ def action_bar_figure(
         yaxis={"categoryorder": "array", "categoryarray": labels, "autorange": "reversed"},
         bargap=0.3,
         legend={"orientation": "h", "y": 1.08, "x": 0},
-    )
-    return figure
-
-
-def line_figure(x: list[Any], y: list[float], title: str, value_title: str) -> go.Figure:
-    """A small line chart of one measure over time, with a marker on each point.
-
-    Args:
-        x: dates.
-        y: one value per date.
-        title: chart title.
-        value_title: y-axis title.
-
-    Returns:
-        A plotly Figure.
-    """
-    figure = go.Figure(
-        go.Scatter(x=x, y=y, mode="lines+markers", line={"color": SERIES_COLOR, "width": 2})
-    )
-    figure.update_layout(
-        title=title,
-        height=220,
-        margin={"l": 10, "r": 10, "t": 40, "b": 10},
-        yaxis={"title": value_title, "rangemode": "tozero"},
-        xaxis={"type": "date"},
-    )
-    return figure
-
-
-def stacked_bar_figure(
-    categories: list[str], segments: dict[str, list[float]], title: str, value_title: str
-) -> go.Figure:
-    """Vertical bars stacked from segments (e.g. each run's latency, stage by stage).
-
-    Args:
-        categories: x-axis categories (one bar each).
-        segments: segment name -> one value per category, stacked in the given order;
-            colours from STAGE_COLORS (blue for a segment without one).
-        title: chart title.
-        value_title: y-axis title (the shared unit).
-
-    Returns:
-        A plotly Figure with a legend.
-    """
-    figure = go.Figure()
-    for name, values in segments.items():
-        figure.add_trace(
-            go.Bar(
-                x=categories,
-                y=values,
-                name=name,
-                marker={"color": STAGE_COLORS.get(name, SERIES_COLOR)},
-                hovertemplate=f"{name}: %{{y:,.0f}}<extra>%{{x}}</extra>",
-            )
-        )
-    figure.update_layout(
-        title=title,
-        barmode="stack",
-        bargap=0.25,
-        height=340,
-        margin={"l": 10, "r": 10, "t": 50, "b": 10},
-        yaxis_title=value_title,
-        legend={"orientation": "h", "y": 1.12, "x": 0},
     )
     return figure
 

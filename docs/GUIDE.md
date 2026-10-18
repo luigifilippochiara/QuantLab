@@ -64,14 +64,13 @@ The **Analysis** page follows the safety model step by step:
    every step to the source file, with its SHA-256, FRED id and retrieval date.
 
 The other pages: **Run history** lists past runs, shows each manifest and user
-edits, and replays a run without the model; **Monitoring** shows, for the runs
-selected by date, planner model and prompt version, the activity (runs completed,
-blocked, failed and rejected), quality and governance (approval rate, replay
-match rate, edit rate, approval time, N01 failure rate, P01 refusal rate), every
-guardrail's and every capability's count, tokens and cost per stage, latency per
-stage and the recent errors, with a card turning amber when it needs attention;
-**Capability
-registry** lists every approved capability with its code, inputs, parameters and
+edits, and replays a run without the model; **Monitoring** shows, for all runs,
+the activity (runs completed, blocked, failed and rejected, each with its share),
+quality and governance (approval rate, replay match rate, edit rate, approval
+time, N01 failure rate, P01 refusal rate), the guardrails that fired (all of them
+in an expander), every capability's count, tokens and cost per stage, latency per
+pipeline stage and the recent errors, with a card turning amber when it needs
+attention; **Capability registry** lists every approved capability with its code, inputs, parameters and
 assumptions; **Guardrails** lists every guardrail with its action, who enforces
 it, its category and what it prevents.
 

@@ -1,6 +1,5 @@
 """Monitoring: the JSONL event log and the metrics behind the Monitoring page."""
 
-from datetime import date
 from pathlib import Path
 from typing import Any
 
@@ -12,14 +11,12 @@ from quantlab.lineage import LLMInfo, ParamChange, RunRecord
 from quantlab.monitoring import (
     ATTENTION_THRESHOLDS,
     activity,
+    approval_waits,
     cache_savings,
     capability_counts,
     cost_table,
-    events_for_runs,
     failure_point,
-    filter_runs,
     guardrail_counts,
-    latency_by_run,
     latency_table,
     log_event,
     narrative_failures,
@@ -29,7 +26,6 @@ from quantlab.monitoring import (
     recent_failures,
     replay_results,
     review_outcomes,
-    runs_per_day,
     token_cost,
 )
 from quantlab.registry import REGISTRY
@@ -111,37 +107,24 @@ def test_token_cost() -> None:
     assert token_cost("unpriced-model", 10, 10, PRICES) is None
 
 
-def test_filters_select_runs_by_date_model_and_prompt() -> None:
+def test_activity_counts_and_shares() -> None:
     runs = [
-        record("a", "2026-10-01T09:00:00.000Z"),
-        record("b", "2026-10-03T23:59:59.000Z", model="mock", prompt="canned"),
-        record("c", "2026-10-05T00:00:00.000Z"),
+        record("a"),
+        record("b", status="blocked"),
+        record("c", status="blocked"),
+        record("d", status="failed"),
+        record("e", status="rejected"),
+        record("f", status="ready"),  # awaiting a decision: in the total only
+        record("g"),
+        record("h"),
     ]
-    ids = [r.run_id for r in filter_runs(runs, date(2026, 10, 2), date(2026, 10, 5))]
-    assert ids == ["b", "c"]  # both ends inclusive
-    assert [r.run_id for r in filter_runs(runs, models=["mock"])] == ["b"]
-    assert [r.run_id for r in filter_runs(runs, prompt_versions=["planner-v6"])] == ["a", "c"]
-    assert filter_runs(runs) == runs
-    events = [{"run_id": "a"}, {"run_id": "z"}]
-    assert events_for_runs(events, {"a", "b"}) == [{"run_id": "a"}]
-
-
-def test_activity_and_runs_per_day() -> None:
-    runs = [
-        record("a", "2026-10-01T09:00:00.000Z"),
-        record("b", "2026-10-01T10:00:00.000Z", status="blocked"),
-        record("c", "2026-10-03T10:00:00.000Z", status="failed"),
-        record("d", "2026-10-03T11:00:00.000Z", status="rejected"),
-        record("e", "2026-10-03T12:00:00.000Z", status="ready"),
-    ]
-    assert activity(runs) == {"total": 5, "completed": 1, "blocked": 1, "failed": 1,
-                              "rejected": 1, "awaiting": 1}  # fmt: skip
-    assert runs_per_day(runs) == [
-        {"date": date(2026, 10, 1), "runs": 2},
-        {"date": date(2026, 10, 2), "runs": 0},  # a day without runs is a zero, not a gap
-        {"date": date(2026, 10, 3), "runs": 3},
-    ]
-    assert runs_per_day([]) == []
+    assert activity(runs) == {
+        "total": 8, "completed": 3, "blocked": 2, "failed": 1, "rejected": 1, "awaiting": 1,
+        "completed_share": 0.375, "blocked_share": 0.25, "failed_share": 0.125,
+        "rejected_share": 0.125,
+    }  # fmt: skip
+    empty = activity([])
+    assert empty["total"] == 0 and empty["completed_share"] is None
 
 
 def test_review_outcomes_count_only_plans_reviewed_in_the_app() -> None:
@@ -170,6 +153,7 @@ def test_review_outcomes_count_only_plans_reviewed_in_the_app() -> None:
     assert review["approval_median_s"] == 60.0
     assert review["approval_p95_s"] == pytest.approx(87.0)  # 30 + 0.95 * (90 - 30)
     assert review["headless"] == 1
+    assert approval_waits(runs) == [30.0, 90.0]  # a and b only: the card's population
     empty = review_outcomes([record("h")])
     assert empty["approval_rate"] is None and empty["approval_median_s"] is None
 
@@ -214,6 +198,9 @@ def test_guardrail_counts_list_every_guardrail_most_frequent_first() -> None:
         code for code in GUARDRAILS if code not in ("V08", "E03")]  # fmt: skip
     assert rows[0] == {"code": "V08", "name": "FREQUENCY_MISMATCH", "action": "BLOCK", "count": 2}
     assert [r["count"] for r in rows[2:]] == [0] * (len(GUARDRAILS) - 2)
+    fired = guardrail_counts(events, include_unused=False)
+    assert [(r["code"], r["count"]) for r in fired] == [("V08", 2), ("E03", 1)]
+    assert guardrail_counts([], include_unused=False) == []
 
 
 def test_capability_counts_list_every_capability() -> None:
@@ -282,17 +269,26 @@ def test_unknown_tokens_or_prices_are_left_out_of_the_statistics() -> None:
     assert cost_table([], PRICES)[0]["cost_mean"] is None
 
 
-def test_latency_table_and_latest_runs() -> None:
+def test_latency_table_follows_the_pipeline() -> None:
+    shown = "2026-10-01T10:00:00.000Z"
     runs = [
         record("r1", stage_timings_ms={"planning": 100.0, "validation": 2.0}),
-        record("r2", stage_timings_ms={"planning": 300.0, "validation": 4.0, "execution": 50.0}),
-    ]
-    rows = {row["stage"]: row for row in latency_table(runs)}
-    assert rows["planning"] == {"stage": "planning", "runs": 2, "mean_ms": 200.0,
-                                "p95_ms": pytest.approx(290.0)}  # fmt: skip
-    assert rows["narration"] == {"stage": "narration", "runs": 0, "mean_ms": None, "p95_ms": None}
-    by_run = latency_by_run(list(reversed(runs)), limit=1)
-    assert [(r["run_id"], r["execution"], r["narration"]) for r in by_run] == [("r2", 50.0, 0.0)]
+        record("r2", stage_timings_ms={"planning": 300.0, "validation": 4.0, "execution": 50.0},
+               interactive=True, plan_shown_at=shown, decision="approved",
+               decided_at="2026-10-01T10:00:02.500Z"),
+    ]  # fmt: skip
+    rows = latency_table(runs)
+    assert [r["stage"] for r in rows] == [
+        "Request check", "Planner", "Validator", "Approval", "Executor", "Narrator"]  # fmt: skip
+    by_stage = {r["stage"]: r for r in rows}
+    assert by_stage["Planner"] == {"stage": "Planner", "runs": 2, "mean_ms": 200.0,
+                                   "p95_ms": pytest.approx(290.0), "recorded": True}  # fmt: skip
+    # Approval: plan shown to approved, for plans approved in the app.
+    assert (by_stage["Approval"]["runs"], by_stage["Approval"]["mean_ms"]) == (1, 2500.0)
+    # The request check is not timed in the run record; a stage no run reached has no data.
+    assert by_stage["Request check"] == {"stage": "Request check", "runs": 0, "mean_ms": None,
+                                         "p95_ms": None, "recorded": False}  # fmt: skip
+    assert by_stage["Narrator"]["runs"] == 0 and by_stage["Narrator"]["recorded"]
 
 
 def test_failure_point_names_the_stage_and_code() -> None:

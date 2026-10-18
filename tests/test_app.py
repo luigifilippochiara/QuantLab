@@ -9,6 +9,7 @@ header, mock-only example workflows and full dataset names on hover.
 import dataclasses
 import json
 
+import pandas as pd
 import pytest
 from streamlit.testing.v1 import AppTest
 
@@ -18,7 +19,7 @@ from quantlab.engine import Session, run_request
 from quantlab.guardrails import ENFORCERS, GUARDRAILS, Action
 from quantlab.lineage import LLMInfo, RunRecord, load_runs, new_run_id, save_run
 from quantlab.mock_scenarios import FLAGSHIP_REQUEST, SCENARIOS_BY_ID
-from quantlab.monitoring import STAGES, utc_now
+from quantlab.monitoring import guardrail_counts, read_events, utc_now
 from quantlab.narrator import NUMBERS_CHECKED_NOTE
 from quantlab.plan import Step
 from quantlab.registry import REGISTRY
@@ -559,24 +560,44 @@ def test_monitoring_page_sections_cards_and_charts(app_env: Settings) -> None:
     app = open_page("monitoring.py")
     assert [h.value for h in app.subheader] == ["Activity", "Quality and governance",
         "Guardrails", "Capabilities", "Cost", "Latency", "Recent errors"]  # fmt: skip
+    assert not app.date_input and not app.multiselect  # no filters: every run is shown
     cards = {m.proto.label: m.proto for m in app.metric}
     values = {
         label: cards[label].body
-        for label in ("Runs", "Completed", "Blocked", "Failed", "Rejected by the reviewer")
+        for label in ("Total runs", "Completed", "Blocked", "Failed", "Rejected by human")
     }
-    assert values == {"Runs": "5", "Completed": "2", "Blocked": "1", "Failed": "1",
-                      "Rejected by the reviewer": "1"}  # fmt: skip
+    assert values == {"Total runs": "5", "Completed": "2 (40%)", "Blocked": "1 (20%)",
+                      "Failed": "1 (20%)", "Rejected by human": "1 (20%)"}  # fmt: skip
     # Failed runs need attention: the card turns amber; a clean N01 rate does not.
     assert "Needs attention" in cards["Failed"].delta and cards["Failed"].color == 3  # ORANGE
     assert "Needs attention" not in cards["N01 failure rate"].delta
     # Two plans reviewed in the app: one approved, one rejected; the headless run is left out.
     assert cards["Approval rate"].body == "50%"
     assert cards["Approval rate"].delta == "1 approved · 1 rejected · 0 abandoned"
-    # Runs per day, every guardrail, every capability, cost per stage, and the latency
-    # of each of the five runs as one segment per stage.
-    assert chart_bars(app) == [1, len(GUARDRAILS), len(REGISTRY), 2, 5 * len(STAGES)]
-    cost = app.table[0].value
-    assert cost.loc["planner", "Cost (mean)"] == "$0.000350"  # 1,500 x $0.10/M + 400 x $0.50/M
-    assert cost.loc["total", "Input tokens (mean)"] == "2,500"
+    # The guardrails that fired; all of them (in the expander); every capability; cost per
+    # stage; mean and p95 for each stage with data (all but the untimed request check).
+    fired = guardrail_counts(read_events(app_env.events_path), include_unused=False)
+    assert chart_bars(app) == [len(fired), len(GUARDRAILS), len(REGISTRY), 2, 2 * 5]
+    every = next(e for e in app.expander if e.label == "Show all guardrails (including unused)")
+    assert chart_bars(every) == [len(GUARDRAILS)]
+    cost, latency = [t.value for t in app.table]
     errors = app.dataframe[0].value
+    assert cost.loc["planner", "Cost, US$ (mean)"] == pytest.approx(0.00035)
+    assert cost.loc["total", "Input tokens (mean)"] == 2500
+    assert latency.index.tolist() == [
+        "Request check", "Planner", "Validator", "Approval", "Executor", "Narrator"]  # fmt: skip
+    assert pd.isna(latency.loc["Request check", "Mean (ms)"])  # not timed: shown as a dash
+    # Dollar signs in a caption are escaped, or a pair of them would render as LaTeX.
+    (prices,) = [c.value for c in app.caption if c.value.startswith("Per run")]
+    assert r"Total \$0.000550" in prices and r"gpt-6-luna \$0.10 input" in prices
     assert errors["code"].tolist() == ["—", "V08"] and errors["message"][0] == "boom"
+
+
+def test_monitoring_page_before_any_guardrail_fired(app_env: Settings) -> None:
+    save_run(RunRecord(run_id=new_run_id(), created_at=utc_now(), status="completed",
+                       request="x"), {}, app_env.runs_dir)  # fmt: skip
+    app = open_page("monitoring.py")
+    assert any(c.value == "No guardrail has fired yet." for c in app.caption)
+    # The expander still lists every guardrail, at zero.
+    every = next(e for e in app.expander if e.label == "Show all guardrails (including unused)")
+    assert chart_bars(every) == [len(GUARDRAILS)]

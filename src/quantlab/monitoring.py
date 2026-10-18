@@ -21,7 +21,7 @@ execution stage latencies, and "plan_rejected", the reviewer's rejection.
 
 import json
 from collections import Counter
-from datetime import UTC, date, datetime, timedelta
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -55,8 +55,6 @@ EVENT_TYPES = (
     "replay_completed",
 )
 
-# The pipeline stages, in order, as named in a run record's stage_timings_ms.
-STAGES = ("planning", "validation", "execution", "narration")
 # The stages that call an LLM (keys of stage_tokens), and their names in the cost table.
 COST_STAGES = {"planning": "planner", "narration": "narrator"}
 
@@ -202,7 +200,7 @@ def token_cost(
 
 
 # ---------------------------------------------------------------------------
-# Filters
+# Ordering
 # ---------------------------------------------------------------------------
 
 
@@ -215,72 +213,25 @@ def run_order(record: "RunRecord") -> tuple[datetime, str]:
     return parse_time(record.created_at), record.run_id
 
 
-def run_date(record: "RunRecord") -> date:
-    """The UTC date a run was created."""
-    return parse_time(record.created_at).date()
-
-
-def run_model(record: "RunRecord") -> str:
-    """The planner model a run used (for mock runs "mock"; "unknown" without LLM info)."""
-    return record.llm.model if record.llm else "unknown"
-
-
-def run_prompt_version(record: "RunRecord") -> str:
-    """The planner prompt version a run used ("unknown" without LLM info)."""
-    return record.llm.prompt_version if record.llm else "unknown"
-
-
-def filter_runs(
-    records: list["RunRecord"],
-    start: date | None = None,
-    end: date | None = None,
-    models: list[str] | None = None,
-    prompt_versions: list[str] | None = None,
-) -> list["RunRecord"]:
-    """The runs created between two dates (inclusive) with the chosen model and prompt.
-
-    Args:
-        records: run records.
-        start: first creation date kept (None: no lower bound).
-        end: last creation date kept (None: no upper bound).
-        models: planner models kept (empty or None: all).
-        prompt_versions: planner prompt versions kept (empty or None: all).
-
-    Returns:
-        The matching records, in their original order.
-    """
-    return [
-        r
-        for r in records
-        if (start is None or run_date(r) >= start)
-        and (end is None or run_date(r) <= end)
-        and (not models or run_model(r) in models)
-        and (not prompt_versions or run_prompt_version(r) in prompt_versions)
-    ]
-
-
-def events_for_runs(events: list[dict[str, Any]], run_ids: set[str]) -> list[dict[str, Any]]:
-    """The events of the given runs (a replay's event carries the replayed run's id)."""
-    return [e for e in events if e["run_id"] in run_ids]
-
-
 # ---------------------------------------------------------------------------
 # Activity (run records)
 # ---------------------------------------------------------------------------
 
 
-def activity(records: list["RunRecord"]) -> dict[str, int]:
-    """How many runs ended in each state.
+def activity(records: list["RunRecord"]) -> dict[str, Any]:
+    """How many runs ended in each state, and each one's share of all runs.
 
     Args:
         records: run records.
 
     Returns:
         Dict with total, completed, blocked, failed, rejected (by the reviewer) and
-        awaiting (a plan shown with no decision yet: status ready).
+        awaiting (a plan shown with no decision yet: status ready), and
+        completed_share, blocked_share, failed_share and rejected_share (of total;
+        None without runs).
     """
     statuses = Counter(r.status for r in records)
-    return {
+    counts = {
         "total": len(records),
         "completed": statuses["completed"],
         "blocked": statuses["blocked"],
@@ -288,28 +239,35 @@ def activity(records: list["RunRecord"]) -> dict[str, int]:
         "rejected": statuses["rejected"],
         "awaiting": statuses["ready"] + statuses["planned"],
     }
-
-
-def runs_per_day(records: list["RunRecord"]) -> list[dict[str, Any]]:
-    """Runs created on each day from the first run to the last (days without runs: 0).
-
-    Args:
-        records: run records.
-
-    Returns:
-        Rows of {date, runs}, oldest first ([] without records).
-    """
-    if not records:
-        return []
-    counts = Counter(run_date(r) for r in records)
-    first, last = min(counts), max(counts)
-    days = [first + timedelta(days=n) for n in range((last - first).days + 1)]
-    return [{"date": day, "runs": counts[day]} for day in days]
+    shares = {
+        f"{outcome}_share": share(counts[outcome], len(records))
+        for outcome in ("completed", "blocked", "failed", "rejected")
+    }
+    return counts | shares
 
 
 # ---------------------------------------------------------------------------
 # Quality and governance (run records, and replay events)
 # ---------------------------------------------------------------------------
+
+
+def approval_waits(records: list["RunRecord"]) -> list[float]:
+    """Seconds from a plan being shown to its approval, for plans approved on the Analysis page.
+
+    Headless runs approve automatically (in milliseconds), and older records lack the
+    timestamps: both are left out.
+
+    Args:
+        records: run records.
+
+    Returns:
+        One wait per interactive, approved run, in seconds.
+    """
+    return [
+        (parse_time(r.decided_at) - parse_time(r.plan_shown_at)).total_seconds()
+        for r in records
+        if r.interactive and r.plan_shown_at and r.decision == "approved" and r.decided_at
+    ]
 
 
 def review_outcomes(records: list["RunRecord"]) -> dict[str, Any]:
@@ -332,11 +290,7 @@ def review_outcomes(records: list["RunRecord"]) -> dict[str, Any]:
     shown = [r for r in records if r.interactive and r.plan_shown_at]
     approved = [r for r in shown if r.decision == "approved"]
     rejected = [r for r in shown if r.decision == "rejected"]
-    waits = [
-        (parse_time(r.decided_at) - parse_time(r.plan_shown_at)).total_seconds()
-        for r in approved
-        if r.decided_at
-    ]
+    waits = approval_waits(records)
     median, p95 = (
         (float(np.median(waits)), float(np.percentile(waits, 95))) if waits else (None, None)
     )
@@ -402,7 +356,9 @@ def planner_refusals(records: list["RunRecord"]) -> dict[str, Any]:
 # ---------------------------------------------------------------------------
 
 
-def guardrail_counts(events: list[dict[str, Any]]) -> list[dict[str, Any]]:
+def guardrail_counts(
+    events: list[dict[str, Any]], include_unused: bool = True
+) -> list[dict[str, Any]]:
     """How often each guardrail fired: every guardrail in the table, zeros included.
 
     Request-check, planner-refusal and validator issues are logged as
@@ -411,6 +367,7 @@ def guardrail_counts(events: list[dict[str, Any]]) -> list[dict[str, Any]]:
 
     Args:
         events: monitoring events.
+        include_unused: False to keep only the guardrails that fired (count above zero).
 
     Returns:
         Rows of {code, name, action, count}, most frequent first; guardrails with
@@ -425,6 +382,8 @@ def guardrail_counts(events: list[dict[str, Any]]) -> list[dict[str, Any]]:
         {"code": code, "name": g.name, "action": g.action.value, "count": counts[code]}
         for code, g in GUARDRAILS.items()
     ]
+    if not include_unused:
+        rows = [row for row in rows if row["count"]]
     return sorted(rows, key=lambda row: -row["count"])  # a stable sort keeps the ties in order
 
 
@@ -548,43 +507,50 @@ def cache_savings(
 # ---------------------------------------------------------------------------
 
 
+# The pipeline stages in order, with the stage_timings_ms key that times each.
+LATENCY_STAGES = {
+    "Request check": None,  # not timed in the run record (a word and character count)
+    "Planner": "planning",
+    "Validator": "validation",
+    "Approval": "approval",  # not a stage_timings_ms key: see approval_waits
+    "Executor": "execution",
+    "Narrator": "narration",
+}
+
+
 def latency_table(records: list["RunRecord"]) -> list[dict[str, Any]]:
-    """Mean and 95th-percentile latency of each pipeline stage, over the runs that reached it.
+    """Mean and 95th-percentile latency of each pipeline stage, in pipeline order.
+
+    Each stage counts the runs that reached it; approval counts plans approved on the
+    Analysis page (approval_waits), the time a person took to decide.
 
     Args:
         records: run records.
 
     Returns:
-        One row per stage: {stage, runs, mean_ms, p95_ms} (None where no run reached it).
+        One row per stage of LATENCY_STAGES: {stage, runs, mean_ms, p95_ms, recorded}
+        (mean and p95 None without data; recorded False for the request check, which
+        the run record does not time).
     """
     rows = []
-    for stage in STAGES:
-        values = [r.stage_timings_ms[stage] for r in records if stage in r.stage_timings_ms]
+    for stage, key in LATENCY_STAGES.items():
+        if key is None:
+            values = []
+        elif key == "approval":
+            values = [seconds * 1000 for seconds in approval_waits(records)]
+        else:
+            values = [r.stage_timings_ms[key] for r in records if key in r.stage_timings_ms]
         mean, p95 = mean_and_p95(values)
-        rows.append({"stage": stage, "runs": len(values), "mean_ms": mean, "p95_ms": p95})
+        rows.append(
+            {
+                "stage": stage,
+                "runs": len(values),
+                "mean_ms": mean,
+                "p95_ms": p95,
+                "recorded": key is not None,
+            }
+        )
     return rows
-
-
-def latency_by_run(records: list["RunRecord"], limit: int = 30) -> list[dict[str, Any]]:
-    """Each stage's latency in the most recent runs, for a stacked bar per run.
-
-    Args:
-        records: run records.
-        limit: how many of the most recent runs.
-
-    Returns:
-        Rows of {run_id, created_at, planning, validation, execution, narration}
-        (milliseconds; 0 for a stage the run did not reach), oldest first.
-    """
-    recent = sorted(records, key=run_order)[-limit:]
-    return [
-        {
-            "run_id": r.run_id,
-            "created_at": r.created_at,
-            **{stage: r.stage_timings_ms.get(stage, 0.0) for stage in STAGES},
-        }
-        for r in recent
-    ]
 
 
 def failure_point(record: "RunRecord") -> tuple[str, str | None]:

@@ -1,10 +1,8 @@
 """Monitoring page: activity, quality and governance, guardrails, capabilities, cost, latency.
 
-Every number comes from quantlab.monitoring, computed from the run records (one
-per run, its final state) and the event log (guardrail firings, capability
-executions, replays); this page only lays them out. The filters select runs by
-their creation date, planner model and prompt version, and every section then
-describes those runs only.
+Every number comes from quantlab.monitoring, computed from all the run records
+(one per run, its final state) and the event log (guardrail firings, capability
+executions, replays); this page only lays them out.
 """
 
 from typing import Any
@@ -17,16 +15,12 @@ from quantlab.guardrails import Action
 from quantlab.lineage import load_runs
 from quantlab.monitoring import (
     COST_STAGES,
-    STAGES,
     activity,
     cache_savings,
     capability_counts,
     cost_table,
     costed_runs,
-    events_for_runs,
-    filter_runs,
     guardrail_counts,
-    latency_by_run,
     latency_table,
     narrative_failures,
     needs_attention,
@@ -35,13 +29,24 @@ from quantlab.monitoring import (
     recent_failures,
     replay_results,
     review_outcomes,
-    run_date,
-    run_model,
-    run_prompt_version,
-    runs_per_day,
 )
 
 import ui
+
+# The cost chart's height in pixels: the cost table (three rows) plus the cache
+# cards under it, so the two columns end level.
+COST_CHART_HEIGHT = 310
+# Tables: numbers right-aligned under headers that wrap rather than overflow.
+NUMBERS_RIGHT = [{"selector": "td, th.col_heading", "props": "text-align: right"}]
+# The cost table's columns: whole tokens, and dollars to six decimals so sub-cent
+# amounts stay visible.
+TOKEN_COLUMNS = [
+    "Input tokens (mean)",
+    "Input tokens (p95)",
+    "Output tokens (mean)",
+    "Output tokens (p95)",
+]
+COST_COLUMNS = ["Cost, US$ (mean)", "Cost, US$ (p95)"]
 
 settings = ui.get_settings()
 st.title("Monitoring")
@@ -50,13 +55,14 @@ st.caption(
     f"`{settings.events_path.name}`. A card turns amber when it needs attention."
 )
 
-records = load_runs(settings.runs_dir)
-if not records:
+runs = load_runs(settings.runs_dir)
+if not runs:
     st.info(
         "No runs yet. Run something on the Analysis page or the CLI and it appears here.",
         icon=":material/monitoring:",
     )
     st.stop()
+events = read_events(settings.events_path)
 
 
 def percent(value: float | None) -> str:
@@ -76,11 +82,6 @@ def count(value: float | None) -> str:
     return "n/a" if value is None else f"{value:,.0f}"
 
 
-def milliseconds(value: float | None) -> str:
-    """A latency in milliseconds, to one decimal (validation takes a fraction of one)."""
-    return "n/a" if value is None else f"{value:,.1f}"
-
-
 def duration(seconds: float | None) -> str:
     """A duration in seconds, minutes or hours, whichever reads best."""
     if seconds is None:
@@ -90,6 +91,17 @@ def duration(seconds: float | None) -> str:
     if seconds < 90 * 60:
         return f"{seconds / 60:.1f} min"
     return f"{seconds / 3600:.1f} h"
+
+
+def number_table(frame: pd.DataFrame, formats: dict[str, str]) -> None:
+    """A static table indexed by its first column: each number in its format, right-aligned.
+
+    Args:
+        frame: the rows; the first column (e.g. the stage) becomes the row labels.
+        formats: column -> format, e.g. "{:,.0f}" (a missing value shows as a dash).
+    """
+    styled = frame.set_index(frame.columns[0]).style.format(formats, na_rep="—")
+    st.table(styled.set_table_styles(NUMBERS_RIGHT))
 
 
 def card(label: str, value: Any, note: str = "", attention: bool = False, help: str = "") -> None:
@@ -117,46 +129,40 @@ def card(label: str, value: Any, note: str = "", attention: bool = False, help: 
         )
 
 
-# ---------------------------------------------------------------- filters
+def guardrail_chart(rows: list[dict[str, Any]], title: str, key: str) -> None:
+    """Horizontal bars of how often each guardrail fired, coloured by action."""
+    st.plotly_chart(
+        ui.action_bar_figure(
+            [f"{r['code']} {r['name']} · {r['action']}" for r in rows],
+            [r["count"] for r in rows],
+            [Action(r["action"]) for r in rows],
+            title,
+        ),
+        width="stretch",
+        theme="streamlit",
+        key=key,
+        alt=f"{title}, coloured by action",
+    )
 
-dates = [run_date(r) for r in records]
-first, last = min(dates), max(dates)
-date_col, model_col, prompt_col = st.columns([1.2, 1, 1])
-picked = date_col.date_input(
-    "Created between (UTC)", value=(first, last), min_value=first, max_value=last
-)
-start, end = (picked[0], picked[-1]) if picked else (first, last)  # mid-selection: one date
-models = model_col.multiselect("Planner model", sorted({run_model(r) for r in records}))
-prompts = prompt_col.multiselect(
-    "Planner prompt version", sorted({run_prompt_version(r) for r in records})
-)
-runs = filter_runs(records, start, end, models, prompts)
-if not runs:
-    st.info("No run matches these filters.", icon=":material/filter_alt_off:")
-    st.stop()
-events = events_for_runs(read_events(settings.events_path), {r.run_id for r in runs})
-st.caption(f"Showing {len(runs)} of {len(records)} runs.")
 
 # ---------------------------------------------------------------- activity
 
 st.subheader("Activity")
 counts = activity(runs)
 with st.container(horizontal=True):
-    card("Runs", counts["total"])
-    card("Completed", counts["completed"])
-    card("Blocked", counts["blocked"])
-    card("Failed", counts["failed"], attention=needs_attention("failed", counts["failed"]))
-    card("Rejected by the reviewer", counts["rejected"])
+    card("Total runs", f"{counts['total']:,}")
+    for outcome, label in [("completed", "Completed"), ("blocked", "Blocked"),
+                           ("failed", "Failed"), ("rejected", "Rejected by human")]:  # fmt: skip
+        card(
+            label,
+            f"{counts[outcome]:,} ({percent(counts[f'{outcome}_share'])})",
+            attention=needs_attention(outcome, counts[outcome]),
+        )
 if counts["awaiting"]:
-    st.caption(f"{counts['awaiting']} shown and still awaiting a decision.")
-per_day = runs_per_day(runs)
-st.plotly_chart(
-    ui.line_figure([d["date"] for d in per_day], [d["runs"] for d in per_day], "Runs per day",
-                   "runs"),
-    width="stretch",
-    theme="streamlit",
-    alt="Runs created per day",
-)  # fmt: skip
+    st.caption(
+        f"{counts['awaiting']} more shown and still awaiting a decision, so the shares add "
+        "up to less than 100%."
+    )
 
 # ---------------------------------------------------------------- quality and governance
 
@@ -219,21 +225,14 @@ st.caption(
 # ---------------------------------------------------------------- guardrails
 
 st.subheader("Guardrails")
-guardrails = guardrail_counts(events)
-if any(row["count"] for row in guardrails):
-    st.plotly_chart(
-        ui.action_bar_figure(
-            [f"{r['code']} {r['name']} · {r['action']}" for r in guardrails],
-            [r["count"] for r in guardrails],
-            [Action(r["action"]) for r in guardrails],
-            "Times each guardrail fired",
-        ),
-        width="stretch",
-        theme="streamlit",
-        alt="Times each guardrail fired, coloured by action",
-    )
+fired = guardrail_counts(events, include_unused=False)
+if fired:
+    guardrail_chart(fired, "Times each guardrail fired", "guardrails-fired")
 else:
-    st.caption("No guardrail fired in these runs.")
+    st.caption("No guardrail has fired yet.")
+with st.expander("Show all guardrails (including unused)"):
+    guardrail_chart(guardrail_counts(events), "Times each guardrail fired, all guardrails",
+                    "guardrails-all")  # fmt: skip
 
 # ---------------------------------------------------------------- capabilities
 
@@ -251,7 +250,7 @@ if any(row["count"] for row in capabilities):
         alt="Executions per capability",
     )
 else:
-    st.caption("No step was executed in these runs.")
+    st.caption("No step has been executed yet.")
 
 # ---------------------------------------------------------------- cost
 
@@ -261,86 +260,103 @@ prices = "; ".join(
     for model, p in LLM_PRICES_PER_MILLION_TOKENS.items()
 )
 costed = costed_runs(runs)
+table = cost_table(costed, LLM_PRICES_PER_MILLION_TOKENS)
+savings = cache_savings(runs, LLM_PRICES_PER_MILLION_TOKENS)
+table_col, chart_col = st.columns([3, 2])
+with table_col:
+    if costed:
+        number_table(
+            pd.DataFrame(
+                [
+                    {
+                        "Stage": row["stage"],
+                        "Input tokens (mean)": row["input_mean"],
+                        "Input tokens (p95)": row["input_p95"],
+                        "Output tokens (mean)": row["output_mean"],
+                        "Output tokens (p95)": row["output_p95"],
+                        "Cost, US$ (mean)": row["cost_mean"],
+                        "Cost, US$ (p95)": row["cost_p95"],
+                    }
+                    for row in table
+                ]
+            ),
+            dict.fromkeys(TOKEN_COLUMNS, "{:,.0f}") | dict.fromkeys(COST_COLUMNS, "${:,.6f}"),
+        )
+    else:
+        st.caption("No live or cached runs yet: mock runs call no LLM, so there is no cost.")
+    with st.container(horizontal=True):
+        card(
+            "Plan-cache hit rate",
+            percent(savings["hit_rate"]),
+            f"{savings['cache_hits']} of {savings['planner_calls']} planner calls",
+        )
+        card(
+            "Tokens saved by the cache",
+            count(savings["saved_input_tokens"] + savings["saved_output_tokens"]),
+            f"{count(savings['saved_input_tokens'])} input · "
+            f"{count(savings['saved_output_tokens'])} output",
+        )
+        card("Saved by the cache", dollars(savings["saved_cost"]))
 if costed:
-    table = cost_table(costed, LLM_PRICES_PER_MILLION_TOKENS)
-    left, right = st.columns([3, 2])
-    left.table(
-        pd.DataFrame(
-            [
-                {
-                    "Stage": row["stage"],
-                    "Input tokens (mean)": count(row["input_mean"]),
-                    "Input tokens (p95)": count(row["input_p95"]),
-                    "Output tokens (mean)": count(row["output_mean"]),
-                    "Output tokens (p95)": count(row["output_p95"]),
-                    "Cost (mean)": dollars(row["cost_mean"]),
-                    "Cost (p95)": dollars(row["cost_p95"]),
-                }
-                for row in table
-            ]
-        ).set_index("Stage")
-    )
     stage_rows = [row for row in table if row["stage"] in COST_STAGES.values()]
-    right.plotly_chart(
+    chart_col.plotly_chart(
         ui.bar_figure(
             [row["stage"] for row in stage_rows],
             [row["cost_total"] or 0.0 for row in stage_rows],
             "Total cost per stage (US$)",
             text=[dollars(row["cost_total"]) for row in stage_rows],
+            height=COST_CHART_HEIGHT,
         ),
         width="stretch",
         theme="streamlit",
         alt="Total cost per stage",
     )
-    st.caption(
+    caption = (
         f"Per run, over {len(costed)} live or cached runs; mock runs call no LLM and are left "
         f"out. Total {dollars(table[-1]['cost_total'])}. Prices: {prices}."
     )
-else:
-    st.caption("No live or cached runs here: mock runs call no LLM, so there is no cost.")
-savings = cache_savings(runs, LLM_PRICES_PER_MILLION_TOKENS)
-with st.container(horizontal=True):
-    card(
-        "Plan-cache hit rate",
-        percent(savings["hit_rate"]),
-        f"{savings['cache_hits']} of {savings['planner_calls']} planner calls",
-    )
-    card(
-        "Tokens saved by the cache",
-        count(savings["saved_input_tokens"] + savings["saved_output_tokens"]),
-        f"{count(savings['saved_input_tokens'])} input · "
-        f"{count(savings['saved_output_tokens'])} output",
-    )
-    card("Saved by the cache", dollars(savings["saved_cost"]))
+    st.caption(caption.replace("$", r"\$"))  # escaped: two $ signs would render as LaTeX
 
 # ---------------------------------------------------------------- latency
 
 st.subheader("Latency")
-left, right = st.columns([2, 3])
-left.table(
-    pd.DataFrame(
-        [
+latency = latency_table(runs)
+table_col, chart_col = st.columns([2, 3])
+with table_col:
+    number_table(
+        pd.DataFrame(
+            [
+                {
+                    "Stage": row["stage"],
+                    "Runs": row["runs"],
+                    "Mean (ms)": row["mean_ms"],
+                    "p95 (ms)": row["p95_ms"],
+                }
+                for row in latency
+            ]
+        ),
+        {"Runs": "{:,}", "Mean (ms)": "{:,.1f}", "p95 (ms)": "{:,.1f}"},
+    )
+measured = [row for row in latency if row["runs"]]
+if measured:
+    chart_col.plotly_chart(
+        ui.grouped_bar_figure(
+            [row["stage"] for row in measured],
             {
-                "Stage": row["stage"],
-                "Runs": row["runs"],
-                "Mean (ms)": milliseconds(row["mean_ms"]),
-                "p95 (ms)": milliseconds(row["p95_ms"]),
-            }
-            for row in latency_table(runs)
-        ]
-    ).set_index("Stage")
-)
-by_run = latency_by_run(runs)
-right.plotly_chart(
-    ui.stacked_bar_figure(
-        [f"{row['created_at'][5:16].replace('T', ' ')} · {row['run_id'][-6:]}" for row in by_run],
-        {stage: [row[stage] for row in by_run] for stage in STAGES},
-        f"Latency per run, by stage (last {len(by_run)} runs)",
-        "milliseconds",
-    ),
-    width="stretch",
-    theme="streamlit",
-    alt="Latency of the most recent runs, stacked by stage",
+                "mean": [row["mean_ms"] for row in measured],
+                "95th percentile": [row["p95_ms"] for row in measured],
+            },
+            "Latency per pipeline stage",
+            "milliseconds",
+        ),
+        width="stretch",
+        theme="streamlit",
+        alt="Mean and 95th-percentile latency per pipeline stage",
+    )
+unrecorded = [row["stage"] for row in latency if not row["recorded"]]
+st.caption(
+    "Each stage over the runs that reached it; approval is the time a person took to "
+    f"approve a plan on the Analysis page. Not timed in the run record: {', '.join(unrecorded)}."
 )
 
 # ---------------------------------------------------------------- recent errors

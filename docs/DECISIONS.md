@@ -1466,3 +1466,29 @@ upper bounds.
 match rate below 100%, N01 failure rate above 0%, failed runs above 0. Streamlit cannot
 colour a whole card without custom CSS, so an amber card shows an orange "Needs
 attention" line under its value and a warning icon.
+
+## Monitoring page simplified
+
+**The page shows all runs, with no filters.** The date, planner model and prompt
+version filters (and the helpers only they used) were removed: on a single-user
+deployment they added widgets without changing a decision. The runs-over-time chart
+and the per-run latency chart by date went with them.
+
+**Activity cards show count and share** ("12 (60%)"), computed in `activity()`, with
+the total once beside them; plans still awaiting a decision are named in a caption,
+since they are why the shares can add up to less than 100%.
+
+**The guardrail chart shows only the guardrails that fired**
+(`guardrail_counts(events, include_unused=False)`); the full list, zeros included,
+stays one click away in an expander. **Latency is shown by pipeline stage** in
+pipeline order (request check, planner, validator, approval, executor, narrator), as a
+table and a mean-and-p95 bar chart. Approval is the time from the plan being shown to
+its approval on the Analysis page (`approval_waits`, shared with the Approval time
+card). The request check is not timed in the run record, and the record format was
+kept unchanged, so its row says it is not recorded rather than inventing a value.
+
+The cost and latency tables are static tables (`st.table`) with pandas Styler formats
+(thousands separators, dollars to six decimals, a dash for a missing value, numbers
+right-aligned): an interactive dataframe of seven columns scrolled sideways in its half
+of the page, while a static table wraps its headers. The cost chart's height matches
+the table and the cache cards beside it.
