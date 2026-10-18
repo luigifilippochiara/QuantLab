@@ -3,10 +3,11 @@
 This is the specification of QuantLab's first version. The product has evolved
 since (capability set, example workflows, model providers, plan editing); every
 change and its rationale is recorded in `docs/DECISIONS.md`, and the README
-describes the current product. Guardrail codes are written in the current
-numbering: the guardrails were later simplified and renumbered (`docs/DECISIONS.md`
-lists the old and new codes), and v1 guardrails removed since are listed without
-a code.
+describes the current product. Guardrail codes and terms are written in the
+current numbering and vocabulary: the guardrails were later simplified, then
+restructured, and renumbered both times (`docs/DECISIONS.md` lists the old and new
+codes); v1 guardrails removed since are listed without a code; and what v1 called
+an issue's "severity" is now its action, and its value APPROVAL is now APPROVE.
 
 ## Context
 
@@ -21,7 +22,7 @@ Where this specification is ambiguous or does not work in practice, the simplest
 The LLM proposes, the system disposes.
 
 1. The planner LLM turns the user request into a structured JSON plan: an ordered list of steps, each naming a registered capability, its inputs (references to earlier steps) and its parameters. The plan is inert data.
-2. A deterministic validator checks the plan against a capability registry and guardrails, producing BLOCK / WARN / APPROVAL issues.
+2. A deterministic validator checks the plan against a capability registry and guardrails, producing BLOCK / WARN / APPROVE issues.
 3. The user inspects the plan, can edit parameters (edited plans are re-validated through the exact same validator), resolves approvals, and approves execution.
 4. A deterministic executor runs the plan by looking up capability names in a registry dictionary and calling pre-written wrapper functions. Unregistered names have no function to call, so they cannot run.
 5. A narrator LLM writes a short plain-English summary using ONLY a facts sheet of computed numbers. A grounding check verifies every number in the narrative against computed results.
@@ -131,7 +132,7 @@ Export the JSON schema for use as the LLM tool schema.
 
 ## Validation and guardrails (guardrails.py and executor.py)
 
-Every issue: code, severity (BLOCK | WARN | APPROVAL), step_id, message, suggestion. ValidationReport has helpers: is_blocked, approvals_required, warnings. Each guardrail is a small named function with a docstring explaining what goes wrong without it. Put a table of all guardrails in the README.
+Every issue: code, action (BLOCK | WARN | APPROVE), step_id, message, suggestion. ValidationReport has helpers: is_blocked, approvals_required, warnings. Each guardrail is a small named function with a docstring explaining what goes wrong without it. Put a table of all guardrails in the README.
 
 Static checks (before execution, no data values needed). Run a metadata dry-run that propagates data_type, kind and frequency through the steps using the registry and catalog:
 - G01 INVALID_PLAN (BLOCK): planner output does not parse into Plan, or a step reference is invalid: missing input, unknown step id, or a reference to a later step.
@@ -142,10 +143,10 @@ Static checks (before execution, no data values needed). Run a metadata dry-run 
 - G06 UNKNOWN_DATASET (BLOCK): dataset_id not in catalog.
 - G07 RETURNS_ON_RATES (BLOCK): compute_returns on a rate_level series; suggest difference.
 - G08 FREQUENCY_MISMATCH (BLOCK): two-input steps (spread, compare_groups, ols_hac) whose inputs have different frequencies; suggest resample.
-- G09 LOOK_AHEAD (APPROVAL): flag_regime with method full_sample.
+- G09 LOOK_AHEAD (APPROVE): flag_regime with method full_sample.
 - OVERLAPPING_OBSERVATIONS (WARN; removed since, with multi-period forward returns): compare_groups on forward_return with horizon > 1 and nonoverlapping false; suggest nonoverlapping=true or ols_hac.
-- G10 MATERIAL_ASSUMPTION (APPROVAL): any capability assumption marked requires_approval (v1: return method in compute_returns).
-- G11 PLANNER_REFUSED (BLOCK): cannot_fulfill true; show refusal_reason.
+- G10 MATERIAL_ASSUMPTION (APPROVE): any capability assumption marked requires_approval (v1: return method in compute_returns).
+- L01 PLANNER_REFUSED (BLOCK): cannot_fulfill true; show refusal_reason.
 
 Runtime checks (during execution, need data). A failing BLOCK stops the run cleanly with a clear message and is recorded:
 - R01 DATASET_HASH_MISMATCH (BLOCK).
@@ -154,7 +155,7 @@ Runtime checks (during execution, need data). A failing BLOCK stops the run clea
 - R04 ALIGNMENT_LOSS (WARN): an inner join drops more than 10% of rows.
 - R05 LOW_EFFECTIVE_SAMPLE (WARN): fewer than 5 distinct flagged episodes in compare_groups/ols_hac, so the test has low power.
 
-Approvals: the engine refuses to execute while any BLOCK exists or any APPROVAL is unresolved. Approvals are recorded with timestamp and the exact issue they resolve.
+Approvals: the engine refuses to execute while any BLOCK exists or any APPROVE is unresolved. Approvals are recorded with timestamp and the exact issue they resolve.
 
 ## Planner (planner.py)
 
@@ -186,8 +187,8 @@ Run record saved as runs/<run_id>/manifest.json, with outputs saved alongside (C
 
 ## Monitoring (monitoring.py)
 
-Append-only runs/events.jsonl. One event per line: timestamp, run_id, event_type (request_received, plan_generated, plan_failed, validation_issue, approval_granted, execution_started, step_completed, step_failed, guardrail_triggered, narrative_checked, run_completed, run_failed, replay_completed), stage latency in ms, and details (capability, issue code, severity, error message).
-Aggregation functions for the dashboard: number of runs, success/blocked/failed rates, mean and p95 latency per stage (planning, validation, execution, narration), capability invocation counts, guardrail events by code and severity, recent errors, plan-cache hit rate.
+Append-only runs/events.jsonl. One event per line: timestamp, run_id, event_type (request_received, plan_generated, plan_failed, validation_issue, approval_granted, execution_started, step_completed, step_failed, guardrail_triggered, narrative_checked, run_completed, run_failed, replay_completed), stage latency in ms, and details (capability, issue code, action, error message).
+Aggregation functions for the dashboard: number of runs, success/blocked/failed rates, mean and p95 latency per stage (planning, validation, execution, narration), capability invocation counts, guardrail events by code and action, recent errors, plan-cache hit rate.
 
 ## Engine (engine.py)
 
@@ -203,7 +204,7 @@ Clean and simple, not fancy. Pages:
    - Request text area and a "Generate plan" button.
    - Plan view: a table of steps (id, capability, inputs, params, rationale), planner notes, and a raw JSON expander.
    - Parameter editing with st.data_editor or per-step widgets, constrained by the registry (choices as selectboxes, ranges as number inputs). Edits trigger re-validation through the same validator.
-   - Validation panel: issues grouped by severity with colour (BLOCK red, APPROVAL amber, WARN yellow), each with message and suggestion. A checkbox per APPROVAL issue.
+   - Validation panel: issues grouped by action with colour (BLOCK red, APPROVE amber, WARN yellow), each with message and suggestion. A checkbox per APPROVE issue.
    - "Execute" button, enabled only when there are no BLOCKs and all approvals are ticked.
    - Results: per step, a plotly line chart for series (for volatility with flags, shade the flagged periods), tables for TABLE outputs, and a formatted card for TEST_RESULT outputs. Runtime warnings shown inline.
    - Narrative with the grounding badge.
@@ -228,7 +229,7 @@ The v1 set; the current example workflows are described in the README.
 
 ## CLI (cli.py)
 
-- `python -m quantlab.cli demo`: runs all scenarios in mock mode headlessly, auto-approving APPROVAL issues only for scenarios A and B. Prints a compact outcome table (scenario, status, issue codes, run_id).
+- `python -m quantlab.cli demo`: runs all scenarios in mock mode headlessly, auto-approving APPROVE issues only for scenarios A and B. Prints a compact outcome table (scenario, status, issue codes, run_id).
 - `python -m quantlab.cli run "<request>" --datasets X Y --mode mock|live|cached [--approve-all]`
 - `python -m quantlab.cli replay <run_id>`
 - `python -m quantlab.cli eval [--mode mock|live]`
@@ -256,7 +257,7 @@ The v1 set; the current example workflows are described in the README.
 
 ## README
 
-Business use case (self-service, auditable market-regime and risk analysis for a desk or risk team); architecture with a mermaid diagram of the flow; why plan-as-data instead of code generation (whitelist by construction versus eval); library and capability selection and what was deliberately excluded; the guardrail table (code, severity, stage, what goes wrong without it); monitoring and reproducibility; how to run (setup, fetch data, tests, app, CLI, eval, notebooks); known limitations and next steps (e.g. plan→observe→replan loop, more capabilities, auth/RBAC, persistent store, CI).
+Business use case (self-service, auditable market-regime and risk analysis for a desk or risk team); architecture with a mermaid diagram of the flow; why plan-as-data instead of code generation (whitelist by construction versus eval); library and capability selection and what was deliberately excluded; the guardrail table (code, action, stage, what goes wrong without it); monitoring and reproducibility; how to run (setup, fetch data, tests, app, CLI, eval, notebooks); known limitations and next steps (e.g. plan→observe→replan loop, more capabilities, auth/RBAC, persistent store, CI).
 
 ## Delivery plan
 

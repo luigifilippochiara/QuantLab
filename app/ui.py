@@ -19,7 +19,7 @@ import streamlit as st
 
 from quantlab.config import Settings, load_settings
 from quantlab.data import Catalog, load_catalog
-from quantlab.guardrails import Issue, Severity
+from quantlab.guardrails import Action, Category, Issue
 from quantlab.lineage import ReplayReport, TraceResult
 from quantlab.mock_scenarios import SCENARIOS_BY_ID
 from quantlab.narrator import format_number
@@ -30,10 +30,10 @@ from quantlab.types import Artifact, DataType, Frequency
 SERIES_COLOR = "#3987e5"  # blue: the series itself
 REGIME_COLOR = "#d95926"  # orange: flagged regimes, and the second measure in grouped bars
 
-SEVERITY_BADGE = {
-    Severity.BLOCK: ":red-badge[BLOCK]",
-    Severity.APPROVAL: ":orange-badge[APPROVAL]",
-    Severity.WARN: ":yellow-badge[WARN]",
+ACTION_BADGE = {
+    Action.BLOCK: ":red-badge[BLOCK]",
+    Action.APPROVE: ":orange-badge[APPROVE]",
+    Action.WARN: ":yellow-badge[WARN]",
 }
 # Unit of a parameter counted in periods (e.g. a rolling window), by the frequency
 # of the step's input: "window: 12 weeks", or "12 trading days" on daily data.
@@ -44,8 +44,8 @@ TITLE_ACRONYMS = {"hac": "HAC"}
 # Header badges of a plan step: its BLOCK and WARN findings and its edits. Approval
 # findings get no badge: they are handled one by one in the Validation section.
 STEP_BADGES = {
-    Severity.BLOCK: ":red-badge[:material/block: Blocked]",
-    Severity.WARN: ":yellow-badge[:material/info: Warning]",
+    Action.BLOCK: ":red-badge[:material/block: Blocked]",
+    Action.WARN: ":yellow-badge[:material/info: Warning]",
 }
 EDITED_BADGE = ":blue-badge[:material/edit: edited]"
 
@@ -217,9 +217,7 @@ def step_titles(plan: Plan) -> dict[str, str]:
     return {step.id: step_title(i, step.capability) for i, step in enumerate(plan.steps, 1)}
 
 
-def step_header(
-    position: int, step: Step, summary: str, severities: set[Severity], edited: bool
-) -> str:
+def step_header(position: int, step: Step, summary: str, actions: set[Action], edited: bool) -> str:
     """The collapsed header of a plan step, e.g. "Step 4 · C06 · Rolling volatility · window: ...".
 
     Badges follow for the step's BLOCK and WARN findings (most severe first) and
@@ -228,7 +226,7 @@ def step_header(
     """
     title = step_title(position, step.capability)
     text = escape_md(f"{title} · {summary}" if summary else title)
-    badges = [STEP_BADGES[s] for s in (Severity.BLOCK, Severity.WARN) if s in severities]
+    badges = [STEP_BADGES[a] for a in (Action.BLOCK, Action.WARN) if a in actions]
     if edited:
         badges.append(EDITED_BADGE)
     return " ".join([text, *badges])
@@ -418,18 +416,23 @@ def grouped_bar_figure(
 
 
 def render_issue(issue: Issue, titles: dict[str, str] | None = None) -> None:
-    """Show one guardrail issue: severity badge, code, step, message and suggestion.
+    """Show one guardrail issue: action badge, code, step, who enforced it, message, suggestion.
+
+    "Enforced by" and the category are written out (from the GUARDRAILS table),
+    so nobody has to decode the code's prefix.
 
     Args:
         issue: the issue.
         titles: step id -> step name (see step_titles), e.g. "Step 3 · C03 ·
             Compute returns"; the step is then named as in the plan, with its id.
     """
-    where = "whole plan"
+    # Issues without a step concern the whole plan, or (N01) the narrative.
+    where = "narrative" if issue.category == Category.OUTPUT_GROUNDING else "whole plan"
     if issue.step_id:
         title = (titles or {}).get(issue.step_id)
         where = f"{escape_md(title)} ({issue.step_id})" if title else f"step {issue.step_id}"
-    st.markdown(f"{SEVERITY_BADGE[issue.severity]} **{issue.code} {issue.name}** · {where}")
+    st.markdown(f"{ACTION_BADGE[issue.action]} **{issue.code} {issue.name}** · {where}")
+    st.caption(f"Enforced by: **{issue.enforced_by}** · Category: {issue.category}")
     st.markdown(escape_md(issue.message))
     if issue.suggestion:
         st.caption(f"Suggestion: {escape_md(issue.suggestion)}")

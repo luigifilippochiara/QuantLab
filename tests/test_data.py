@@ -108,6 +108,8 @@ def test_committed_catalog_display_names() -> None:
         "DEXSZUS": "Swiss Francs to U.S. Dollar Spot Exchange Rate",
     }
     assert catalog.entries["SP500"].full_name == "Standard & Poor's 500"
-    assert catalog.entries["DGS10"].full_name.endswith("Quoted on an Investment Basis")
+    assert catalog.entries["DGS10"].full_name == (
+        "Market Yield on U.S. Treasury Securities at 10-Year Constant Maturity"
+    )  # as written by scripts/fetch_data.py
     # The UI labels datasets by FRED id, and plans refer to dataset ids: they agree.
     assert all(e.dataset_id == e.fred_id for e in catalog.entries.values())

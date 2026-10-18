@@ -8,16 +8,18 @@ function to call, so it cannot run.
 
 The executor is also the last gate before computation. It re-validates the
 plan with the same `validate_plan` the UI uses and refuses to start if any
-BLOCK exists or any APPROVAL issue has not been approved, so calling it
+BLOCK exists or any APPROVE issue has not been approved, so calling it
 directly (from a notebook, a test or replay) cannot skip the checks.
 
-While running it applies the runtime guardrails that need data:
+While running it applies the runtime guardrails that need data (action in brackets):
     R01 DATASET_HASH_MISMATCH (BLOCK)   before load_series
     R02 INSUFFICIENT_DATA     (BLOCK)   before any step with inputs
     R03 MISSING_DATA          (WARN)    after load_series
     R04 ALIGNMENT_LOSS        (WARN)    before two-input steps
     R05 LOW_EFFECTIVE_SAMPLE  (WARN)    before compare_groups / hac_mean_difference
 A BLOCK stops the run cleanly; the step records and issues so far are kept.
+Their descriptions (guardrails.GUARDRAILS) quote the thresholds below; a test
+checks they agree.
 Each step produces a StepRecord: what ran, with which parameters, on which
 inputs (by hash), what came out (by hash), how long it took.
 """
@@ -33,8 +35,8 @@ from quantlab.data import Catalog, verify_dataset_hash
 from quantlab.guardrails import (
     OUTCOME_INPUTS,
     PERIOD_NAMES,
+    Action,
     Issue,
-    Severity,
     effective_params,
     make_issue,
     validate_plan,
@@ -318,16 +320,14 @@ def execute_plan(
     approved_issue_ids: set[str] | None = None,
     *,
     max_steps: int = 15,
-    max_datasets: int = 5,
 ) -> ExecutionResult:
     """Validate, then run every step of a plan in order.
 
     Args:
         plan: the plan (defaults may or may not be filled in).
         catalog: the dataset catalog.
-        approved_issue_ids: issue ids of APPROVAL issues the user has approved.
+        approved_issue_ids: issue ids of APPROVE issues the user has approved.
         max_steps: budget passed to the validator.
-        max_datasets: budget passed to the validator.
 
     Returns:
         An ExecutionResult. Never raises for problems in the plan or the data:
@@ -337,7 +337,7 @@ def execute_plan(
     approved = approved_issue_ids or set()
 
     # Defence in depth: the same static checks the UI showed, re-run right here.
-    report = validate_plan(plan, catalog, max_steps=max_steps, max_datasets=max_datasets)
+    report = validate_plan(plan, catalog, max_steps=max_steps)
     if report.is_blocked:
         return ExecutionResult(
             status="blocked",
@@ -380,7 +380,7 @@ def execute_plan(
         record.issues += check_insufficient_data(step, spec, params, inputs)
         record.issues += check_alignment_loss(step, spec, inputs)
         record.issues += check_low_effective_sample(step, spec, inputs)
-        blocking = [i for i in record.issues if i.severity == Severity.BLOCK]
+        blocking = [i for i in record.issues if i.action == Action.BLOCK]
         if blocking:
             record.status = "blocked"
             record.duration_ms = _elapsed_ms(step_started)

@@ -16,7 +16,7 @@ Metrics (normal cases = expect "plan"; adversarial = expect "refuse_or_block"):
 - correct refusal/block rate: adversarial cases that were refused or blocked.
 
 Each normal case is also scored item by item (every step in order, every key
-parameter, each severity of the guardrail outcome), so a mismatch shows exactly
+parameter, each action of the guardrail outcome), so a mismatch shows exactly
 what the planner chose differently. The CLI (`quantlab.cli eval`) and
 eval/run_eval.py both call `run_evaluation`.
 """
@@ -31,7 +31,7 @@ import yaml
 
 from quantlab.config import PROJECT_ROOT, Settings
 from quantlab.data import Catalog, load_catalog
-from quantlab.guardrails import Issue, Severity, effective_params, fill_defaults, validate_plan
+from quantlab.guardrails import Action, Issue, effective_params, fill_defaults, validate_plan
 from quantlab.mock_scenarios import SCENARIOS_BY_ID
 from quantlab.plan import Plan
 from quantlab.planner import generate_plan
@@ -40,12 +40,12 @@ from quantlab.registry import REGISTRY
 GOLDEN_PATH = PROJECT_ROOT / "eval" / "golden_requests.yaml"
 REPORTS_DIR = PROJECT_ROOT / "eval" / "reports"
 
-# The severities of a golden case's `guardrails` entry, and the item names they are
-# reported under.
+# The keys of a golden case's `guardrails` entry (one per action), and the item
+# names they are reported under.
 GUARDRAIL_ITEMS = {
-    "approval": (Severity.APPROVAL, "approvals"),
-    "warn": (Severity.WARN, "warnings"),
-    "block": (Severity.BLOCK, "blocks"),
+    "approve": (Action.APPROVE, "approvals"),
+    "warn": (Action.WARN, "warnings"),
+    "block": (Action.BLOCK, "blocks"),
 }
 
 
@@ -137,6 +137,10 @@ def load_golden(path: Path = GOLDEN_PATH) -> list[GoldenCase]:
 
     Returns:
         The cases, in file order.
+
+    Raises:
+        ValueError: if a case's `guardrails` entry has a key other than block,
+            approve or warn.
     """
     cases = []
     for item in yaml.safe_load(path.read_text(encoding="utf-8")):
@@ -145,6 +149,11 @@ def load_golden(path: Path = GOLDEN_PATH) -> list[GoldenCase]:
             request, datasets = scenario.request, list(scenario.dataset_ids)
         else:
             request, datasets = item["request"], item["datasets"]
+        unknown = sorted(set(item.get("guardrails") or {}) - set(GUARDRAIL_ITEMS))
+        if unknown:
+            # A misspelt key would otherwise be silently ignored, and pass as "none".
+            raise ValueError(f"{item['id']}: unknown guardrails key(s) {unknown}; "
+                             f"use {list(GUARDRAIL_ITEMS)}.")  # fmt: skip
         cases.append(
             GoldenCase(
                 id=item["id"],
@@ -195,11 +204,11 @@ def param_checks(key_params: dict[str, dict[str, Any]], plan: Plan | None) -> li
 
 
 def guardrail_checks(expected: dict[str, list[str]], issues: list[Issue]) -> list[ItemCheck]:
-    """Compare the issue codes of each severity with the expected ones (order ignored)."""
+    """Compare the issue codes of each action with the expected ones (order ignored)."""
     checks = []
-    for key, (severity, item) in GUARDRAIL_ITEMS.items():
+    for key, (action, item) in GUARDRAIL_ITEMS.items():
         want = sorted(expected.get(key, []))
-        got = sorted(i.code for i in issues if i.severity == severity)
+        got = sorted(i.code for i in issues if i.action == action)
         checks.append(ItemCheck(item, ", ".join(want) or "none", ", ".join(got) or "none",
                                 want == got))  # fmt: skip
     return checks

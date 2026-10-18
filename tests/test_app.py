@@ -1,7 +1,8 @@
 """Streamlit app, driven headlessly with streamlit.testing.AppTest (mock mode, synthetic data).
 
 Covers the demo path: scenario 1 planned, approved, executed, narrated, traced
-and replayed; blocked scenarios cannot execute; the other pages render; the
+and replayed; blocked scenarios cannot execute; every issue shows who enforces it;
+an ungrounded LLM narrative is withheld (N01); the other pages render; the
 header, mock-only example workflows and full dataset names on hover.
 """
 
@@ -12,10 +13,14 @@ from streamlit.testing.v1 import AppTest
 
 from quantlab.config import PROJECT_ROOT, Settings
 from quantlab.data import load_catalog
-from quantlab.guardrails import GUARDRAILS, Severity
+from quantlab.engine import Session
+from quantlab.guardrails import ENFORCERS, GUARDRAILS, Action
 from quantlab.mock_scenarios import FLAGSHIP_REQUEST, SCENARIOS_BY_ID
 from quantlab.plan import Step
 from quantlab.registry import REGISTRY
+
+from conftest import SCENARIO_1_APPROVALS
+from fakes import FakeAnthropicClient, text_response
 
 PAGES = PROJECT_ROOT / "app" / "pages"
 SCENARIO_1_REQUEST = SCENARIOS_BY_ID["volatility_flag_success"].request
@@ -174,6 +179,56 @@ def test_blocked_scenario_cannot_execute(scenario_id: str, app_env: Settings) ->
 
 
 @pytest.mark.parametrize(
+    ("scenario_id", "enforcer", "category"),
+    [
+        ("volatility_flag_success", "Validator (deterministic)", "Methodology"),
+        ("arima_forecast_block", "Planner (LLM)", "Approved scope"),
+        ("spread_frequency_mismatch_block", "Validator (deterministic)", "Methodology"),
+    ],
+)
+def test_every_issue_shows_who_enforces_it(
+    scenario_id: str, enforcer: str, category: str, app_env: Settings
+) -> None:
+    app = open_page("analysis.py")
+    app.sidebar.button(key=f"scenario-{scenario_id}").click().run()
+    button(app, "Generate plan").click().run()
+    shown = f"Enforced by: **{enforcer}** · Category: {category}"
+    assert shown in [c.value for c in app.caption]
+
+
+def test_ungrounded_llm_narrative_is_withheld_with_an_n01_issue(app_env: Settings) -> None:
+    # Planned and executed in mock mode; only the narrative comes from a (fake) LLM,
+    # which invents a number.
+    scenario = SCENARIOS_BY_ID["volatility_flag_success"]
+    session = Session.start(scenario.request, list(scenario.dataset_ids), "mock", app_env)
+    session.create_plan()
+    session.approve(SCENARIO_1_APPROVALS)
+    session.execute()
+    invented = "Volatility peaked at 123.456 during the flagged weeks."
+    session.mode, session.client = "live", FakeAnthropicClient(text_response(invented))
+    session.narrate()
+    session.save_record()
+
+    app = AppTest.from_file(str(PAGES / "analysis.py"), default_timeout=60)
+    app.session_state["session"] = session
+    app.run()
+    assert not app.exception, app.exception
+    captions = [c.value for c in app.caption]
+    n01 = "Enforced by: **Narrator check (deterministic)** · Category: Output grounding"
+    assert n01 in captions
+    assert any("N01 UNGROUNDED_NARRATIVE" in m.value and "narrative" in m.value
+               for m in app.markdown)  # fmt: skip
+    assert not any("numbers verified" in s.value for s in app.success)
+    # The withheld text appears once, in a collapsed expander, with its failing number.
+    shown = invented.replace(".", "\\.")  # as escaped for Markdown (ui.escape_md)
+    assert [m.value for m in app.markdown if shown in m.value] == [shown]
+    withheld = next(e for e in app.expander if e.label.startswith("Withheld LLM narrative"))
+    assert [m.value for m in withheld.markdown] == [shown] and not withheld.proto.expanded
+    assert "123.456" in " ".join(c.value for c in withheld.caption)
+    assert any("Written by: deterministic template" in c for c in captions)
+
+
+@pytest.mark.parametrize(
     "page", ["run_history.py", "monitoring.py", "registry.py", "guardrails.py"]
 )
 def test_other_pages_render(page: str, app_env: Settings) -> None:
@@ -190,14 +245,20 @@ def test_capability_count_comes_from_the_registry(app_env: Settings) -> None:
 def test_guardrails_page_counts_and_table_come_from_the_code(app_env: Settings) -> None:
     app = open_page("guardrails.py")
     assert app.title[0].value == "Guardrails"
-    static = sum(code.startswith("G") for code in GUARDRAILS)  # plan-level G codes
-    runtime = sum(code.startswith("R") for code in GUARDRAILS)  # runtime R codes
     intro = app.caption[0].value
-    assert f"every plan passes {static} static guardrails" in intro
-    assert f"and {runtime} runtime guardrails" in intro
+    for enforcer in ENFORCERS.values():
+        count = sum(g.enforced_by == enforcer for g in GUARDRAILS.values())
+        assert f"{count} enforced by the {enforcer}" in intro
+    for action in Action:
+        assert f"**{action.value}**" in intro  # what each action means
     table = app.table[0].value
     assert list(table.index) == list(GUARDRAILS)
-    assert list(table.columns) == ["name", "severity", "stage", "what goes wrong without it"]
+    assert list(table.columns) == ["Name", "Action", "Enforced by", "Category", "Description"]
+    g09 = table.loc["G09"]
+    assert (g09["Action"], g09["Enforced by"], g09["Category"]) == (
+        "APPROVE", "Validator (deterministic)", "Methodology")  # fmt: skip
+    assert table.loc["L01", "Enforced by"] == "Planner (LLM)"
+    assert table.loc["N01", "Enforced by"] == "Narrator check (deterministic)"
 
 
 def test_sidebar_title_sits_above_the_page_menu(app_env: Settings) -> None:
@@ -322,5 +383,5 @@ def test_step_summary_falls_back_to_every_parameter(app_env: Settings) -> None:
     assert ui.step_summary(flag, every, "W", catalog).endswith("min periods: 52 weeks")
     unknown = Step(id="s2", capability="arima", params={"steps_ahead": 1})
     assert ui.step_summary(unknown, None, None, catalog) == "steps ahead: 1"
-    header = ui.step_header(2, unknown, "steps ahead: 1", {Severity.BLOCK}, edited=False)
+    header = ui.step_header(2, unknown, "steps ahead: 1", {Action.BLOCK}, edited=False)
     assert header == "Step 2 · Arima · steps ahead: 1 :red-badge[:material/block: Blocked]"

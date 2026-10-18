@@ -11,11 +11,15 @@ computed fact (or its x100 percentage form), a plan parameter, a number from the
 request or a warning, an annualisation factor, or (only when a significance test
 ran) the 5% significance level and 95% confidence level. Dates are facts too:
 every date in the narrative must be a date of the facts sheet.
-The UI shows "all numbers verified" or lists the ungrounded numbers. The
-deterministic results table is always shown as the source of truth.
 
-Without an API key (mock mode), or if the LLM call fails, a deterministic
-template narrator writes the summary instead.
+That check is guardrail N01 UNGROUNDED_NARRATIVE (action WARN), the narrator
+check: an LLM narrative that fails it is withheld (kept in the run record, never
+shown as the summary) and the deterministic template narrative is shown instead,
+with an N01 issue listing the numbers that failed. The run's numerical results
+are not affected, and the results tables are always shown as the source of truth.
+
+Without an API key (mock mode), or if the LLM call fails, the deterministic
+template narrator writes the summary; its numbers are checked the same way.
 """
 
 import math
@@ -29,7 +33,7 @@ from pydantic import BaseModel, Field
 
 from quantlab.capabilities import count_episodes
 from quantlab.config import Settings
-from quantlab.guardrails import Issue
+from quantlab.guardrails import Action, Issue, make_issue
 from quantlab.plan import Plan, describe_plan
 from quantlab.planner import (
     FALLBACK_BETA,
@@ -129,9 +133,14 @@ class NarrativeResult(BaseModel):
         latency_ms: time spent writing it.
         input_tokens: prompt tokens reported by the API.
         output_tokens: output tokens reported by the API.
-        error: why the LLM was not used, if it failed and the template took over.
+        error: why the LLM was not used, if it failed (or was withheld) and the
+            template took over.
         facts: the facts sheet it was given.
         grounding: the result of the numeric grounding check (None until checked).
+        withheld: the LLM narrative withheld by N01 because it failed the grounding
+            check, with its own grounding result (kept for audit; never shown as
+            the summary), or None.
+        issues: N01 UNGROUNDED_NARRATIVE issues (empty when every number is grounded).
     """
 
     text: str
@@ -144,6 +153,8 @@ class NarrativeResult(BaseModel):
     error: str | None = None
     facts: list[Fact]
     grounding: GroundingResult | None = None
+    withheld: "NarrativeResult | None" = None
+    issues: list[Issue] = Field(default_factory=list)
 
 
 # ---------------------------------------------------------------------------
@@ -425,8 +436,8 @@ def template_narrative(
                 "cause or a forecast."
             )
 
-    warnings = [i for i in issues if i.severity == "WARN"]
-    approved = [i for i in issues if i.severity == "APPROVAL"]
+    warnings = [i for i in issues if i.action == Action.WARN]
+    approved = [i for i in issues if i.action == Action.APPROVE]
     if warnings:
         sentences.append(
             "Read the results with these warnings in mind: "
@@ -457,10 +468,10 @@ def build_user_prompt(request: str, plan: Plan, facts: list[Fact], issues: list[
     """Assemble the narrator's input: request, plan summary, facts sheet, warnings, approvals."""
     fact_lines = "\n".join(f"- [{f.fact_id}] {f.label}: {f.display}" for f in facts)
     warning_lines = "\n".join(
-        f"- {i.code} {i.name}: {i.message}" for i in issues if i.severity == "WARN"
+        f"- {i.code} {i.name}: {i.message}" for i in issues if i.action == Action.WARN
     )
     approval_lines = "\n".join(
-        f"- {i.code} {i.name}: {i.message}" for i in issues if i.severity == "APPROVAL"
+        f"- {i.code} {i.name}: {i.message}" for i in issues if i.action == Action.APPROVE
     )
     return (
         f"<user_request>\n{request}\n</user_request>\n\n"
@@ -487,32 +498,88 @@ def narrate(
         request: the user's request.
         plan: the executed plan.
         artifacts: step id -> output artifact.
-        issues: WARN issues and approved APPROVAL issues to mention.
+        issues: WARN issues and approved APPROVE issues to mention.
         mode: "live" or "cached" use the LLM; "mock" uses the template.
         settings: settings (narrator model, effort, tokens, timeout).
         extra_texts: other trusted texts whose numbers are allowed (e.g. dataset titles).
         client: optional OpenAI or Anthropic client (tests inject a fake one).
 
     Returns:
-        A NarrativeResult including the grounding check.
+        A NarrativeResult including the grounding check and any N01 issues. An
+        LLM narrative that fails the check is in `withheld`, and the template is
+        the narrative returned.
     """
     facts = build_facts_sheet(plan, artifacts)
-    result = NarrativeResult(
+    trusted_texts = [request, *(i.message for i in issues), *(extra_texts or [])]
+    template = NarrativeResult(
         text=template_narrative(plan, artifacts, facts, issues),
         source="template",
         prompt_version="template-v1",
         facts=facts,
     )
+    template.grounding = check_grounding(template.text, facts, plan, trusted_texts)
+    result = template
     if mode != "mock":
         llm_result, error = _llm_narrative(request, plan, facts, issues, settings, client)
-        if llm_result is not None:
-            result = llm_result
+        if llm_result is None:
+            template.error = error  # keep the template, record why the LLM was not used
         else:
-            result.error = error  # keep the template, record why the LLM was not used
-
-    trusted_texts = [request, *(i.message for i in issues), *(extra_texts or [])]
-    result.grounding = check_grounding(result.text, facts, plan, trusted_texts)
+            llm_result.grounding = check_grounding(llm_result.text, facts, plan, trusted_texts)
+            if llm_result.grounding.grounded:
+                result = llm_result
+            else:
+                # N01: a narrative quoting a number the run did not produce is never
+                # shown as the summary; the checked template replaces it.
+                template.withheld = llm_result
+                template.error = "The LLM narrative was withheld by N01 UNGROUNDED_NARRATIVE."
+    result.issues = check_narrative_grounding(result)
     return result
+
+
+def check_narrative_grounding(result: NarrativeResult) -> list[Issue]:
+    """N01 UNGROUNDED_NARRATIVE: the narrative quotes numbers the run did not produce.
+
+    Raised when the LLM's narrative was withheld because check_grounding found
+    numbers or dates in it that match no value the run computed or used, and, as
+    a safety net, if the narrative shown (the deterministic template) ever fails
+    the same check. Without it, an invented or misquoted figure could reach the
+    reader looking as trustworthy as the computed results. The action is WARN:
+    the numerical results are not affected, so the run still completes.
+
+    Args:
+        result: the narrative, with its grounding checked.
+
+    Returns:
+        The N01 issues (empty when every number is grounded).
+    """
+    issues = []
+    if result.withheld is not None:
+        ungrounded = ", ".join(result.withheld.grounding.ungrounded)
+        issues.append(
+            make_issue(
+                "N01",
+                None,
+                f"The LLM narrative quotes numbers that match no value of the run: {ungrounded}. "
+                "It was withheld, and the deterministic summary is shown instead.",
+                "Rely on the results and the facts sheet; the withheld text is kept in the "
+                "run record.",
+                key="llm",
+            )
+        )
+    if not result.grounding.grounded:
+        ungrounded = ", ".join(result.grounding.ungrounded)
+        issues.append(
+            make_issue(
+                "N01",
+                None,
+                f"The deterministic summary quotes numbers that match no value of the run: "
+                f"{ungrounded}.",
+                "Rely on the results tables and the facts sheet, which come straight from "
+                "the executor.",
+                key="template",
+            )
+        )
+    return issues
 
 
 @dataclass

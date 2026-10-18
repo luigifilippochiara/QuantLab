@@ -402,7 +402,7 @@ def forward_return(series: Artifact, method: str) -> Artifact:
     Why it starts at the close of t: a flag dated t uses data up to the close of t
     (e.g. the volatility of returns ending at t). The forward return begins exactly
     there, so "flag at t -> what happens next" never reuses the data behind the
-    flag. It is future information at t, so it is only ever an OUTCOME (G12).
+    flag. It is future information at t, so it is only ever an OUTCOME (G11).
 
     Args:
         series: SERIES artifact of kind price_level or index_level.
@@ -530,7 +530,8 @@ def hac_mean_difference(outcome: Artifact, flags: Artifact) -> Artifact:
     so b = mean(flagged) - mean(normal). The regression adds a standard error for
     that difference.
 
-    Why HAC: ordinary standard errors assume every week is an independent draw
+    Why HAC (Heteroskedasticity and Autocorrelation Consistent):
+    ordinary standard errors assume every week is an independent draw
     with the same variance, and neither holds here. Heteroskedasticity: flagged
     weeks are the high-volatility ones, so their outcomes vary much more than
     those of normal weeks. Autocorrelation: volatility clusters, so flagged weeks

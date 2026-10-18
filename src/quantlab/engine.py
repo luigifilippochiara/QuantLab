@@ -7,7 +7,7 @@ through the pipeline, in this order:
       .create_plan()          planner (LLM or mock) -> plan, defaults filled -> validate
       .apply_param_edits()    user edits VALUES only -> re-validate with the SAME validator
       .reset_to_proposal()    back to the planner's proposal (re-validated)
-      .approve(issue_ids)     user approves APPROVAL issues (timestamped)
+      .approve(issue_ids)     user approves APPROVE issues (timestamped)
       .execute()              deterministic executor (refuses if blocked or unapproved)
       .narrate()              narrator + grounding check
       .save_record()          manifest + outputs under runs/<run_id>/
@@ -26,8 +26,8 @@ from quantlab.config import Settings, load_settings
 from quantlab.data import Catalog, load_catalog
 from quantlab.executor import ExecutionResult, execute_plan
 from quantlab.guardrails import (
+    Action,
     Issue,
-    Severity,
     ValidationReport,
     check_edits,
     check_request_length,
@@ -172,7 +172,7 @@ class Session:
 
         Returns:
             The validation report. If the planner failed or refused, the report
-            holds the G01/G11 issues and the run is recorded as blocked.
+            holds the G01/L01 issues and the run is recorded as blocked.
         """
         too_long = check_request_length(self.request, self.settings.max_request_chars)
         if too_long:
@@ -229,7 +229,6 @@ class Session:
             self.plan,
             self.catalog,
             max_steps=self.settings.max_steps,
-            max_datasets=self.settings.max_datasets,
             max_request_chars=self.settings.max_request_chars,
         )
         latency = round((time.perf_counter() - started) * 1000, 2)
@@ -325,7 +324,7 @@ class Session:
         return self.apply_param_edits({step_id: p for step_id, p in edits.items() if p})
 
     def unresolved_approvals(self) -> list[Issue]:
-        """APPROVAL issues of the current report that have not been approved yet."""
+        """APPROVE issues of the current report that have not been approved yet."""
         if self.report is None:
             return []
         # Only approvals given for THIS plan version count (edits also clear them).
@@ -333,15 +332,15 @@ class Session:
         return [i for i in self.report.approvals_required if i.issue_id not in approved]
 
     def approve(self, issue_ids: list[str], approved_by: str = "user") -> None:
-        """Record approval of specific APPROVAL issues.
+        """Record approval of specific APPROVE issues.
 
         Args:
-            issue_ids: ids of the issues being approved (must be APPROVAL issues
+            issue_ids: ids of the issues being approved (must be APPROVE issues
                 of the current report).
             approved_by: who approved ("user" in the UI, "cli" for --approve-all).
 
         Raises:
-            ValueError: if an id is not an open APPROVAL issue.
+            ValueError: if an id is not an open APPROVE issue.
         """
         open_issues = {issue.issue_id: issue for issue in self.unresolved_approvals()}
         for issue_id in issue_ids:
@@ -402,7 +401,6 @@ class Session:
             self.catalog,
             {a.issue_id for a in self.approvals if a.plan_hash == self.plan_hash},
             max_steps=self.settings.max_steps,
-            max_datasets=self.settings.max_datasets,
         )
         self.execution = result
         self.timings_ms["execution"] = result.duration_ms
@@ -442,6 +440,9 @@ class Session:
         """
         if self.execution is None or self.execution.status != "completed":
             raise ValueError("narrate() needs a completed execution")
+        # A new narrative replaces any earlier one, and with it its N01 issues: the
+        # narrator is told about the run's warnings, never about an old narrative.
+        self.narrative = None
         approved_ids = {approval.issue_id for approval in self.approvals}
         issues = self.warnings() + [
             i for i in self.report.approvals_required if i.issue_id in approved_ids
@@ -458,7 +459,9 @@ class Session:
             client=self.client,
         )
         self.narrative = narrative
-        latency = narrative.latency_ms
+        withheld = narrative.withheld
+        # A withheld LLM narrative took time too: count it in the narration stage.
+        latency = narrative.latency_ms + (withheld.latency_ms if withheld else 0.0)
         self.timings_ms["narration"] = latency
         self._log(
             "narrative_checked",
@@ -468,18 +471,22 @@ class Session:
                 "source": narrative.source,
                 "grounded": narrative.grounding.grounded,
                 "ungrounded": narrative.grounding.ungrounded,
+                "withheld_ungrounded": withheld.grounding.ungrounded if withheld else [],
                 "error": narrative.error,
             },
         )
+        for issue in narrative.issues:  # N01 UNGROUNDED_NARRATIVE
+            self._log("guardrail_triggered", details=_issue_details(issue))
         return narrative
 
     # ----------------------------------------------------------------- record
 
     def warnings(self) -> list[Issue]:
-        """All WARN issues: static ones from validation plus runtime ones from execution."""
+        """All WARN issues: from validation, from execution and from the narrative check."""
         static = self.report.warnings if self.report else []
         runtime = self.execution.issues if self.execution else []
-        return static + [i for i in runtime if i.severity == Severity.WARN]
+        narrative = self.narrative.issues if self.narrative else []
+        return static + [i for i in runtime if i.action == Action.WARN] + narrative
 
     def _datasets_used(self) -> list[str]:
         """Dataset ids loaded by the plan, in order."""
@@ -566,7 +573,7 @@ def _issue_details(issue: Issue) -> dict[str, Any]:
     return {
         "code": issue.code,
         "name": issue.name,
-        "severity": issue.severity.value,
+        "action": issue.action.value,
         "step_id": issue.step_id,
         "issue_id": issue.issue_id,
     }
@@ -586,7 +593,7 @@ def run_request(
         request: the user's request.
         dataset_ids: selected datasets.
         mode: LLM mode (default from settings).
-        approve: approve every APPROVAL issue automatically (CLI --approve-all).
+        approve: approve every APPROVE issue automatically (CLI --approve-all).
         settings: settings (default load_settings()).
         client: optional OpenAI or Anthropic client (tests).
 

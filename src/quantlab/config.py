@@ -17,7 +17,6 @@ Environment variables (all optional):
     QUANTLAB_DATA_DIR          folder holding catalog.json and snapshots/ (default: ./data)
     QUANTLAB_RUNS_DIR          folder for run records, plan cache and events (default: ./runs)
     QUANTLAB_MAX_STEPS         budget: maximum steps per plan (default: 15)
-    QUANTLAB_MAX_DATASETS      budget: maximum distinct datasets per plan (default: 5)
 """
 
 import os
@@ -56,7 +55,6 @@ class Settings:
         data_dir: folder with catalog.json and the snapshots/ folder.
         runs_dir: folder for run records, the plan cache and the event log.
         max_steps: budget, maximum number of steps in a plan.
-        max_datasets: budget, maximum number of distinct datasets in a plan.
         max_request_chars: budget, longest request accepted (protects the prompt size).
         planner_effort: reasoning effort for the planner call.
         narrator_effort: reasoning effort for the narrator call.
@@ -76,7 +74,6 @@ class Settings:
     data_dir: Path
     runs_dir: Path
     max_steps: int = 15
-    max_datasets: int = 5
     max_request_chars: int = 2000
     planner_effort: str = "medium"
     narrator_effort: str = "low"
@@ -159,7 +156,6 @@ def load_settings() -> Settings:
         data_dir=Path(os.environ.get("QUANTLAB_DATA_DIR") or PROJECT_ROOT / "data"),
         runs_dir=Path(os.environ.get("QUANTLAB_RUNS_DIR") or PROJECT_ROOT / "runs"),
         max_steps=int(os.environ.get("QUANTLAB_MAX_STEPS") or 15),
-        max_datasets=int(os.environ.get("QUANTLAB_MAX_DATASETS") or 5),
         planner_effort=os.environ.get("QUANTLAB_PLANNER_EFFORT") or "medium",
         narrator_effort=os.environ.get("QUANTLAB_NARRATOR_EFFORT") or "low",
         # OpenAI's reasoning guide recommends reserving at least 25,000 output

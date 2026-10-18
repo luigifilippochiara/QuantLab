@@ -120,8 +120,8 @@ The other pages: **Run history** lists past runs, shows each manifest and user
 edits, and replays a run without the model; **Monitoring** shows run outcomes,
 latency per stage, capability usage and guardrail activity; **Capability
 registry** lists every approved capability with its code, inputs, parameters and
-assumptions; **Guardrails** lists every static and runtime guardrail with its
-severity and what goes wrong without it.
+assumptions; **Guardrails** lists every guardrail with its action, who enforces
+it, its category and what it prevents.
 
 ### Editing a plan before it runs
 
@@ -186,11 +186,11 @@ app or with `cli demo`.
 3. **Out-of-scope forecast request** (`arima_forecast_block`): "Fit an ARIMA
    model to forecast next week's USD/CHF exchange rate." The registry has no
    capability that fits a model or makes a forecast, so the planner declines
-   (G11) and lists the registered capabilities instead. If a planner ever
+   (L01) and lists the registered capabilities instead. If a planner ever
    proposed such a step anyway, the validator would block it independently (G02).
 4. **Prompt-injection protection** (`prompt_injection_block`): a request that
    tells the assistant to ignore its rules and run Python is treated as data,
-   not as instructions, and declined (G11). There is no code path that could run
+   not as instructions, and declined (L01). There is no code path that could run
    it, and automated tests confirm that nothing from the request reaches a shell
    or a subprocess.
 5. **Frequency-alignment protection** (`spread_frequency_mismatch_block`):
@@ -242,7 +242,7 @@ then switching to cached: the request stays in the box) then returns their
 plans instantly and identically, even on a slow network (the
 narrator still calls the model, and falls back to the deterministic template if
 it cannot). A live model may decline a request for a different reason than the
-canned plan (for example refuse example 5 outright with G11, rather than
+canned plan (for example refuse example 5 outright with L01, rather than
 proposing the misaligned spread that the validator blocks with G08); the command
 only checks that blocked workflows stay blocked.
 
@@ -258,12 +258,12 @@ flowchart LR
     R[("Capability registry<br/>registry.py")] -. generated summary .-> P
     C[("Dataset catalog<br/>metadata only")] -. id, kind, frequency, dates .-> P
     P -->|"plan: inert JSON"| V["Validator<br/>static guardrails<br/>guardrails.py"]
-    V -->|"BLOCK / APPROVAL / WARN"| H["Human review<br/>edit params, approve"]
+    V -->|"BLOCK / APPROVE / WARN"| H["Human review<br/>edit params, approve"]
     H -->|"edits: same validator"| V
     H -->|approved plan| E["Executor<br/>runtime guardrails<br/>executor.py"]
     R -->|"REGISTRY[name].func"| E
     D[("FRED snapshot<br/>SHA-256 verified")] --> E
-    E -->|"facts sheet (numbers only)"| N["Narrator LLM<br/>+ grounding check"]
+    E -->|"facts sheet (numbers only)"| N["Narrator LLM<br/>+ grounding check (N01)"]
     E --> L[("Run record<br/>manifest + outputs")]
     N --> L
     L --> RP["Replay<br/>no LLM, hash comparison"]
@@ -279,11 +279,11 @@ flowchart LR
 | `capabilities.py` | The quantitative functions: the only code that calls pandas/numpy/statsmodels for analysis |
 | `registry.py` | Capability specs, the `REGISTRY` whitelist, generated LLM summary and registry version |
 | `plan.py` | Pydantic `Plan` / `Step` (extra fields forbidden), plan version hash, the LLM tool schema |
-| `guardrails.py` | Static guardrails (G codes), edit lock, metadata dry run, `ValidationReport`, the guardrail table |
+| `guardrails.py` | The guardrail table (action, enforcer, category), validator guardrails (G codes), L01 refusal block, edit lock, metadata dry run, `ValidationReport` |
 | `mock_scenarios.py` | Example workflows 1-5 with their canned plans (mock mode, CLI, app, tests) |
 | `executor.py` | Registry dispatch, approval gate, runtime guardrails (R codes), step records |
 | `planner.py` | OpenAI and Anthropic planners, mock planner, plan cache |
-| `narrator.py` | Facts sheet, LLM narrator, template fallback, numeric grounding check |
+| `narrator.py` | Facts sheet, LLM narrator, template fallback, numeric grounding check (N01) |
 | `lineage.py` | Run record (manifest), save/load, replay, trace |
 | `monitoring.py` | Append-only JSONL event log and dashboard aggregations |
 | `engine.py` | `Session`: plan, validate, edit, approve, execute, narrate, save; used by app, CLI, notebooks |
@@ -316,7 +316,7 @@ structured plan instead:
 * **Reproducible.** Plan, data hashes and library versions are enough to replay a
   run with no model involved.
 
-The trade-off is expressiveness: anything outside the registry is declined (G11)
+The trade-off is expressiveness: anything outside the registry is declined (L01)
 or blocked (G02). Adding a capability is a deliberate, reviewed code change,
 which is what model-risk governance requires.
 
@@ -347,7 +347,7 @@ at each date t, the return from the close of t to the close of t+1, one period
 of the series' frequency (the following week on weekly data; the last date has
 no future price yet and is dropped, never filled). It is future information at
 t, so it may only be the outcome of `compare_groups` or `hac_mean_difference`:
-feeding it to anything else, such as a volatility or a flag, is blocked (G12).
+feeding it to anything else, such as a volatility or a flag, is blocked (G11).
 `hac_mean_difference` regresses the outcome on a constant and the 0/1 flag,
 which makes the flag's coefficient exactly the difference in means, and uses
 Newey-West (HAC) standard errors, because ordinary ones assume independent weeks
@@ -379,38 +379,49 @@ audit). Fewer libraries means fewer versions to pin, record and explain.
 
 ## Guardrails
 
-Each guardrail is a small named function whose docstring explains what goes
-wrong without it. Static guardrails run on the plan alone (the planner's plan and
-every user edit, through the same validator); runtime guardrails need data and
-run in the executor. The table is generated from `guardrails.GUARDRAILS`, which
-also feeds the **Guardrails** page and its counts. The codes were renumbered
-once, when the guardrails were simplified (`docs/DECISIONS.md` lists the old
-and new codes); from that version on they are permanent: never renumbered or
-given another meaning, so the issue ids in run records keep their meaning and
-those runs can still be replayed.
+Each guardrail is a small named function whose docstring explains what it checks
+and what goes wrong without it. Every guardrail has:
 
-| Code | Name | Severity | Stage | What goes wrong without it |
-|---|---|---|---|---|
-| G01 | `INVALID_PLAN` | BLOCK | static | Malformed, partial or empty planner output would have to be guessed at, extra fields (e.g. 'code') could slip through, and steps could read missing outputs or outputs of later steps, leaving the order of computation undefined. |
-| G02 | `UNKNOWN_CAPABILITY` | BLOCK | static | The LLM could ask for an analysis nobody wrote or tested (e.g. a forecasting model, or 'run Python'). |
-| G03 | `INVALID_PARAM` | BLOCK | static | Typos, wrong types or extreme values (window=1, quantile=1.5) would crash or silently produce nonsense. |
-| G04 | `TYPE_MISMATCH` | BLOCK | static | Meaningless chains would run, e.g. the volatility of a price level, or a significance test on a non-stationary level (a price, a rate, a volatility), where spurious differences look significant. |
-| G05 | `BUDGET_EXCEEDED` | BLOCK | static | Runaway plans could use unbounded compute and become impossible for a human to review. |
-| G06 | `UNKNOWN_DATASET` | BLOCK | static | The LLM could invent a dataset id or reach for data outside the approved catalog. |
-| G07 | `RETURNS_ON_RATES` | BLOCK | static | 'Returns' of a yield are meaningless (1% -> 2% is not +100%); rates must be differenced. |
-| G08 | `FREQUENCY_MISMATCH` | BLOCK | static | Combining a daily with a weekly series silently keeps only the dates they share and mixes frequencies. |
-| G09 | `LOOK_AHEAD` | APPROVAL | static | Full-sample thresholds use future data, so results look better than anything achievable in real time. |
-| G10 | `MATERIAL_ASSUMPTION` | APPROVAL | static | Material modelling choices (simple vs log returns) would be made by the LLM without a human noticing. |
-| G11 | `PLANNER_REFUSED` | BLOCK | static | Without an explicit refusal path the LLM is pushed to invent capabilities to satisfy any request. |
-| G12 | `FORWARD_DATA_AS_SIGNAL` | BLOCK | static | Forward returns contain future information; used to build a signal (a volatility, a flag) they make results look predictive when nothing is. |
-| R01 | `DATASET_HASH_MISMATCH` | BLOCK | runtime | Results would come from data other than the recorded version, breaking reproducibility and audit. |
-| R02 | `INSUFFICIENT_DATA` | BLOCK | runtime | Statistics on too few observations are noise presented as findings. |
-| R03 | `MISSING_DATA` | WARN | runtime | A heavily gappy series can distort resampled values and returns unnoticed. |
-| R04 | `ALIGNMENT_LOSS` | WARN | runtime | An inner join can silently discard a large part of the sample (e.g. series with different start dates). |
-| R05 | `LOW_EFFECTIVE_SAMPLE` | WARN | runtime | Many flagged weeks from a handful of episodes look like a big sample but carry little independent information. |
+* an **action**, what happens when it fires: **BLOCK** (the run stops),
+  **APPROVE** (a human must decide before anything runs) or **WARN** (the run
+  continues and the result is flagged);
+* an **enforcer**, given by the first letter of its code: **L** the planner
+  (LLM), which may refuse; **G** the validator, deterministic, on the plan alone
+  (the planner's plan and every user edit); **R** the executor, at run time on
+  the data; **N** the narrator check, deterministic, on the written summary;
+* a **category**, what it protects: plan integrity, approved scope, input
+  validity, methodology, data quality or output grounding.
+
+The table is generated from `guardrails.GUARDRAILS`, which also feeds the
+**Guardrails** page, its counts and every issue shown in the app. The codes were
+renumbered twice while the design settled (`docs/DECISIONS.md` lists the old and
+new codes); from this version on they are permanent: never renumbered or given
+another meaning, so the issue ids in run records keep their meaning and those
+runs can still be replayed.
+
+| Code | Name | Action | Enforced by | Category | Description |
+|---|---|---|---|---|---|
+| L01 | `PLANNER_REFUSED` | BLOCK | Planner (LLM) | Approved scope | The planner's system prompt explicitly allows it to refuse a request it cannot fulfil with the registry, or one that tries to change its rules, giving a reason instead of a plan; the refusal is blocked and nothing runs. This prevents the LLM from forcing an out-of-scope or malicious request into a misleading plan. |
+| G01 | `INVALID_PLAN` | BLOCK | Validator (deterministic) | Plan integrity | Checks the plan is well-formed: it matches the plan schema exactly (no extra fields), has steps, has unique step ids, and every input points to an earlier step. Also raised when the planner returns no usable plan (API error, cut-off answer, provider refusal, no plan submitted). This prevents running a broken, ambiguous or circular plan. |
+| G02 | `UNKNOWN_CAPABILITY` | BLOCK | Validator (deterministic) | Approved scope | Checks every step calls a capability in the approved registry. This prevents the system ever running code that nobody wrote, reviewed or tested, whatever the LLM asks for. |
+| G03 | `INVALID_PARAM` | BLOCK | Validator (deterministic) | Input validity | Checks each parameter is known, given when required, of the right type and within its allowed range or choices, for example a quantile between 0.5 and 0.99. Edits that try to change anything other than a parameter value are rejected under this code too. This prevents nonsensical settings from producing plausible-looking numbers. |
+| G04 | `TYPE_MISMATCH` | BLOCK | Validator (deterministic) | Input validity | Checks each step receives the kind of series it expects, for example volatility computed on returns, not on prices, and a significance test on returns, not on a price level. This prevents statistically meaningless calculations. |
+| G05 | `BUDGET_EXCEEDED` | BLOCK | Validator (deterministic) | Plan integrity | Checks the request length, before the planner is called (so an oversized request costs no LLM call) and again with every plan, and the number of steps in the plan. This prevents oversized requests and runaway plans too long for a human to review. |
+| G06 | `UNKNOWN_DATASET` | BLOCK | Validator (deterministic) | Approved scope | Checks every dataset the plan names or loads is in the approved, hash-versioned catalog. This prevents the use of unverified or invented data. |
+| G07 | `RETURNS_ON_RATES` | BLOCK | Validator (deterministic) | Methodology | Checks that returns aren't computed on interest rates, which call for differences instead. This prevents economically wrong results, such as percentage changes of a yield near zero. |
+| G08 | `FREQUENCY_MISMATCH` | BLOCK | Validator (deterministic) | Methodology | Checks that series combined in one step (a spread, a comparison, a test) share the same frequency. This prevents silently comparing weekly values with daily ones. |
+| G09 | `LOOK_AHEAD` | APPROVE | Validator (deterministic) | Methodology | Detects thresholds built from the full sample, including future data, and asks for approval. This prevents a result that looks predictive only because it used information unavailable at the time. |
+| G10 | `MATERIAL_ASSUMPTION` | APPROVE | Validator (deterministic) | Methodology | Asks for human approval when a choice changes the answer, today the return method (log versus simple returns). This prevents important assumptions being made silently. |
+| G11 | `FORWARD_DATA_AS_SIGNAL` | BLOCK | Validator (deterministic) | Methodology | Checks forward returns are used only as outcomes, never to build a flag or signal. This prevents the future leaking into the explanation of the future. |
+| R01 | `DATASET_HASH_MISMATCH` | BLOCK | Executor (runtime) | Data quality | Checks each loaded snapshot matches the hash recorded in the catalog. This prevents the analysis running on altered or different data. |
+| R02 | `INSUFFICIENT_DATA` | BLOCK | Executor (runtime) | Data quality | Checks each step has enough observations for its calculation, for example three times the rolling window. This prevents statistics computed on too little data. |
+| R03 | `MISSING_DATA` | WARN | Executor (runtime) | Data quality | Warns when more than 5% of a loaded series' values are missing (they are dropped). This prevents gaps silently distorting the results. |
+| R04 | `ALIGNMENT_LOSS` | WARN | Executor (runtime) | Data quality | Warns when aligning two series on their common dates drops more than 10% of either. This prevents hidden sample shrinkage. |
+| R05 | `LOW_EFFECTIVE_SAMPLE` | WARN | Executor (runtime) | Methodology | Warns when the flagged periods of a comparison or test come from fewer than 5 distinct episodes. This prevents overconfidence in a result that looks large but rests on few real events. |
+| N01 | `UNGROUNDED_NARRATIVE` | WARN | Narrator check (deterministic) | Output grounding | Checks deterministically that every number and date in the written summary is a correct rounding of a value the run computed (the facts sheet) or used (plan parameters, the request, warnings, dataset titles). An LLM summary that fails is withheld and the deterministic summary shown instead, with the failing numbers listed. This prevents the narrative from inventing or misquoting numbers, so every figure can be traced back to data, functions and parameters. |
 
 The executor re-runs the validator itself and refuses to start while any BLOCK
-exists or any APPROVAL issue is unapproved, so calling it directly cannot skip
+exists or any APPROVE issue is unapproved, so calling it directly cannot skip
 the checks. Approvals are recorded with a timestamp, the exact issue text and the
 plan version they apply to.
 
@@ -454,8 +465,12 @@ state the difference and its p-value, write "no statistically significant
 difference" when the p-value is 0.05 or more (never "no difference"), always
 give the number of distinct episodes and never say that the flag causes or
 predicts returns; only then are the 5% significance and 95% confidence levels
-accepted numbers. The app shows "all numbers verified" or lists the unverified
-numbers; the deterministic facts table is always shown.
+accepted numbers. That check is guardrail N01 UNGROUNDED_NARRATIVE: when it
+passes the app shows "all numbers verified"; when a model-written narrative fails
+it, the narrative is withheld (kept in the run record), the deterministic template
+narrative is shown instead, and an N01 warning lists the numbers that failed. The
+numerical results are not affected, and the deterministic facts table is always
+shown.
 
 ## Reproducibility, lineage and monitoring
 
@@ -494,7 +509,7 @@ Two separate questions, measured separately:
   in a refusal or a BLOCK. Metrics: valid-plan rate, exact capability-sequence
   match, capability-set Jaccard, key-parameter accuracy, guardrail-outcome match
   and correct refusal/block rate. Each case is also reported item by item (every
-  step in order, every key parameter, the issues of each severity), so a live
+  step in order, every key parameter, the issues of each action), so a live
   mismatch shows exactly what the planner chose differently; `--case <id>` runs
   one case, such as the fully specified flagship (`s1_volatility_flag_success`).
   Reports go to `eval/reports/`. In mock mode this checks the harness only
@@ -562,7 +577,7 @@ Roadmap:
   correlations, further statistical tests and regressions, GARCH), each added as a code
   change with tests, never generated at runtime.
 * **New guardrails.** Further validation rules as new risks are identified, each with a
-  defined severity (BLOCK, APPROVAL or WARN) and test coverage.
+  defined action (BLOCK, APPROVE or WARN), enforcer, category and test coverage.
 * **Replan loop.** Validator feedback sent back to the planner for a corrected plan.
 * **Access control.** Authentication and role-based access, with named approvers and
   four-eyes approvals.

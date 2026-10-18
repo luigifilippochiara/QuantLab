@@ -1,20 +1,29 @@
 """Static guardrails (G codes): each triggers on a crafted plan and stays silent on a clean one.
 
 Also checks that the GUARDRAILS table (shown on the Guardrails page) lists
-exactly the implemented checks.
+exactly the implemented checks, that each code's prefix names who enforces it,
+that codes are never renumbered, and that the descriptions quote the executor's
+thresholds.
 """
 
 import ast
 import json
+import re
 from typing import Any
 
 import pytest
 
 from quantlab.config import PROJECT_ROOT
 from quantlab.data import Catalog
+from quantlab.executor import (
+    ALIGNMENT_LOSS_THRESHOLD,
+    MIN_FLAGGED_EPISODES,
+    MISSING_DATA_THRESHOLD,
+)
 from quantlab.guardrails import (
+    ENFORCERS,
     GUARDRAILS,
-    Severity,
+    Action,
     ValidationReport,
     check_schema,
     fill_defaults,
@@ -71,7 +80,7 @@ def test_g01_extra_fields_are_rejected() -> None:
     plan, issues = check_schema(raw)
     assert plan is None
     assert {i.code for i in issues} == {"G01"}
-    assert all(i.severity == Severity.BLOCK for i in issues)
+    assert all(i.action == Action.BLOCK for i in issues)
 
 
 def test_g01_wrong_structure_and_planner_failure() -> None:
@@ -209,8 +218,7 @@ def test_g05_too_many_steps(catalog: Catalog) -> None:
     assert "G05" not in validate(raw, catalog, max_steps=20).codes()
 
 
-def test_g05_too_many_datasets_and_long_request(catalog: Catalog) -> None:
-    assert "G05" in validate(SPREAD_PLAN, catalog, max_datasets=1).codes()
+def test_g05_long_request(catalog: Catalog) -> None:
     plan = Plan(plan_id="p", request="x" * 3000, **SPREAD_PLAN)
     assert "G05" in validate_plan(fill_defaults(plan), catalog).codes()
 
@@ -312,16 +320,16 @@ def test_g10_message_names_the_chosen_value(catalog: Catalog) -> None:
     assert "method='simple'" in issues[1].message  # forward_return applies G10 the same way
 
 
-# --- G11 PLANNER_REFUSED --------------------------------------------------------
+# --- L01 PLANNER_REFUSED --------------------------------------------------------
 
 
 @pytest.mark.parametrize("scenario_id", ["arima_forecast_block", "prompt_injection_block"])
-def test_g11_refusal(scenario_id: str, catalog: Catalog) -> None:
+def test_l01_refusal(scenario_id: str, catalog: Catalog) -> None:
     report = validate(raw_plan(scenario_id), catalog)
-    assert report.codes() == ["G11"] and report.is_blocked
+    assert report.codes() == ["L01"] and report.is_blocked
 
 
-# --- G12 FORWARD_DATA_AS_SIGNAL ---------------------------------------------------
+# --- G11 FORWARD_DATA_AS_SIGNAL ---------------------------------------------------
 
 
 @pytest.mark.parametrize(
@@ -337,7 +345,7 @@ def test_g11_refusal(scenario_id: str, catalog: Catalog) -> None:
         ("hac_mean_difference", {"outcome": "s3", "flags": "s6"}, {}),
     ],
 )
-def test_g12_forward_returns_are_only_an_outcome(
+def test_g11_forward_returns_are_only_an_outcome(
     capability: str, inputs: dict[str, str], params: dict[str, Any], catalog: Catalog
 ) -> None:
     raw = raw_plan(SUCCESS)
@@ -345,7 +353,7 @@ def test_g12_forward_returns_are_only_an_outcome(
                          "params": params})  # fmt: skip
     report = validate(raw, catalog)
     forward_input = next(name for name, ref in inputs.items() if ref == "s6")
-    assert [i.issue_id for i in report.blocks] == [f"G12:s9:{forward_input}"]
+    assert [i.issue_id for i in report.blocks] == [f"G11:s9:{forward_input}"]
     assert "can only be used as an outcome, never to build a signal" in report.blocks[0].message
     assert "G04" not in report.codes()  # the specific guardrail replaces the generic one
 
@@ -396,17 +404,91 @@ def make_issue_codes() -> set[tuple[str, str]]:
     return found
 
 
+# The module that raises the issues of each code prefix. The validator raises its
+# G codes and turns the planner's refusal (L01) into a BLOCK, so a refused plan can
+# never run; the executor raises the R codes and the narrator check the N codes.
+RAISED_IN = {"L": "guardrails.py", "G": "guardrails.py", "R": "executor.py", "N": "narrator.py"}
+
+
 def test_guardrail_table_matches_the_implemented_checks() -> None:
     raised = make_issue_codes()
-    # Static checks live in guardrails.py, runtime checks in executor.py, nowhere else.
-    assert {file for file, _ in raised} == {"guardrails.py", "executor.py"}
-    static = {code for file, code in raised if file == "guardrails.py"}
-    runtime = {code for file, code in raised if file == "executor.py"}
-    assert static == {c for c, g in GUARDRAILS.items() if g.stage == "static"}
-    assert runtime == {c for c, g in GUARDRAILS.items() if g.stage == "runtime"}
-    # Static guardrails are the plan-level G codes, runtime ones the R codes.
-    assert all(code.startswith("G") for code in static)
-    assert all(code.startswith("R") for code in runtime)
+    # Every code in the table is raised somewhere, and nothing raised is undescribed.
+    assert {code for _, code in raised} == set(GUARDRAILS)
+    for file, code in raised:
+        assert file == RAISED_IN[code[0]], f"{code} is raised in {file}"
+
+
+def test_each_code_prefix_names_who_enforces_the_guardrail() -> None:
+    assert ENFORCERS == {
+        "L": "Planner (LLM)",
+        "G": "Validator (deterministic)",
+        "R": "Executor (runtime)",
+        "N": "Narrator check (deterministic)",
+    }
+    enforced_by = {code: g.enforced_by for code, g in GUARDRAILS.items()}
+    assert enforced_by == {
+        "L01": "Planner (LLM)",
+        **{f"G{i:02d}": "Validator (deterministic)" for i in range(1, 12)},
+        **{f"R{i:02d}": "Executor (runtime)" for i in range(1, 6)},
+        "N01": "Narrator check (deterministic)",
+    }
+    for code, guardrail in GUARDRAILS.items():
+        assert guardrail.code == code and re.fullmatch(r"[LGRN]\d{2}", code)
+    # An issue reads its enforcer and category from the table, by code.
+    issue = planner_failure_issue("timeout")
+    assert (issue.enforced_by, issue.category) == ("Validator (deterministic)", "Plan integrity")
+
+
+# Every guardrail code assigned since the guardrail restructure (docs/DECISIONS.md
+# lists the two earlier renumberings). From then on codes are permanent: a code is
+# never renumbered or given another meaning. Add a new guardrail's code here; when
+# a guardrail is retired, move its entry to RETIRED_GUARDRAIL_CODES.
+ASSIGNED_GUARDRAIL_CODES = {
+    "L01": "PLANNER_REFUSED",
+    "G01": "INVALID_PLAN",
+    "G02": "UNKNOWN_CAPABILITY",
+    "G03": "INVALID_PARAM",
+    "G04": "TYPE_MISMATCH",
+    "G05": "BUDGET_EXCEEDED",
+    "G06": "UNKNOWN_DATASET",
+    "G07": "RETURNS_ON_RATES",
+    "G08": "FREQUENCY_MISMATCH",
+    "G09": "LOOK_AHEAD",
+    "G10": "MATERIAL_ASSUMPTION",
+    "G11": "FORWARD_DATA_AS_SIGNAL",
+    "R01": "DATASET_HASH_MISMATCH",
+    "R02": "INSUFFICIENT_DATA",
+    "R03": "MISSING_DATA",
+    "R04": "ALIGNMENT_LOSS",
+    "R05": "LOW_EFFECTIVE_SAMPLE",
+    "N01": "UNGROUNDED_NARRATIVE",
+}
+RETIRED_GUARDRAIL_CODES: dict[str, str] = {}
+
+
+def test_guardrail_codes_are_never_renumbered_or_reused() -> None:
+    current = {code: g.name for code, g in GUARDRAILS.items()}
+    for code, name in ASSIGNED_GUARDRAIL_CODES.items():
+        assert current.get(code) == name, f"{code} was assigned to {name}"
+    for code, name in RETIRED_GUARDRAIL_CODES.items():
+        assert code not in current, f"{code} belonged to the retired {name}"
+    unrecorded = sorted(set(current) - set(ASSIGNED_GUARDRAIL_CODES))
+    assert unrecorded == [], f"record new codes in ASSIGNED_GUARDRAIL_CODES: {unrecorded}"
+
+
+def test_descriptions_quote_the_runtime_thresholds() -> None:
+    # The descriptions are plain text shown in the UI; they must state the
+    # thresholds the executor actually applies.
+    assert f"more than {MISSING_DATA_THRESHOLD:.0%}" in GUARDRAILS["R03"].description
+    assert f"more than {ALIGNMENT_LOSS_THRESHOLD:.0%}" in GUARDRAILS["R04"].description
+    assert f"fewer than {MIN_FLAGGED_EPISODES} " in GUARDRAILS["R05"].description
+
+
+def test_every_guardrail_has_an_action_a_category_and_a_description() -> None:
+    for guardrail in GUARDRAILS.values():
+        assert guardrail.action in Action and guardrail.category.value
+        # Each description says what it checks and what that prevents.
+        assert "prevent" in guardrail.description, guardrail.code
 
 
 def test_issues_are_only_built_through_make_issue() -> None:

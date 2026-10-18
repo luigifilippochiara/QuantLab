@@ -9,7 +9,7 @@ from quantlab.mock_scenarios import SCENARIOS_BY_ID
 from quantlab.monitoring import kpis, read_events
 
 from conftest import SCENARIO_1_APPROVALS
-from fakes import FakeAnthropicClient
+from fakes import FakeAnthropicClient, text_response
 
 SUCCESS = SCENARIOS_BY_ID["volatility_flag_success"]  # scenario 1
 
@@ -46,6 +46,29 @@ def test_end_to_end_scenario_1_with_manifest_and_replay(settings: Settings) -> N
 
     report = replay(session.run_id, settings)
     assert report.all_match, report.message
+
+
+def test_ungrounded_llm_narrative_is_withheld_and_recorded_as_n01(settings: Settings) -> None:
+    session = start(settings)
+    session.approve(SCENARIO_1_APPROVALS)
+    session.execute()
+    # Only the narrative comes from a (fake) LLM, and it invents a number.
+    invented = "Volatility peaked at 123.456 during the flagged weeks."
+    session.mode, session.client = "live", FakeAnthropicClient(text_response(invented))
+    narrative = session.narrate()
+    session.save_record()
+
+    # The numerical results stand: the run completes; the narrative shown is the template.
+    assert session.status == "completed" and narrative.source == "template"
+    record = load_run(session.run_id, settings.runs_dir)
+    assert record.status == "completed"
+    assert [(w.issue_id, w.action) for w in record.warnings] == [("N01:plan:llm", "WARN")]
+    assert record.narrative["withheld"]["text"] == invented
+    assert record.narrative["withheld"]["grounding"]["ungrounded"] == ["123.456"]
+    events = read_events(settings.events_path)
+    fired = [e["details"] for e in events if e["event_type"] == "guardrail_triggered"]
+    assert [(d["code"], d["action"]) for d in fired] == [("N01", "WARN")]
+    assert kpis(events)["n_completed"] == 1
 
 
 def test_param_edit_revalidates_and_clears_approvals(settings: Settings) -> None:
@@ -88,7 +111,7 @@ def test_blocked_scenario_is_recorded(settings: Settings) -> None:
     session = start(settings, "arima_forecast_block")
     assert session.status == "blocked"
     record = load_run(session.run_id, settings.runs_dir)
-    assert record.status == "blocked" and "G11" in record.error
+    assert record.status == "blocked" and "L01" in record.error
     events = read_events(settings.events_path)
     assert events[-1]["event_type"] == "run_failed"
     assert events[-1]["details"]["status"] == "blocked"

@@ -1,13 +1,15 @@
-"""Static plan validation: the static guardrails (G codes), checked before anything runs.
+"""Guardrails: the table of every guardrail, and the validator's static checks.
 
 Role in the architecture: the validator is the "system disposes" half of
 "the LLM proposes, the system disposes". It takes a plan (inert data) and,
-without touching any data values, decides whether it may run:
+without touching any data values, decides whether it may run. Every issue a
+guardrail raises says what happens next, its action:
 
-- BLOCK: the plan cannot run (unknown capability, bad parameter, returns of a yield...).
-- APPROVAL: the plan can run only after a human explicitly approves an issue
+- BLOCK: the run stops (unknown capability, bad parameter, returns of a yield...).
+- APPROVE: a human must decide; the plan runs only after they approve the issue
   (look-ahead thresholds, material modelling assumptions).
-- WARN: the plan can run; the warning is shown and passed to the narrator.
+- WARN: the run continues and the result is flagged: the warning is shown, passed
+  to the narrator and kept in the run record.
 
 It runs a metadata "dry run": walking the steps in order and propagating each
 output's data type, kind and frequency using only the registry and the catalog.
@@ -19,10 +21,15 @@ The same `validate_plan` function is used for the planner's plan, for every
 user edit, by the executor (defence in depth) and by replay. `check_edits`
 locks the plan's structure: users may change parameter values only.
 
-The runtime guardrails (R codes, which need data) live in executor.py, but all
-guardrail codes are described in the single GUARDRAILS table below. Codes are
-permanent from this version on: a code is never renumbered or given a different
-meaning, so the issue ids recorded in run records keep their meaning.
+Every guardrail, whoever enforces it, is described in the single GUARDRAILS
+table below. The first letter of its code says who enforces it (ENFORCERS):
+    L  the planner (LLM): it refuses, and the validator turns the refusal into a BLOCK
+    G  the validator (deterministic): this module
+    R  the executor, at run time on the data: executor.py
+    N  the narrator check (deterministic): narrator.py
+The codes were renumbered twice while the design settled (docs/DECISIONS.md).
+From this version on they are permanent: a code is never renumbered or given a
+different meaning, so the issue ids recorded in run records keep their meaning.
 """
 
 from dataclasses import asdict, dataclass, field
@@ -38,12 +45,33 @@ from quantlab.registry import FROM_CATALOG, REGISTRY, SAME_AS_INPUT, CapabilityS
 from quantlab.types import DataType, Frequency, SeriesKind
 
 
-class Severity(StrEnum):
-    """How serious an issue is."""
+class Action(StrEnum):
+    """What happens when a guardrail fires."""
 
-    BLOCK = "BLOCK"  # the plan cannot run
-    APPROVAL = "APPROVAL"  # runs only after explicit human approval
-    WARN = "WARN"  # runs; shown to the user and the narrator
+    BLOCK = "BLOCK"  # the run stops
+    APPROVE = "APPROVE"  # a human must decide: the plan runs only after explicit approval
+    WARN = "WARN"  # the run continues; the result is flagged
+
+
+class Category(StrEnum):
+    """What a guardrail protects."""
+
+    PLAN_INTEGRITY = "Plan integrity"  # the plan is well-formed and small enough to review
+    APPROVED_SCOPE = "Approved scope"  # only registered capabilities and catalog data
+    INPUT_VALIDITY = "Input validity"  # parameters and input kinds make sense
+    METHODOLOGY = "Methodology"  # the analysis is statistically and economically sound
+    DATA_QUALITY = "Data quality"  # the data is the recorded version, and there is enough
+    OUTPUT_GROUNDING = "Output grounding"  # the narrative quotes only values of the run
+
+
+# Who enforces a guardrail, by the first letter of its code. This is the only
+# place it is written down, so a code and its label can never disagree.
+ENFORCERS = {
+    "L": "Planner (LLM)",
+    "G": "Validator (deterministic)",
+    "R": "Executor (runtime)",
+    "N": "Narrator check (deterministic)",
+}
 
 
 @dataclass(frozen=True)
@@ -51,120 +79,155 @@ class Guardrail:
     """Description of one guardrail (used for issues, the README and the UI).
 
     Fields:
-        code: e.g. "G07".
+        code: e.g. "G07"; its first letter says who enforces it (see ENFORCERS).
         name: e.g. "RETURNS_ON_RATES".
-        severity: severity of the issues it raises.
-        stage: "static" (before execution, no data) or "runtime" (during execution).
-        risk: what goes wrong without it.
+        action: what happens when it fires: BLOCK, APPROVE or WARN.
+        category: what it protects.
+        description: what it checks, and what that prevents.
     """
 
     code: str
     name: str
-    severity: Severity
-    stage: str
-    risk: str
+    action: Action
+    category: Category
+    description: str
+
+    @property
+    def enforced_by(self) -> str:
+        """Who enforces it, e.g. "Validator (deterministic)" for a G code."""
+        return ENFORCERS[self.code[0]]
 
 
-BLOCK, APPROVAL, WARN = Severity.BLOCK, Severity.APPROVAL, Severity.WARN
+BLOCK, APPROVE, WARN = Action.BLOCK, Action.APPROVE, Action.WARN
 
 # Plain-English names used in messages, and an order (higher = less frequent).
 FREQUENCY_NAMES = {Frequency.D: "daily", Frequency.W: "weekly", Frequency.M: "monthly"}
 PERIOD_NAMES = {Frequency.D: "day", Frequency.W: "week", Frequency.M: "month"}
 FREQUENCY_RANK = {Frequency.D: 0, Frequency.W: 1, Frequency.M: 2}
 
+# Every guardrail, in pipeline order: planner, validator, executor, narrator check.
+# The descriptions are shown as they are on the Guardrails page and in the README.
 GUARDRAILS: dict[str, Guardrail] = {
     g.code: g
     for g in [
         Guardrail(
-            "G01", "INVALID_PLAN", BLOCK, "static",
-            "Malformed, partial or empty planner output would have to be guessed at, "
-            "extra fields (e.g. 'code') could slip through, and steps could read missing "
-            "outputs or outputs of later steps, leaving the order of computation undefined.",
+            "L01", "PLANNER_REFUSED", BLOCK, Category.APPROVED_SCOPE,
+            "The planner's system prompt explicitly allows it to refuse a request it cannot "
+            "fulfil with the registry, or one that tries to change its rules, giving a reason "
+            "instead of a plan; the refusal is blocked and nothing runs. This prevents the LLM "
+            "from forcing an out-of-scope or malicious request into a misleading plan.",
         ),
         Guardrail(
-            "G02", "UNKNOWN_CAPABILITY", BLOCK, "static",
-            "The LLM could ask for an analysis nobody wrote or tested (e.g. a forecasting "
-            "model, or 'run Python').",
+            "G01", "INVALID_PLAN", BLOCK, Category.PLAN_INTEGRITY,
+            "Checks the plan is well-formed: it matches the plan schema exactly (no extra "
+            "fields), has steps, has unique step ids, and every input points to an earlier "
+            "step. Also raised when the planner returns no usable plan (API error, cut-off "
+            "answer, provider refusal, no plan submitted). This prevents running a broken, "
+            "ambiguous or circular plan.",
         ),
         Guardrail(
-            "G03", "INVALID_PARAM", BLOCK, "static",
-            "Typos, wrong types or extreme values (window=1, quantile=1.5) would crash "
-            "or silently produce nonsense.",
+            "G02", "UNKNOWN_CAPABILITY", BLOCK, Category.APPROVED_SCOPE,
+            "Checks every step calls a capability in the approved registry. This prevents the "
+            "system ever running code that nobody wrote, reviewed or tested, whatever the LLM "
+            "asks for.",
         ),
         Guardrail(
-            "G04", "TYPE_MISMATCH", BLOCK, "static",
-            "Meaningless chains would run, e.g. the volatility of a price level, or a "
-            "significance test on a non-stationary level (a price, a rate, a volatility), "
-            "where spurious differences look significant.",
+            "G03", "INVALID_PARAM", BLOCK, Category.INPUT_VALIDITY,
+            "Checks each parameter is known, given when required, of the right type and "
+            "within its allowed range or choices, for example a quantile between 0.5 and "
+            "0.99. Edits that try to change anything other than a parameter value are "
+            "rejected under this code too. This prevents nonsensical settings from producing "
+            "plausible-looking numbers.",
         ),
         Guardrail(
-            "G05", "BUDGET_EXCEEDED", BLOCK, "static",
-            "Runaway plans could use unbounded compute and become impossible for a "
+            "G04", "TYPE_MISMATCH", BLOCK, Category.INPUT_VALIDITY,
+            "Checks each step receives the kind of series it expects, for example volatility "
+            "computed on returns, not on prices, and a significance test on returns, not on "
+            "a price level. This prevents statistically meaningless calculations.",
+        ),
+        Guardrail(
+            "G05", "BUDGET_EXCEEDED", BLOCK, Category.PLAN_INTEGRITY,
+            "Checks the request length, before the planner is called (so an oversized "
+            "request costs no LLM call) and again with every plan, and the number of steps "
+            "in the plan. This prevents oversized requests and runaway plans too long for a "
             "human to review.",
         ),
         Guardrail(
-            "G06", "UNKNOWN_DATASET", BLOCK, "static",
-            "The LLM could invent a dataset id or reach for data outside the approved catalog.",
+            "G06", "UNKNOWN_DATASET", BLOCK, Category.APPROVED_SCOPE,
+            "Checks every dataset the plan names or loads is in the approved, hash-versioned "
+            "catalog. This prevents the use of unverified or invented data.",
         ),
         Guardrail(
-            "G07", "RETURNS_ON_RATES", BLOCK, "static",
-            "'Returns' of a yield are meaningless (1% -> 2% is not +100%); rates must "
-            "be differenced.",
+            "G07", "RETURNS_ON_RATES", BLOCK, Category.METHODOLOGY,
+            "Checks that returns aren't computed on interest rates, which call for "
+            "differences instead. This prevents economically wrong results, such as "
+            "percentage changes of a yield near zero.",
         ),
         Guardrail(
-            "G08", "FREQUENCY_MISMATCH", BLOCK, "static",
-            "Combining a daily with a weekly series silently keeps only the dates they "
-            "share and mixes frequencies.",
+            "G08", "FREQUENCY_MISMATCH", BLOCK, Category.METHODOLOGY,
+            "Checks that series combined in one step (a spread, a comparison, a test) share "
+            "the same frequency. This prevents silently comparing weekly values with daily "
+            "ones.",
         ),
         Guardrail(
-            "G09", "LOOK_AHEAD", APPROVAL, "static",
-            "Full-sample thresholds use future data, so results look better than "
-            "anything achievable in real time.",
+            "G09", "LOOK_AHEAD", APPROVE, Category.METHODOLOGY,
+            "Detects thresholds built from the full sample, including future data, and asks "
+            "for approval. This prevents a result that looks predictive only because it used "
+            "information unavailable at the time.",
         ),
         Guardrail(
-            "G10", "MATERIAL_ASSUMPTION", APPROVAL, "static",
-            "Material modelling choices (simple vs log returns) would be made by the "
-            "LLM without a human noticing.",
+            "G10", "MATERIAL_ASSUMPTION", APPROVE, Category.METHODOLOGY,
+            "Asks for human approval when a choice changes the answer, today the return "
+            "method (log versus simple returns). This prevents important assumptions being "
+            "made silently.",
         ),
         Guardrail(
-            "G11", "PLANNER_REFUSED", BLOCK, "static",
-            "Without an explicit refusal path the LLM is pushed to invent capabilities "
-            "to satisfy any request.",
+            "G11", "FORWARD_DATA_AS_SIGNAL", BLOCK, Category.METHODOLOGY,
+            "Checks forward returns are used only as outcomes, never to build a flag or "
+            "signal. This prevents the future leaking into the explanation of the future.",
         ),
         Guardrail(
-            "G12", "FORWARD_DATA_AS_SIGNAL", BLOCK, "static",
-            "Forward returns contain future information; used to build a signal (a "
-            "volatility, a flag) they make results look predictive when nothing is.",
+            "R01", "DATASET_HASH_MISMATCH", BLOCK, Category.DATA_QUALITY,
+            "Checks each loaded snapshot matches the hash recorded in the catalog. This "
+            "prevents the analysis running on altered or different data.",
         ),
         Guardrail(
-            "R01", "DATASET_HASH_MISMATCH", BLOCK, "runtime",
-            "Results would come from data other than the recorded version, breaking "
-            "reproducibility and audit.",
+            "R02", "INSUFFICIENT_DATA", BLOCK, Category.DATA_QUALITY,
+            "Checks each step has enough observations for its calculation, for example "
+            "three times the rolling window. This prevents statistics computed on too "
+            "little data.",
         ),
         Guardrail(
-            "R02", "INSUFFICIENT_DATA", BLOCK, "runtime",
-            "Statistics on too few observations are noise presented as findings.",
+            "R03", "MISSING_DATA", WARN, Category.DATA_QUALITY,
+            "Warns when more than 5% of a loaded series' values are missing (they are "
+            "dropped). This prevents gaps silently distorting the results.",
         ),
         Guardrail(
-            "R03", "MISSING_DATA", WARN, "runtime",
-            "A heavily gappy series can distort resampled values and returns unnoticed.",
+            "R04", "ALIGNMENT_LOSS", WARN, Category.DATA_QUALITY,
+            "Warns when aligning two series on their common dates drops more than 10% of "
+            "either. This prevents hidden sample shrinkage.",
         ),
         Guardrail(
-            "R04", "ALIGNMENT_LOSS", WARN, "runtime",
-            "An inner join can silently discard a large part of the sample (e.g. "
-            "series with different start dates).",
+            "R05", "LOW_EFFECTIVE_SAMPLE", WARN, Category.METHODOLOGY,
+            "Warns when the flagged periods of a comparison or test come from fewer than 5 "
+            "distinct episodes. This prevents overconfidence in a result that looks large "
+            "but rests on few real events.",
         ),
         Guardrail(
-            "R05", "LOW_EFFECTIVE_SAMPLE", WARN, "runtime",
-            "Many flagged weeks from a handful of episodes look like a big sample but "
-            "carry little independent information.",
+            "N01", "UNGROUNDED_NARRATIVE", WARN, Category.OUTPUT_GROUNDING,
+            "Checks deterministically that every number and date in the written summary is "
+            "a correct rounding of a value the run computed (the facts sheet) or used (plan "
+            "parameters, the request, warnings, dataset titles). An LLM summary that fails "
+            "is withheld and the deterministic summary shown instead, with the failing "
+            "numbers listed. This prevents the narrative from inventing or misquoting "
+            "numbers, so every figure can be traced back to data, functions and parameters.",
         ),
     ]
 }  # fmt: skip
 
 # The input that holds the OUTCOME in the capabilities that compare an outcome
 # between flagged and normal periods. It is the only place forward returns may
-# go (G12), and where R05 counts the flagged episodes.
+# go (G11), and where R05 counts the flagged episodes.
 OUTCOME_INPUTS = {"compare_groups": "values", "hac_mean_difference": "outcome"}
 
 
@@ -174,20 +237,33 @@ class Issue(BaseModel):
     Fields:
         code: guardrail code, e.g. "G07".
         name: guardrail name, e.g. "RETURNS_ON_RATES".
-        severity: BLOCK, APPROVAL or WARN.
+        action: BLOCK, APPROVE or WARN.
         step_id: the step concerned (None for plan-level issues).
         message: what is wrong.
         suggestion: how to fix it.
         issue_id: stable id used to record approvals, e.g. "G10:s2:return_method".
+
+    Who enforced it and what it protects are not stored: the enforced_by and
+    category properties read them from the GUARDRAILS table by code.
     """
 
     code: str
     name: str
-    severity: Severity
+    action: Action
     step_id: str | None
     message: str
     suggestion: str | None = None
     issue_id: str
+
+    @property
+    def enforced_by(self) -> str:
+        """Who enforced it, e.g. "Executor (runtime)" (from the GUARDRAILS table)."""
+        return GUARDRAILS[self.code].enforced_by
+
+    @property
+    def category(self) -> Category:
+        """What it protects, e.g. "Methodology" (from the GUARDRAILS table)."""
+        return GUARDRAILS[self.code].category
 
 
 def make_issue(
@@ -197,7 +273,7 @@ def make_issue(
     suggestion: str | None = None,
     key: str | None = None,
 ) -> Issue:
-    """Create an Issue, taking its name and severity from the GUARDRAILS table.
+    """Create an Issue, taking its name and action from the GUARDRAILS table.
 
     Args:
         code: guardrail code.
@@ -215,7 +291,7 @@ def make_issue(
     return Issue(
         code=code,
         name=guardrail.name,
-        severity=guardrail.severity,
+        action=guardrail.action,
         step_id=step_id,
         message=message,
         suggestion=suggestion,
@@ -237,7 +313,7 @@ class ValidationReport(BaseModel):
     @property
     def blocks(self) -> list[Issue]:
         """Issues that stop the plan from running."""
-        return [i for i in self.issues if i.severity == Severity.BLOCK]
+        return [i for i in self.issues if i.action == Action.BLOCK]
 
     @property
     def is_blocked(self) -> bool:
@@ -247,12 +323,12 @@ class ValidationReport(BaseModel):
     @property
     def approvals_required(self) -> list[Issue]:
         """Issues that need explicit user approval before execution."""
-        return [i for i in self.issues if i.severity == Severity.APPROVAL]
+        return [i for i in self.issues if i.action == Action.APPROVE]
 
     @property
     def warnings(self) -> list[Issue]:
         """Non-blocking warnings."""
-        return [i for i in self.issues if i.severity == Severity.WARN]
+        return [i for i in self.issues if i.action == Action.WARN]
 
     def codes(self) -> list[str]:
         """Sorted, de-duplicated issue codes, e.g. ["G02", "G07"]."""
@@ -433,16 +509,19 @@ def planner_failure_issue(error: str) -> Issue:
 
 
 def check_planner_refused(plan: Plan) -> list[Issue]:
-    """G11 PLANNER_REFUSED: the planner declared it cannot fulfil the request.
+    """L01 PLANNER_REFUSED: the planner declared it cannot fulfil the request.
 
-    Without an explicit refusal path, the LLM is pushed to invent capabilities
-    (or misuse existing ones) to satisfy every request.
+    The decision is the planner's (the LLM, or the mock planner for a request it
+    has no canned plan for); this function turns it into a BLOCK, so a refused
+    plan can never run, not even when it reaches the executor or replay. Without
+    an explicit refusal path, the LLM is pushed to invent capabilities (or misuse
+    existing ones) to satisfy every request.
     """
     if not plan.cannot_fulfill:
         return []
     return [
         make_issue(
-            "G11",
+            "L01",
             None,
             f"The planner declined the request: {plan.refusal_reason or 'no reason given'}",
             "Rephrase using the approved capabilities (see the Capability registry page).",
@@ -451,10 +530,12 @@ def check_planner_refused(plan: Plan) -> list[Issue]:
 
 
 def check_request_length(request: str, max_request_chars: int) -> list[Issue]:
-    """G05 BUDGET_EXCEEDED (request size): refuse overly long requests before planning.
+    """G05 BUDGET_EXCEEDED (request size): refuse overly long requests.
 
-    Without it, a huge pasted request could blow up prompt size and cost, and
-    gives more room for instructions hidden inside it.
+    The engine calls it before planning, so an oversized request costs no LLM
+    call, and validate_plan calls it again on every plan. Without it, a huge
+    pasted request could blow up prompt size and cost, and gives more room for
+    instructions hidden inside it.
     """
     if len(request) <= max_request_chars:
         return []
@@ -469,40 +550,24 @@ def check_request_length(request: str, max_request_chars: int) -> list[Issue]:
     ]
 
 
-def check_budget(plan: Plan, max_steps: int, max_datasets: int) -> list[Issue]:
-    """G05 BUDGET_EXCEEDED: too many steps or too many datasets in one plan.
+def check_budget(plan: Plan, max_steps: int) -> list[Issue]:
+    """G05 BUDGET_EXCEEDED (plan size): too many steps in one plan.
 
     Without it, a runaway plan could consume unbounded compute and become too
-    long for a human to review before approving it.
+    long for a human to review before approving it. Every dataset is loaded by
+    a step, so the step limit also bounds how much data a plan reads.
     """
-    issues = []
-    if len(plan.steps) > max_steps:
-        issues.append(
-            make_issue(
-                "G05",
-                None,
-                f"The plan has {len(plan.steps)} steps; the limit is {max_steps}.",
-                "Split the analysis into smaller requests.",
-                key="steps",
-            )
+    if len(plan.steps) <= max_steps:
+        return []
+    return [
+        make_issue(
+            "G05",
+            None,
+            f"The plan has {len(plan.steps)} steps; the limit is {max_steps}.",
+            "Split the analysis into smaller requests.",
+            key="steps",
         )
-    loaded = {
-        step.params.get("dataset_id")
-        for step in plan.steps
-        if step.capability == "load_series" and isinstance(step.params.get("dataset_id"), str)
-    }
-    datasets = set(plan.dataset_ids) | loaded
-    if len(datasets) > max_datasets:
-        issues.append(
-            make_issue(
-                "G05",
-                None,
-                f"The plan uses {len(datasets)} datasets; the limit is {max_datasets}.",
-                "Use fewer datasets per request.",
-                key="datasets",
-            )
-        )
-    return issues
+    ]
 
 
 def check_unknown_datasets(plan: Plan, catalog: Catalog) -> list[Issue]:
@@ -707,7 +772,7 @@ def check_input_types(
             continue  # missing or broken reference: already reported by G01/G02
         is_outcome = OUTCOME_INPUTS.get(spec.name) == spec_input.name
         if meta.kind == SeriesKind.FORWARD_RETURNS and not is_outcome:
-            continue  # reported by the more specific G12 FORWARD_DATA_AS_SIGNAL
+            continue  # reported by the more specific G11 FORWARD_DATA_AS_SIGNAL
         if meta.data_type not in spec_input.data_types:
             expected = [t.value for t in spec_input.data_types]
             issues.append(
@@ -839,7 +904,7 @@ def check_look_ahead(
 def check_forward_data_as_signal(
     step: Step, spec: CapabilitySpec, input_metas: dict[str, StaticMeta | None]
 ) -> list[Issue]:
-    """G12 FORWARD_DATA_AS_SIGNAL: forward returns used anywhere but as an outcome.
+    """G11 FORWARD_DATA_AS_SIGNAL: forward returns used anywhere but as an outcome.
 
     Without it, a forward return (the return from t to t+1, stamped at t) could
     feed a volatility, a flag or another transformation. Anything built from it
@@ -855,7 +920,7 @@ def check_forward_data_as_signal(
             continue
         issues.append(
             make_issue(
-                "G12",
+                "G11",
                 step.id,
                 f"Input '{name}' of {spec.name} is a forward return: forward returns contain "
                 "future information and can only be used as an outcome, never to build a "
@@ -1013,16 +1078,14 @@ def validate_plan(
     catalog: Catalog,
     *,
     max_steps: int = 15,
-    max_datasets: int = 5,
     max_request_chars: int = 2000,
 ) -> ValidationReport:
-    """Run every static guardrail on a plan.
+    """Run every validator guardrail (G codes, and the L01 refusal block) on a plan.
 
     Args:
         plan: the plan to check (defaults may or may not be filled in).
         catalog: the dataset catalog.
         max_steps: budget for G05.
-        max_datasets: budget for G05.
         max_request_chars: budget for G05.
 
     Returns:
@@ -1034,7 +1097,7 @@ def validate_plan(
 
     issues += check_not_empty(plan)
     issues += check_request_length(plan.request, max_request_chars)
-    issues += check_budget(plan, max_steps, max_datasets)
+    issues += check_budget(plan, max_steps)
     issues += check_unknown_datasets(plan, catalog)
     issues += check_duplicate_step_ids(plan)
 

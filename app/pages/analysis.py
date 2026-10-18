@@ -11,7 +11,7 @@ import streamlit as st
 
 from quantlab.config import LLM_MODES
 from quantlab.engine import Session
-from quantlab.guardrails import Severity
+from quantlab.guardrails import Action
 from quantlab.lineage import replay
 from quantlab.mock_scenarios import SCENARIOS
 from quantlab.registry import REGISTRY
@@ -132,10 +132,10 @@ else:
         spec = REGISTRY.get(step.capability)
         # BLOCK and WARN findings badge and open a step; approval findings do not
         # change how a step is shown (they are handled in the Validation section).
-        severities = {
-            issue.severity
+        actions = {
+            issue.action
             for issue in issues
-            if issue.step_id == step.id and issue.severity != Severity.APPROVAL
+            if issue.step_id == step.id and issue.action != Action.APPROVE
         }
         step_edited = any(
             not ui.same_value(value, proposal.get(step.id, {}).get(name))
@@ -148,8 +148,8 @@ else:
         # Keyed by plan version, so after an edit is applied every step starts again
         # from its default and a step with a new finding opens.
         with st.expander(
-            ui.step_header(position, step, summary, severities, step_edited),
-            expanded=bool(severities),
+            ui.step_header(position, step, summary, actions, step_edited),
+            expanded=bool(actions),
             key=f"step-{session.run_id}-{version}-{step.id}",
         ):
             inputs = ", ".join(f"{name} ← {ref}" for name, ref in step.inputs.items())
@@ -237,12 +237,12 @@ report = session.report
 ticked: list[str] = []
 if report is not None:
     if not report.issues:
-        st.success("No issues: the plan passed every static guardrail.", icon=":material/check:")
-    for severity in (Severity.BLOCK, Severity.APPROVAL, Severity.WARN):
-        for issue in [i for i in report.issues if i.severity == severity]:
+        st.success("No issues: the plan passed every validator guardrail.", icon=":material/check:")
+    for action in (Action.BLOCK, Action.APPROVE, Action.WARN):
+        for issue in [i for i in report.issues if i.action == action]:
             with st.container(border=True):
                 ui.render_issue(issue, ui.step_titles(plan) if plan else None)
-                if severity == Severity.APPROVAL:
+                if action == Action.APPROVE:
                     # Keyed by plan version: an edited plan starts with every box unticked.
                     is_ticked = st.checkbox(
                         "I approve this",
@@ -344,24 +344,29 @@ if executed:
 narrative = session.narrative
 if narrative is not None:
     st.subheader("Narrative")
+    # N01 UNGROUNDED_NARRATIVE: an LLM narrative quoting a number the run did not
+    # produce is withheld; the issue lists the numbers, the checked template is shown.
+    for issue in narrative.issues:
+        with st.container(border=True):
+            ui.render_issue(issue)
     grounding = narrative.grounding
-    if grounding.grounded:
+    if grounding.grounded and not narrative.issues:  # after an N01, the issue says it all
         st.success(
             f"All {grounding.numbers_checked} numbers verified against computed results.",
             icon=":material/verified:",
-        )
-    else:
-        st.error(
-            "Ungrounded numbers: " + ", ".join(grounding.ungrounded) + ". Rely on the facts "
-            "table below, which comes straight from the executor.",
-            title="Numbers that could not be verified",
-            icon=":material/error:",
         )
     st.markdown(ui.escape_md(narrative.text))
     source = f"LLM ({narrative.model})" if narrative.source == "llm" else "deterministic template"
     st.caption(
         f"Written by: {source}" + (f" · LLM error: {narrative.error}" if narrative.error else "")
     )
+    if narrative.withheld is not None:
+        with st.expander("Withheld LLM narrative (not verified: failed N01)", expanded=False):
+            st.caption(
+                "Numbers that match no value of the run: "
+                + ", ".join(narrative.withheld.grounding.ungrounded)
+            )
+            st.markdown(ui.escape_md(narrative.withheld.text))
     with st.expander("Facts sheet (the source of truth for every number)", expanded=False):
         st.dataframe(
             pd.DataFrame(

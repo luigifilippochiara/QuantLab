@@ -69,7 +69,7 @@ def log_event(
         event_type: one of EVENT_TYPES.
         stage: pipeline stage ("planning", "validation", "execution", "narration").
         latency_ms: duration of that stage, if the event closes one.
-        details: extra fields (capability, issue code, severity, error message...).
+        details: extra fields (capability, issue code, action, error message...).
 
     Returns:
         The event dict that was written.
@@ -229,24 +229,25 @@ def capability_counts(events: list[dict[str, Any]]) -> dict[str, int]:
 
 
 def guardrail_counts(events: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """How often each guardrail fired, by code and severity.
+    """How often each guardrail fired, by code and action.
 
-    Static issues are logged as validation_issue, runtime ones as guardrail_triggered.
+    Planner refusals and validator issues are logged as validation_issue; the
+    executor's and the narrator check's issues as guardrail_triggered.
 
     Args:
         events: all events.
 
     Returns:
-        Rows of {code, name, severity, count}, most frequent first.
+        Rows of {code, name, action, count}, most frequent first.
     """
     counts: Counter[tuple[str, str, str]] = Counter()
     for event in events:
         if event["event_type"] in ("validation_issue", "guardrail_triggered"):
             d = event["details"]
-            counts[(d.get("code", "?"), d.get("name", "?"), d.get("severity", "?"))] += 1
+            counts[(d.get("code", "?"), d.get("name", "?"), d.get("action", "?"))] += 1
     return [
-        {"code": code, "name": name, "severity": severity, "count": count}
-        for (code, name, severity), count in counts.most_common()
+        {"code": code, "name": name, "action": action, "count": count}
+        for (code, name, action), count in counts.most_common()
     ]
 
 

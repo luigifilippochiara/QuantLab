@@ -116,9 +116,9 @@ def test_flagship_validates_with_exactly_two_g10_approvals(catalog: Catalog) -> 
     raw = SCENARIOS_BY_ID["volatility_flag_success"].plan
     plan = fill_defaults(Plan(plan_id="p", request=FLAGSHIP_REQUEST, **raw))
     report = validate_plan(plan, catalog)
-    assert [(i.issue_id, i.severity) for i in report.issues] == [
-        ("G10:s3:return_method", "APPROVAL"),  # log returns for the volatility
-        ("G10:s6:return_method", "APPROVAL"),  # simple returns for the outcome
+    assert [(i.issue_id, i.action) for i in report.issues] == [
+        ("G10:s3:return_method", "APPROVE"),  # log returns for the volatility
+        ("G10:s6:return_method", "APPROVE"),  # simple returns for the outcome
     ]  # nothing else: no WARN, no BLOCK
     assert "method='log'" in report.issues[0].message
     assert "method='simple'" in report.issues[1].message
@@ -186,7 +186,7 @@ def test_scenario_1_demo_edit_dataset_to_a_yield_blocks_returns_on_rates(
 def test_scenario_2_full_sample_threshold_needs_approval_then_runs(settings: Settings) -> None:
     session = start("vix_full_sample_lookahead", settings)
     (g09,) = session.report.issues  # the look-ahead approval, and nothing else
-    assert (g09.issue_id, g09.severity) == ("G09:s2", "APPROVAL")
+    assert (g09.issue_id, g09.action) == ("G09:s2", "APPROVE")
     assert "information from the future" in g09.message
     assert "method='expanding'" in g09.suggestion and "descriptive labelling" in g09.suggestion
     with pytest.raises(ExecutionRefusedError, match="G09:s2"):
@@ -248,7 +248,7 @@ def test_scenario_4_injection_never_reaches_a_shell(
 def test_scenario_5_frequency_mismatch_blocks_before_anything_runs(settings: Settings) -> None:
     session = start("spread_frequency_mismatch_block", settings)
     (g08,) = session.report.issues  # the frequency mismatch, and nothing else
-    assert (g08.issue_id, g08.severity) == ("G08:s4", "BLOCK")
+    assert (g08.issue_id, g08.action) == ("G08:s4", "BLOCK")
     assert "'a' is weekly, 'b' is daily" in g08.message
     assert "Resample DGS2 to weekly" in g08.suggestion
     assert session.status == "blocked" and not session.can_execute()[0]

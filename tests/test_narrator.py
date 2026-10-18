@@ -10,8 +10,11 @@ from quantlab.executor import execute_plan
 from quantlab.guardrails import validate_plan
 from quantlab.narrator import (
     Fact,
+    GroundingResult,
+    NarrativeResult,
     build_facts_sheet,
     check_grounding,
+    check_narrative_grounding,
     format_number,
     narrate,
     template_narrative,
@@ -164,22 +167,52 @@ def test_template_narrative_is_fully_grounded(
     assert narrative.grounding.numbers_checked > 5
 
 
-def test_llm_narrative_with_invented_number_is_flagged(
+def test_grounded_llm_narrative_passes_n01(settings: Settings, catalog: Catalog) -> None:
+    plan, result, issues = run_scenario("spread", catalog)
+    facts = build_facts_sheet(plan, result.artifacts)
+    latest = next(f.display for f in facts if f.fact_id == "s3.last_value")
+    client = FakeAnthropicClient(text_response(f"The latest spread is {latest}."))
+    narrative = narrate(plan.request, plan, result.artifacts, issues, "live", settings,
+                        client=client)  # fmt: skip
+    assert narrative.source == "llm" and narrative.grounding.grounded
+    assert narrative.issues == [] and narrative.withheld is None
+
+
+def test_llm_narrative_with_invented_number_fires_n01_and_is_withheld(
     settings: Settings, catalog: Catalog
 ) -> None:
     plan, result, issues = run_scenario("spread", catalog)
     facts = build_facts_sheet(plan, result.artifacts)
     latest = next(f.display for f in facts if f.fact_id == "s3.last_value")
-    client = FakeAnthropicClient(
-        text_response(f"The latest spread is {latest}; the half-life is 7.77.")
-    )
+    invented = f"The latest spread is {latest}; the half-life is 7.77."
+    client = FakeAnthropicClient(text_response(invented))
     narrative = narrate(plan.request, plan, result.artifacts, issues, "live", settings,
                         client=client)  # fmt: skip
-    assert narrative.source == "llm" and narrative.model == "claude-sonnet-5-5"
-    assert narrative.grounding.ungrounded == ["7.77"]
+    # The LLM text is withheld (kept for audit, with its failing numbers) and the
+    # checked deterministic template is the narrative shown instead.
+    assert narrative.withheld.text == invented and narrative.withheld.source == "llm"
+    assert narrative.withheld.model == "claude-sonnet-5-5"
+    assert narrative.withheld.grounding.ungrounded == ["7.77"]
+    assert narrative.source == "template" and narrative.grounding.grounded
+    assert narrative.text == template_narrative(plan, result.artifacts, facts, issues)
+    [n01] = narrative.issues
+    assert (n01.code, n01.name, n01.action, n01.issue_id) == (
+        "N01", "UNGROUNDED_NARRATIVE", "WARN", "N01:plan:llm")  # fmt: skip
+    assert n01.enforced_by == "Narrator check (deterministic)"
+    assert n01.category == "Output grounding"
+    assert "7.77" in n01.message and "withheld" in n01.message
     prompt = client.calls[0]["messages"][0]["content"]
     assert "FACTS SHEET" in prompt and latest in prompt
     assert "temperature" not in client.calls[0]
+
+
+def test_n01_also_guards_the_template_narrative() -> None:
+    # The template is deterministic and its numbers come from the facts sheet; if a
+    # bug ever made it quote something else, N01 would say so too.
+    ungrounded = GroundingResult(grounded=False, numbers_checked=1, ungrounded=["3.14"])
+    result = NarrativeResult(text="x", source="template", facts=[], grounding=ungrounded)
+    [n01] = check_narrative_grounding(result)
+    assert n01.issue_id == "N01:plan:template" and "3.14" in n01.message
 
 
 def test_llm_narrative_with_a_wrong_date_fails_grounding(
@@ -193,9 +226,11 @@ def test_llm_narrative_with_a_wrong_date_fails_grounding(
     wrong = next(week for week in weeks[100:] if week not in facts.values())
 
     def narrated(text: str):
+        """The grounding of an LLM text: of the narrative, or of the withheld one (N01)."""
         client = FakeAnthropicClient(text_response(text))
-        return narrate(plan.request, plan, result.artifacts, issues, "live", settings,
-                       client=client).grounding  # fmt: skip
+        narrative = narrate(plan.request, plan, result.artifacts, issues, "live", settings,
+                            client=client)  # fmt: skip
+        return (narrative.withheld or narrative).grounding
 
     assert narrated(f"Volatility was {value} on {latest}.").grounded
     assert narrated(f"Volatility was {value} on {wrong}.").ungrounded == [wrong]
@@ -211,9 +246,11 @@ def test_llm_narrative_with_a_wrong_p_value_fails_grounding(
     episodes = facts["s8.n_episodes_flagged"].display
 
     def narrated(text: str):
+        """The grounding of an LLM text: of the narrative, or of the withheld one (N01)."""
         client = FakeAnthropicClient(text_response(text))
-        return narrate(plan.request, plan, result.artifacts, issues, "live", settings,
-                       client=client).grounding  # fmt: skip
+        narrative = narrate(plan.request, plan, result.artifacts, issues, "live", settings,
+                            client=client)  # fmt: skip
+        return (narrative.withheld or narrative).grounding
 
     right = f"The test gives a p-value of {p_value.display} over {episodes} episodes."
     assert narrated(right).grounded

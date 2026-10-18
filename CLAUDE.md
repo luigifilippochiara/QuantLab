@@ -10,12 +10,15 @@ paragraph: what, why, alternatives).
 
 The LLM proposes, the system disposes.
 
-1. The planner LLM writes a plan: inert JSON naming registered capabilities.
-2. `guardrails.py` checks it with the static guardrails (G codes: BLOCK / APPROVAL / WARN).
+1. The planner LLM writes a plan: inert JSON naming registered capabilities, or
+   refuses (L01).
+2. `guardrails.py` checks it with the validator's guardrails (G codes). Every
+   guardrail issue has an action: BLOCK / APPROVE / WARN.
 3. A human reviews, edits parameter VALUES only (structure locked in the engine,
    re-validated by the same validator, approvals reset) and approves.
 4. `executor.py` runs it by dict lookup in `REGISTRY`, with the runtime guardrails (R codes).
-5. The narrator LLM summarises using only the facts sheet; `check_grounding` verifies every number.
+5. The narrator LLM summarises using only the facts sheet; `check_grounding` verifies
+   every number (N01: an ungrounded narrative is withheld and replaced by the template).
 6. Every run is saved (`lineage.py`) and can be replayed without the LLM with matching hashes.
 
 Hard rules:

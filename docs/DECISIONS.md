@@ -5,9 +5,11 @@ The design decisions behind QuantLab: choices made where the v1 specification
 rationale for later changes to the product. One short paragraph each: what, why,
 alternatives considered.
 
-Each section uses the guardrail and capability codes in force when it was
-written. The codes were renumbered once, in "Simplified registry and guardrails,
-renumbered codes" (the last section), which lists every old and new code.
+Each section uses the guardrail and capability codes, and the guardrail terms,
+in force when it was written. The codes were renumbered twice: in "Simplified
+registry and guardrails, renumbered codes" and in "Guardrails restructured: action,
+enforcer, category" (the last section); each lists every old and new code. Until
+the restructure an issue's action was called its severity, and APPROVE was APPROVAL.
 
 ## Project setup
 
@@ -1139,3 +1141,113 @@ simplification. The golden set has one entry per example; the adversarial ones (
 and 5) also give their canned plan and outcome, which the evaluation reports item by
 item for information only: they stay correct if refused or blocked for another
 reason. The other golden requests are valid with the current registry and were kept.
+
+## Guardrails restructured: action, enforcer, category
+
+**Why.** Every guardrail should be easy to explain and clearly displayed: what it
+checks, who enforces it, what happens when it fires, what it protects and why. No
+risk check was added except the formal N01 (below); every existing check keeps its
+logic, and the golden records (examples and the mock eval set) give the same
+results with only the renames below.
+
+**Severity is now "action", with three values: BLOCK (the run stops), APPROVE (a
+human must decide) and WARN (the run continues and the result is flagged).** The
+value describes what happens next, so it is named for that; APPROVAL became APPROVE
+to read as an instruction like the other two. Renamed everywhere: the enum
+(`guardrails.Action`), the table, issues, run records, monitoring events, the
+golden set's `guardrails` keys (`approve`, `warn`, `block`; `load_golden` now
+rejects any other key, so a stale one cannot be silently ignored), the UI, the CLI,
+notebooks and docs. Alternative: an auto-fix action, rejected because the human must
+approve exactly what runs.
+
+**"Enforced by" replaces the static/runtime stage, and is derived from the code's
+prefix.** L = Planner (LLM), G = Validator (deterministic), R = Executor (runtime),
+N = Narrator check (deterministic). The mapping is written once (`ENFORCERS`) and
+`Guardrail.enforced_by` reads it, so a code and its label can never disagree; issues
+read their enforcer and category from the table by code (they are not stored in run
+records, which keep code, name and action). A test pins the enforcer of every code,
+and another that each code is raised in its enforcer's module (`narrator.py` for N,
+`executor.py` for R, `guardrails.py` for G and L). L01 is raised in `guardrails.py`:
+the decision to refuse is the LLM's (or the mock planner's), and the validator turns
+it into a BLOCK so a refused plan can never run, not even through the executor or
+replay. Moving the issue into `planner.py` would create an import cycle and lose
+that defence in depth.
+
+**G05 and the request length: still "Validator (deterministic)".** The request-length
+check is the validator's own function (`check_request_length`), which `validate_plan`
+runs on every plan; the engine calls the same function once more before the planner,
+so an oversized request costs no LLM call. G05's description says both. Alternative:
+a separate intake enforcer, rejected because it would describe the same code twice.
+A provider-level safety stop (Anthropic `stop_reason="refusal"`) returns no plan at
+all and stays G01 with the other "no usable plan" cases: L01 is the refusal path the
+prompt offers (a plan with `cannot_fulfill` and a reason), and an OpenAI safety
+refusal surfaces as "no submit_plan call", so moving only Anthropic's would make the
+providers inconsistent.
+
+**A category says what each guardrail protects:** plan integrity (G01, G05), approved
+scope (L01, G02, G06), input validity (G03, G04), methodology (G07, G08, G09, G10,
+G11, R05), data quality (R01, R02, R03, R04) and output grounding (N01).
+
+**Descriptions say what each guardrail checks and what that prevents,** replacing
+"what goes wrong without it", and match the code: G01 also covers planner failures
+and empty plans; G03 gives the real quantile range (0.5 to 0.99) and covers rejected
+structure edits; G05 claims no compute limit beyond the step count; G10 is today only
+the return method; R03 counts missing values, not calendar gaps; R05's real name is
+LOW_EFFECTIVE_SAMPLE and it counts flagged periods, not only weeks. The R
+descriptions quote their thresholds, and a test checks they equal the executor's
+constants. The Guardrails page, the README table and every issue shown in the app
+read the same table.
+
+**N01 UNGROUNDED_NARRATIVE (WARN, narrator check, output grounding).** The existing
+numeric grounding check (`check_grounding`) is now a named guardrail, not a rebuild.
+Before, an ungrounded LLM narrative was still shown, under a red banner. Now it is
+withheld: kept in the run record (`narrative.withheld`, with its failing numbers),
+never shown as the summary; the deterministic template narrative, checked the same
+way, is shown instead, and an N01 issue lists the numbers that failed. It is in the
+run record's warnings, the monitoring events and the UI like every other guardrail.
+If the template itself ever failed the check, N01 fires too and points to the facts
+sheet. WARN, because the run's numbers are verified and stand; BLOCK would discard
+them for a wording problem, and APPROVE would ask a human to sign off text already
+known to be unverified, which they cannot fix. The description states what the check
+accepts, which is a little wider than the facts sheet: computed facts (and their
+percentage form), numeric plan parameters (a "12-week" window passes only if a
+parameter is 12), numbers in the request, the warnings and the dataset titles, the
+annualisation factors, the 5% and 95% levels only when a test ran, dates of the facts
+sheet and years within the data; tolerance half a unit of the last written digit,
+i.e. a correct rounding. Parameters were not copied into the facts sheet: that would
+duplicate the plan and change every recorded facts sheet for no gain in what the check
+guarantees. Its known limit stays: it proves each number is a correct rounding of
+some allowed value, not that it is attached to the right concept in the sentence.
+
+**Renumbering, one simultaneous pass:** G11 PLANNER_REFUSED became L01, and G12
+FORWARD_DATA_AS_SIGNAL became G11; every other code is unchanged, and N01 is new. The
+pass looked each code up in the old-to-new table once, so G11 could not be renamed
+twice. This breaks the promise that codes were permanent after the simplification;
+it is the last renumbering, and `ASSIGNED_GUARDRAIL_CODES` in `tests/test_guardrails.py`
+now enforces it, as `ASSIGNED_CODES` does for capabilities.
+
+| Old code | New code | Name |
+|---|---|---|
+| G11 | L01 | PLANNER_REFUSED |
+| G12 | G11 | FORWARD_DATA_AS_SIGNAL |
+| (none) | N01 | UNGROUNDED_NARRATIVE |
+
+**`QUANTLAB_MAX_DATASETS` removed.** It raised a G05 BLOCK when a plan named or loaded
+more than five distinct datasets. The catalog holds six, invented ids are already G06,
+and every load is a step counted by the step budget, so in practice it only blocked a
+plan touching all six approved datasets. Removed entirely (the setting, the variable,
+the `max_datasets` arguments and its test) rather than kept as a constant.
+
+**Checks left without a code.** Some failures stop a step without a guardrail code:
+the executor refuses a capability name not in the registry (unreachable after G02),
+and capabilities raise errors for inputs that make the computation meaningless
+(resampling to a higher frequency, non-positive levels for returns, annualising
+without a frequency, an empty group in a comparison, a malformed snapshot file); the
+step is then recorded as failed with the error. Of these, only resampling weekly data
+back to daily is reachable from a plan; it is a candidate for a future static check.
+
+**Golden records.** A third record, "before_restructure", holds all five examples
+(with their narrative's grounding) and the mock eval set (each case's plan, issues and
+score), recorded before the change. `tests/test_golden_scenarios.py` applies to each
+record the migrations made since (simplification, then restructure) and requires
+everything else to be identical; no example raises N01.

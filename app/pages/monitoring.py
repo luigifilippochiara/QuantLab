@@ -88,7 +88,7 @@ with right:
     if rows:
         st.plotly_chart(
             ui.bar_figure(
-                [f"{r['code']} {r['name']} ({r['severity']})" for r in rows],
+                [f"{r['code']} {r['name']} ({r['action']})" for r in rows],
                 [r["count"] for r in rows],
                 "Times each guardrail was raised",
             ),

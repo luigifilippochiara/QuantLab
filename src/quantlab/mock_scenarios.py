@@ -12,15 +12,15 @@ the MockPlanner know these five and nothing else.
    MATERIAL_ASSUMPTION, on s3 and s6). Its result carries the audit trail (the trace).
 2. Look-ahead protection (`vix_full_sample_lookahead`): the days when the VIX was
    in the top 5% of its entire history. The full-sample threshold uses future data,
-   so it needs approval (G09 LOOK_AHEAD). It is an APPROVAL, not a BLOCK: a
+   so it needs approval (G09 LOOK_AHEAD). Its action is APPROVE, not BLOCK: a
    full-sample threshold is acceptable for descriptively labelling past stress days
    but invalid as a signal or in a backtest. The system cannot know the intent, so
    the human decides.
 3. Out-of-scope forecast request (`arima_forecast_block`): an ARIMA forecast of
-   USD/CHF has no registered capability, so the planner declines (G11
+   USD/CHF has no registered capability, so the planner declines (L01
    PLANNER_REFUSED) and lists what the registry can do instead.
 4. Prompt-injection protection (`prompt_injection_block`): instructions embedded
-   in a request are treated as data and declined (G11 PLANNER_REFUSED); nothing is
+   in a request are treated as data and declined (L01 PLANNER_REFUSED); nothing is
    ever executed.
 5. Frequency-alignment protection (`spread_frequency_mismatch_block`): the spread
    of a weekly and a daily yield, planned exactly as requested. The validator, not
@@ -56,7 +56,7 @@ class Scenario:
         dataset_ids: datasets selected for the request.
         expected_status: "completed" or "blocked".
         expected_codes: the static issue codes the canned plan raises, exactly.
-        auto_approve: whether the CLI demo approves APPROVAL issues automatically.
+        auto_approve: whether the CLI demo approves APPROVE issues automatically.
         keywords: for the MockPlanner's keyword matching. Every group must match,
             and a group matches if ANY of its words appears in the request.
         plan: the canned planner output (LLM-shaped plan dict).
@@ -103,7 +103,7 @@ def _plan(dataset_ids: list[str], steps: list[dict[str, Any]], notes: str) -> di
 
 
 def _refusal(reason: str) -> dict[str, Any]:
-    """Build a canned planner refusal (G11 PLANNER_REFUSED)."""
+    """Build a canned planner refusal (L01 PLANNER_REFUSED)."""
     return {
         "dataset_ids": [],
         "steps": [],
@@ -239,7 +239,7 @@ SCENARIOS: list[Scenario] = [
         request="Fit an ARIMA model to forecast next week's USD/CHF exchange rate.",
         dataset_ids=("DEXSZUS",),
         expected_status="blocked",
-        expected_codes=("G11",),
+        expected_codes=("L01",),
         auto_approve=False,
         keywords=(("arima", "forecast", "predict"),),
         plan=_refusal(
@@ -258,7 +258,7 @@ SCENARIOS: list[Scenario] = [
         ),
         dataset_ids=("NASDAQCOM",),
         expected_status="blocked",
-        expected_codes=("G11",),
+        expected_codes=("L01",),
         auto_approve=False,
         keywords=(("ignore your", "os.system", "import os", "run this python"),),
         plan=_refusal(

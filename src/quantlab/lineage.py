@@ -97,7 +97,7 @@ class DatasetVersion(BaseModel):
 
 
 class Approval(BaseModel):
-    """A user's approval of one APPROVAL issue.
+    """A user's approval of one APPROVE issue.
 
     Fields:
         issue_id: the approved issue's id, e.g. "G10:s2:return_method".
@@ -175,7 +175,7 @@ class RunRecord(BaseModel):
         environment: Python, platform, library versions, git commit.
         registry_version: hash of the capability registry summary.
         steps: one StepRecord per executed step.
-        warnings: all WARN issues (static and runtime).
+        warnings: all WARN issues (validator, executor and narrator check).
         runtime_issues: issues raised during execution (runtime guardrails, R codes).
         narrative: narrator output and grounding check (see narrator.NarrativeResult).
         stage_timings_ms: latency per stage.
@@ -489,7 +489,6 @@ def replay(run_id: str, settings: Settings) -> ReplayReport:
         catalog,
         {approval.issue_id for approval in record.approvals},
         max_steps=settings.max_steps,
-        max_datasets=settings.max_datasets,
     )
     replayed = {step.step_id: step for step in result.step_records}
     comparisons = []

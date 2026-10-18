@@ -34,10 +34,13 @@ def print_table(headers: Sequence[str], rows: Sequence[Sequence[object]]) -> Non
 
 
 def all_issue_codes(session: Session) -> list[str]:
-    """Sorted codes of every static and runtime issue raised in a session."""
+    """Sorted codes of every issue raised in a session: planner refusal, validator,
+    executor and narrator check."""
     codes = set(session.report.codes()) if session.report else set()
     if session.execution:
         codes |= {issue.code for issue in session.execution.issues}
+    if session.narrative:
+        codes |= {issue.code for issue in session.narrative.issues}
     return sorted(codes)
 
 
@@ -53,10 +56,13 @@ def print_session(session: Session) -> None:
     issues = list(session.report.issues) if session.report else []
     if session.execution:
         issues += [i for i in session.execution.issues if i not in issues]
+    if session.narrative:
+        issues += session.narrative.issues
     if issues:
-        print("\nIssues:")
+        print("\nIssues (action, code, enforced by):")
         for issue in issues:
-            print(f"  [{issue.severity}] {issue.code} {issue.issue_id}: {issue.message}")
+            print(f"  [{issue.action}] {issue.code} {issue.issue_id} ({issue.enforced_by}): "
+                  f"{issue.message}")  # fmt: skip
             if issue.suggestion:
                 print(f"      -> {issue.suggestion}")
     for approval in session.approvals:
@@ -81,6 +87,8 @@ def print_session(session: Session) -> None:
             if grounding.grounded
             else f"UNGROUNDED numbers: {grounding.ungrounded}"
         )
+        if session.narrative.withheld:
+            badge += "; the LLM narrative was withheld (N01)"
         print(f"\nNarrative ({session.narrative.source}; {badge}):")
         print(f"  {session.narrative.text}")
     if session.manifest_path:
@@ -99,7 +107,7 @@ def cmd_demo(args: argparse.Namespace, settings: Settings) -> int:
     mock mode the plans are the canned ones, so both the status and the issue
     codes must match. With a real LLM (live/cached) only the status is checked:
     the LLM may legitimately block for a different reason, e.g. refuse scenario 5
-    outright (G11) instead of proposing a plan that the validator blocks (G08).
+    outright (L01) instead of proposing a plan that the validator blocks (G08).
     Running it in live mode also fills the plan cache for later cached-mode sessions.
     """
     rows = []
@@ -250,7 +258,7 @@ def build_parser() -> argparse.ArgumentParser:
     run.add_argument("request")
     run.add_argument("--datasets", nargs="+", required=True)
     run.add_argument("--mode", choices=LLM_MODES, default=None, help="default: from .env")
-    run.add_argument("--approve-all", action="store_true", help="approve every APPROVAL issue")
+    run.add_argument("--approve-all", action="store_true", help="approve every APPROVE issue")
 
     replay_cmd = commands.add_parser("replay", help="replay a run without the LLM")
     replay_cmd.add_argument("run_id")

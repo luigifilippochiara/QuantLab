@@ -63,7 +63,7 @@ def test_a_different_block_reason_is_reported_but_still_correct(
     score = score_case(case, settings, catalog, "live", FakeAnthropicClient(tool_response(refusal)))
     assert score.correct and score.guardrails_match is False
     wrong = {c.item: (c.expected, c.actual) for c in score.checks if not c.match}
-    assert wrong["blocks"] == ("G08", "G11")
+    assert wrong["blocks"] == ("G08", "L01")
 
 
 def test_one_case_can_be_evaluated_on_its_own(settings: Settings) -> None:

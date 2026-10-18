@@ -10,7 +10,7 @@ Pages (in app/pages/):
 - Run history: past runs, their manifests, and replay with per-step hash checks.
 - Monitoring: KPIs, latency per stage, capability usage, guardrail activity, errors.
 - Capability registry: the approved menu of capabilities.
-- Guardrails: every static and runtime guardrail, its severity and why it exists.
+- Guardrails: every guardrail, its action, who enforces it, its category and why it exists.
 
 The sidebar shows the "QuantLab" title, then the page menu, then the page's own
 controls. The app is only a user interface: every action goes through

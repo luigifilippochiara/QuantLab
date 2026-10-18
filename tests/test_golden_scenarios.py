@@ -1,6 +1,6 @@
-"""The five example workflows give exactly the results of their golden record.
+"""The example workflows and the mock eval set give exactly the results of their golden records.
 
-tests/fixtures/golden_scenarios.json holds two records. For each example
+tests/fixtures/golden_scenarios.json holds three records. For each example
 workflow, run in mock mode and auto-approved as `cli demo` does, each holds: the
 status, every static and runtime issue, the plan, every step's input and output
 hashes and metadata, the numbers of every output table and the facts sheet, on
@@ -9,18 +9,25 @@ snapshots.
 
 - "before_simplification": examples 1 and 4, recorded at commit 6e1a74b, before
   the capability registry and the guardrails were simplified and their codes
-  renumbered (docs/DECISIONS.md). They must give the same results. The only
-  allowed differences are the ones the simplification made on purpose: guardrail
-  codes, and the issue ids that contain them, translated with OLD_TO_NEW_CODES,
-  and the parameters it removed from the plans (REMOVED_PARAMS).
+  renumbered (docs/DECISIONS.md).
 - "final_examples": examples 2, 3 and 5, which replaced the earlier ones after the
-  simplification (commit 08b1547), recorded with the current codes and compared
-  exactly.
+  simplification (commit 08b1547).
+- "before_restructure": all five examples, with their narrative's grounding
+  check, and the mock eval set (each case's plan, issues and score), recorded at
+  commit 4e3e09e, before the guardrails were restructured (action, enforced by,
+  category, L01 and N01).
+
+Every result must be the same as recorded. The only allowed differences are the
+changes made on purpose since a record was made (MIGRATIONS), applied in order:
+the simplification translated guardrail codes and removed two parameters from
+the plans; the restructure translated two more codes and renamed an issue's
+"severity" to "action" (APPROVAL to APPROVE). No narrative raises N01.
 
 The fixture is a frozen reference: a record is never regenerated.
 """
 
 import json
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -29,36 +36,79 @@ import pytest
 from quantlab.config import PROJECT_ROOT, Settings
 from quantlab.data import load_catalog
 from quantlab.engine import Session, run_request
-from quantlab.guardrails import Issue
+from quantlab.evaluation import load_golden, score_case
+from quantlab.guardrails import Issue, fill_defaults, validate_plan
 from quantlab.mock_scenarios import SCENARIOS
+from quantlab.planner import generate_plan
 from quantlab.types import DataType, canonical_text
 
 FIXTURE = Path(__file__).parent / "fixtures" / "golden_scenarios.json"
 
-# Old guardrail code -> new code. Two old codes were merged into others (G04's
-# checks into G01, G16's into the new G04 TYPE_MISMATCH); the three removed ones
-# (G11, G14, G17) have no new code, and no example workflow raised them.
-OLD_TO_NEW_CODES = {
+# Simplification: old guardrail code -> new code. Two old codes were merged into
+# others (G04's checks into G01, G16's into the new G04 TYPE_MISMATCH); the three
+# removed ones (G11, G14, G17) have no new code, and no example workflow raised them.
+SIMPLIFICATION_CODES = {
     "G01": "G01", "G02": "G02", "G03": "G03", "G04": "G01", "G05": "G04",
     "G06": "G05", "G07": "G06", "G08": "G07", "G09": "G08", "G10": "G09",
     "G12": "G10", "G13": "G11", "G15": "G12", "G16": "G04",
     "R01": "R01", "R02": "R02", "R03": "R03", "R04": "R04", "R05": "R05",
 }  # fmt: skip
 
-# Parameters removed from the registry: forward returns are always one period
-# ahead, and the Newey-West lag is always set by the rule.
+# Parameters the simplification removed from the registry: forward returns are
+# always one period ahead, and the Newey-West lag is always set by the rule.
 REMOVED_PARAMS = {"forward_return": ("horizon",), "hac_mean_difference": ("maxlags",)}
+
+# Restructure: PLANNER_REFUSED became the planner's L01 and FORWARD_DATA_AS_SIGNAL
+# took its G11; every other code is unchanged.
+RESTRUCTURE_CODES = {
+    **{f"G{i:02d}": f"G{i:02d}" for i in range(1, 11)},
+    "G11": "L01",
+    "G12": "G11",
+    **{f"R{i:02d}": f"R{i:02d}" for i in range(1, 6)},
+}
+# The restructure also renamed an issue's "severity" to "action", with these values.
+SEVERITY_TO_ACTION = {"BLOCK": "BLOCK", "APPROVAL": "APPROVE", "WARN": "WARN"}
+
+
+@dataclass(frozen=True)
+class Migration:
+    """One deliberate change: how a result recorded before it must look after it.
+
+    Fields:
+        codes: old guardrail code -> new code (every code an issue may have).
+        removed_params: capability -> parameters removed from its plan steps.
+        severity_to_action: whether issues' "severity" became "action".
+    """
+
+    codes: dict[str, str]
+    removed_params: dict[str, tuple[str, ...]]
+    severity_to_action: bool
+
+
+SIMPLIFICATION = Migration(SIMPLIFICATION_CODES, REMOVED_PARAMS, severity_to_action=False)
+RESTRUCTURE = Migration(RESTRUCTURE_CODES, {}, severity_to_action=True)
+
+# The changes made since each record was recorded, oldest first.
+MIGRATIONS = {
+    "before_simplification": (SIMPLIFICATION, RESTRUCTURE),
+    "final_examples": (RESTRUCTURE,),
+    "before_restructure": (RESTRUCTURE,),
+}
 
 # Output metadata compared step by step (the notes are free text and are not).
 META_FIELDS = ("kind", "frequency", "return_method", "periods", "horizon", "source_dataset_ids")
 
 
 def describe_issue(issue: Issue) -> dict[str, Any]:
-    """The parts of an issue that identify it: code, issue id, severity and step."""
+    """The parts of an issue that identify it: code, issue id, action and step.
+
+    Who enforces it and its category are read from the GUARDRAILS table by code,
+    so they follow from the code (tests/test_guardrails.py checks the table).
+    """
     return {
         "code": issue.code,
         "issue_id": issue.issue_id,
-        "severity": issue.severity.value,
+        "action": issue.action.value,
         "step_id": issue.step_id,
     }
 
@@ -73,7 +123,8 @@ def describe_session(session: Session) -> dict[str, Any]:
         status, static and runtime issues, approvals, the plan that ran (defaults
         filled in), one record per executed step (hashes, sample, metadata), every
         TABLE output in its canonical form (the basis of its hash: floats to 12
-        significant digits) and the facts sheet as displayed.
+        significant digits), the facts sheet as displayed, and the narrative's
+        grounding check and N01 issues.
     """
     execution = session.execution
     artifacts = execution.artifacts if execution else {}
@@ -109,6 +160,14 @@ def describe_session(session: Session) -> dict[str, Any]:
             [[fact.fact_id, fact.display] for fact in session.narrative.facts]
             if session.narrative
             else []
+        ),
+        "grounding": (
+            {"grounded": narrative.grounding.grounded, "ungrounded": narrative.grounding.ungrounded}
+            if (narrative := session.narrative)
+            else None
+        ),
+        "narrative_issues": (
+            [describe_issue(i) for i in session.narrative.issues] if session.narrative else []
         ),
     }
 
@@ -147,37 +206,91 @@ def committed_data_settings(runs_dir: Path) -> Settings:
     )
 
 
+def describe_eval_cases(settings: Settings) -> dict[str, dict[str, Any]]:
+    """Plan, validate and score every golden eval case in mock mode.
+
+    Args:
+        settings: settings naming the data folder (the catalog the plans use).
+
+    Returns:
+        Case id -> the plan, its issues and the case's score.
+    """
+    catalog = load_catalog(settings.catalog_path)
+    cases = {}
+    for case in load_golden():
+        result = generate_plan(case.request, case.datasets, "mock", settings, catalog)
+        plan = fill_defaults(result.plan) if result.plan else None
+        report = validate_plan(plan, catalog, max_steps=settings.max_steps) if plan else None
+        score = score_case(case, settings, catalog, "mock")
+        cases[case.id] = {
+            "plan": (
+                [
+                    {"id": s.id, "capability": s.capability, "inputs": s.inputs, "params": s.params}
+                    for s in plan.steps
+                ]
+                if plan
+                else None
+            ),  # fmt: skip
+            "cannot_fulfill": plan.cannot_fulfill if plan else None,
+            "issues": [describe_issue(i) for i in (report.issues if report else result.issues)],
+            "issue_codes": score.issue_codes,
+            "valid": score.valid,
+            "refused_or_blocked": score.refused_or_blocked,
+            "sequence_match": score.sequence_match,
+            "correct": score.correct,
+            "guardrails_match": score.guardrails_match,
+        }
+    return cases
+
+
 # ---------------------------------------------------------------------------
-# The recorded results, translated to what the simplified system must produce
+# The recorded results, migrated to what the current system must produce
 # ---------------------------------------------------------------------------
 
 
-def translate_issue_id(issue_id: str) -> str:
-    """An old issue id with its code translated, e.g. "G12:s3:return_method" -> "G10:s3:..."."""
+def migrate_issue_id(issue_id: str, migration: Migration) -> str:
+    """An issue id with its code translated, e.g. "G11:plan" -> "L01:plan"."""
     old_code, _, rest = issue_id.partition(":")
-    return f"{OLD_TO_NEW_CODES[old_code]}:{rest}"
+    return f"{migration.codes[old_code]}:{rest}"
 
 
-def translate_issue(issue: dict[str, Any]) -> dict[str, Any]:
-    """An old issue with its code and its issue id translated."""
-    code = OLD_TO_NEW_CODES[issue["code"]]
-    return {**issue, "code": code, "issue_id": translate_issue_id(issue["issue_id"])}
+def migrate_issue(issue: dict[str, Any], migration: Migration) -> dict[str, Any]:
+    """A recorded issue after one migration: code and issue id translated, action renamed."""
+    migrated = {
+        **issue,
+        "code": migration.codes[issue["code"]],
+        "issue_id": migrate_issue_id(issue["issue_id"], migration),
+    }
+    if migration.severity_to_action:
+        migrated["action"] = SEVERITY_TO_ACTION[migrated.pop("severity")]
+    return migrated
 
 
-def without_removed_params(step: dict[str, Any]) -> dict[str, Any]:
-    """A recorded plan step without the parameters the simplification removed."""
-    removed = REMOVED_PARAMS.get(step["capability"], ())
+def migrate_step(step: dict[str, Any], migration: Migration) -> dict[str, Any]:
+    """A recorded plan step without the parameters the migration removed."""
+    removed = migration.removed_params.get(step["capability"], ())
     return {**step, "params": {k: v for k, v in step["params"].items() if k not in removed}}
 
 
-def expected_result(recorded: dict[str, Any]) -> dict[str, Any]:
-    """What a workflow must give now: the recorded result, with the allowed changes applied."""
+def migrate_result(recorded: dict[str, Any], migration: Migration) -> dict[str, Any]:
+    """A recorded workflow result after one migration."""
     return {
         **recorded,
-        "static_issues": [translate_issue(i) for i in recorded["static_issues"]],
-        "runtime_issues": [translate_issue(i) for i in recorded["runtime_issues"]],
-        "approvals": [translate_issue_id(issue_id) for issue_id in recorded["approvals"]],
-        "plan": [without_removed_params(step) for step in recorded["plan"]],
+        "static_issues": [migrate_issue(i, migration) for i in recorded["static_issues"]],
+        "runtime_issues": [migrate_issue(i, migration) for i in recorded["runtime_issues"]],
+        "approvals": [migrate_issue_id(issue_id, migration) for issue_id in recorded["approvals"]],
+        "plan": [migrate_step(step, migration) for step in recorded["plan"]],
+    }
+
+
+def migrate_case(recorded: dict[str, Any], migration: Migration) -> dict[str, Any]:
+    """A recorded eval case after one migration (its codes re-sorted, as the report sorts them)."""
+    plan = recorded["plan"]
+    return {
+        **recorded,
+        "plan": [migrate_step(step, migration) for step in plan] if plan is not None else None,
+        "issues": [migrate_issue(i, migration) for i in recorded["issues"]],
+        "issue_codes": sorted({migration.codes[code] for code in recorded["issue_codes"]}),
     }
 
 
@@ -187,24 +300,31 @@ def golden() -> dict[str, Any]:
     return json.loads(FIXTURE.read_text(encoding="utf-8"))
 
 
-def expected_results(golden: dict[str, Any], data: str) -> dict[str, dict[str, Any]]:
-    """Scenario id -> the result each example workflow must give now, on one data set.
+def expected_results(golden: dict[str, Any], data: str) -> dict[str, list[dict[str, Any]]]:
+    """Scenario id -> the results each example workflow must give now (one per record).
 
     Args:
         golden: the fixture.
         data: "synthetic" or "committed".
     """
-    before = golden["before_simplification"][data]["scenarios"]
-    final = golden["final_examples"][data]["scenarios"]  # current codes: used as recorded
-    return {**{sid: expected_result(r) for sid, r in before.items()}, **final}
+    expected: dict[str, list[dict[str, Any]]] = {}
+    for record, migrations in MIGRATIONS.items():
+        for scenario_id, result in golden[record][data]["scenarios"].items():
+            for migration in migrations:
+                result = migrate_result(result, migration)
+            # N01 did not exist when the older records were made; it must never fire
+            # on the example workflows (their template narratives are fully grounded).
+            expected.setdefault(scenario_id, []).append({**result, "narrative_issues": []})
+    return expected
 
 
-def compare(actual: dict[str, dict[str, Any]], expected: dict[str, dict[str, Any]]) -> None:
-    """Assert each workflow's result equals the expected one, part by part (clear failures)."""
+def compare(actual: dict[str, dict[str, Any]], expected: dict[str, list[dict[str, Any]]]) -> None:
+    """Assert each workflow's result equals every expected one, part by part (clear failures)."""
     assert sorted(actual) == sorted(expected)  # every example workflow has a golden record
     for scenario_id, result in actual.items():
-        for part, value in expected[scenario_id].items():
-            assert result[part] == value, f"{scenario_id}: {part} differs"
+        for recorded in expected[scenario_id]:
+            for part, value in recorded.items():
+                assert result[part] == value, f"{scenario_id}: {part} differs"
 
 
 def test_scenarios_match_the_golden_record_on_synthetic_data(
@@ -218,8 +338,18 @@ def test_scenarios_match_the_golden_record_on_the_committed_snapshots(
 ) -> None:
     settings = committed_data_settings(tmp_path / "runs")
     catalog = load_catalog(settings.catalog_path)
-    for record in ("before_simplification", "final_examples"):
+    for record in MIGRATIONS:
         recorded = golden[record]["committed"]["dataset_sha256"]
         if {d: catalog.entries[d].sha256 for d in recorded} != recorded:
             pytest.skip("the committed FRED snapshots changed since the golden record was made")
     compare(run_scenarios(settings), expected_results(golden, "committed"))
+
+
+def test_mock_eval_matches_the_golden_record(golden: dict[str, Any], tmp_path: Path) -> None:
+    recorded = golden["before_restructure"]["eval"]["cases"]
+    actual = describe_eval_cases(committed_data_settings(tmp_path / "runs"))
+    assert sorted(actual) == sorted(recorded)  # the eval set itself is unchanged
+    for case_id, case in recorded.items():
+        expected = migrate_case(case, RESTRUCTURE)
+        for part, value in expected.items():
+            assert actual[case_id][part] == value, f"{case_id}: {part} differs"
