@@ -33,10 +33,11 @@ the MockPlanner know these six and nothing else.
    full-sample threshold is acceptable for descriptively labelling past stress weeks
    but invalid as a signal or in a backtest. The system cannot know the intent, so
    the human decides.
-6. NASDAQ after volatile weeks (`nasdaq_volatility_success`): the earlier
-   flagship, on the NASDAQ alone: weeks of high NASDAQ volatility (an expanding
-   threshold), compared with the following week's NASDAQ return; it runs after the
-   two return-method approvals (V10, on s3 and s6).
+6. Buy the dip in tech? (`buy_the_dip_tech`): does the NASDAQ bounce back the week
+   after its biggest drops? The weeks whose return is in the bottom 10% of past
+   weekly returns (`flag_regime` with direction below, an expanding threshold), then
+   a comparison and a significance test of the following week's return. It runs
+   after the two return-method approvals (V10, on s3 and s5).
 
 Role in the architecture: data, shared by
 - the MockPlanner (returns these plans instead of calling an LLM, so the whole
@@ -231,67 +232,52 @@ FLAGSHIP_NOTES = (
 )
 
 
-# Example 6's request, the earlier flagship (the NASDAQ alone). It states the choices
-# that have no default (the dataset, weekly data, log returns for the volatility,
-# simple next-week returns for the outcome, a test of the difference in means); the
-# registry defaults supply the rest (annualised volatility, an expanding
-# 90th-percentile threshold after 52 weeks), and forward returns are always one
-# period ahead with Newey-West lags set by their rule, so a live planner can still
-# reach exactly the canned plan below (the golden set checks it item by item).
-VOLATILITY_REQUEST = (
-    "Using NASDAQ, calculate weekly log returns, 12-week volatility, and flag unusually "
-    "volatile weeks. Compare next-week simple returns after volatile weeks with those after "
-    "normal weeks, then test whether the difference in means is statistically significant."
+# Example 6's request: buy the dip in tech?
+DIP_REQUEST = (
+    "Buy the dip in tech? Using weekly NASDAQ returns, flag the weeks in the bottom 10%, the "
+    "biggest drops, using only past data. Then test whether next week's return is higher "
+    "after those weeks than after the other weeks."
 )
 
 # Example 6's plan. Every parameter is written out (no hidden defaults).
-VOLATILITY_STEPS = [
-    # The dataset named in the request.
+DIP_STEPS = [
     _step("s1", "load_series", params={"dataset_id": "NASDAQCOM"},
           rationale="Load the NASDAQ Composite daily closes."),
-    # Weekly Friday closes: every later step works on complete weeks.
+    # Weekly Friday closes: the drops and the following week are whole weeks.
     _step("s2", "resample", {"series": "s1"}, {"freq": "W", "how": "last"},
-          rationale="Weekly Friday closes, as requested."),
-    # LOG returns for the volatility: they add up over time, which is what the
-    # square-root-of-time annualisation assumes.
-    _step("s3", "compute_returns", {"series": "s2"}, {"method": "log", "periods": 1},
-          rationale="Weekly log returns, the input of the volatility."),
-    # 12 weeks, as requested; annualised by sqrt(52) (the default).
-    _step("s4", "rolling_volatility", {"series": "s3"}, {"window": 12, "annualize": True},
-          rationale="12-week rolling annualised volatility."),
-    # The defaults: a threshold from past volatility only (expanding), after 52 weeks
-    # of history, so every flag could have been set at the time (no look-ahead).
-    _step("s5", "flag_regime", {"series": "s4"},
-          {"method": "expanding", "quantile": 0.90, "min_periods": 52, "direction": "above"},
-          rationale="Flag weeks above the 90th percentile of past volatility only."),
-    # SIMPLE returns for the outcome, unlike s3: a mean of log returns is lower than
-    # the mean simple return by about half the variance, so it would understate the
-    # more volatile weeks and bias the comparison against them. Computed from the
-    # weekly prices (s2), so the outcome starts at the close of the flagged week and
-    # covers the following week (forward returns are always one period ahead).
-    _step("s6", "forward_return", {"series": "s2"}, {"method": "simple"},
+          rationale="Weekly Friday closes."),
+    # SIMPLE returns: a drop is the percentage an investor lost in the week, and the
+    # outcome below is a simple return too, so both are read the same way.
+    _step("s3", "compute_returns", {"series": "s2"}, {"method": "simple", "periods": 1},
+          rationale="Weekly simple returns, whose lowest values are the biggest drops."),
+    # "The bottom 10%, the biggest drops, using only past data": below the 10th
+    # percentile of past weekly returns (direction below, expanding), after 52 weeks
+    # of history, so every dip could have been seen at the time.
+    _step("s4", "flag_regime", {"series": "s3"},
+          {"method": "expanding", "quantile": 0.10, "min_periods": 52, "direction": "below"},
+          rationale="Flag weeks below the 10th percentile of past weekly returns: the dips."),
+    # The outcome: next week's SIMPLE return, from the weekly prices (s2), so it starts
+    # at the close of the dip week and never overlaps the drop itself.
+    _step("s5", "forward_return", {"series": "s2"}, {"method": "simple"},
           rationale="Simple return over the following week, stamped on the week it follows."),
     # Describe first: both groups' means, spreads and number of episodes...
-    _step("s7", "compare_groups", {"values": "s6", "flags": "s5"},
-          rationale="Describe next-week returns after volatile and after normal weeks."),
+    _step("s6", "compare_groups", {"values": "s5", "flags": "s4"},
+          rationale="Describe next-week returns after dips and after other weeks."),
     # ...then test that same difference (the registry's one significance test), with
-    # standard errors that allow for the higher variance of flagged weeks and for
-    # clustered volatility (lags set by the Newey-West rule).
-    _step("s8", "hac_mean_difference", {"outcome": "s6", "flags": "s5"},
+    # standard errors that allow for the higher variance after dips and for clustering
+    # (lags set by the Newey-West rule).
+    _step("s7", "hac_mean_difference", {"outcome": "s5", "flags": "s4"},
           rationale="Test the difference in means with Newey-West standard errors."),
 ]  # fmt: skip
 
 # The plan's declared assumptions, shown to the analyst as the planner's notes.
-VOLATILITY_NOTES = (
-    "Assumptions: log returns for the volatility (time-additive, consistent with "
-    "square-root-of-time annualisation); simple returns for the outcome (a mean of log "
-    "returns is lower by about half the variance, which would bias the comparison against "
-    "high-volatility weeks); the expanding threshold uses past volatility only (at least 52 "
-    "weeks), so every flag was known at the time. The next-week return runs from each "
-    "Friday close to the next, after the data behind the flag. compare_groups describes "
-    "the two groups first; hac_mean_difference then tests the difference (default lags)."
+DIP_NOTES = (
+    "Assumptions: simple weekly returns, so a dip is the percentage lost in the week; dips "
+    "are the weeks below the 10th percentile of past weekly returns only (expanding, at "
+    "least 52 weeks), so every dip was known at the time; the next-week return runs from "
+    "each Friday close to the next, after the drop. compare_groups describes the two groups "
+    "first; hac_mean_difference then tests the difference (default lags)."
 )
-
 
 SCENARIOS: list[Scenario] = [
     Scenario(
@@ -313,8 +299,9 @@ SCENARIOS: list[Scenario] = [
         number=2,
         label="2 · Frequency-alignment protection",
         request=(
-            "Compute the spread between the weekly 10-year Treasury yield and the daily "
-            "2-year Treasury yield, and show the weeks when the curve was most negative."
+            "When did the recession alarm ring? Compute the spread between the weekly 10-year "
+            "Treasury yield and the daily 2-year Treasury yield, and show the weeks when the "
+            "curve was most negative."
         ),
         dataset_ids=("DGS10", "DGS2"),
         expected_status="blocked",
@@ -463,16 +450,16 @@ SCENARIOS: list[Scenario] = [
         ),
     ),
     Scenario(
-        id="nasdaq_volatility_success",
+        id="buy_the_dip_tech",
         number=6,
-        label="6 · NASDAQ after volatile weeks",
-        request=VOLATILITY_REQUEST,
+        label="6 · Buy the dip in tech?",
+        request=DIP_REQUEST,
         dataset_ids=("NASDAQCOM",),
         expected_status="completed",
-        expected_codes=("V10",),  # the two return-method approvals (s3 and s6), nothing else
+        expected_codes=("V10",),  # the two return-method approvals (s3 and s5), nothing else
         auto_approve=True,
-        keywords=(("nasdaq",), ("volatil",)),
-        plan=_plan(["NASDAQCOM"], VOLATILITY_STEPS, VOLATILITY_NOTES),
+        keywords=(("dip", "biggest drops"), ("nasdaq", "tech")),
+        plan=_plan(["NASDAQCOM"], DIP_STEPS, DIP_NOTES),
     ),
 ]
 
@@ -486,7 +473,7 @@ MATCH_ORDER = (
     "spread_frequency_mismatch_block",
     "vix_full_sample_lookahead",
     "chf_safe_haven_success",
-    "nasdaq_volatility_success",
+    "buy_the_dip_tech",
 )
 
 

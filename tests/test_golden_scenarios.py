@@ -1,6 +1,6 @@
 """The example workflows and the mock eval set give exactly the results of their golden records.
 
-tests/fixtures/golden_scenarios.json holds eight records. For each example
+tests/fixtures/golden_scenarios.json holds nine records. For each example
 workflow, run in mock mode and auto-approved as `cli demo` does, each holds: the
 status, every static and runtime issue, the plan, every step's input and output
 hashes and metadata, the numbers of every output table and the facts sheet, on
@@ -32,6 +32,9 @@ snapshots.
 - "vix_flagship": all six examples and the mock eval set, recorded after commit
   1754629, when the flagship flagged stress weeks with the VIX level (example 1) and
   example 5 became the same question with a full-history threshold.
+- "buy_the_dip": all six examples and the mock eval set, recorded after commit
+  1eecb26, when example 6 became "Buy the dip in tech?" (the bottom 10% of past
+  weekly NASDAQ returns, then the following week).
 
 Every result must be the same as recorded. The only allowed differences are the
 changes made on purpose since a record was made (MIGRATIONS), applied in order:
@@ -46,8 +49,10 @@ eval case with it). Example 3's new request leaves its recorded result as it was
 refusal records no dataset). flag_regime's new `direction` parameter adds
 direction="above" (the default, the old behaviour) to every recorded flag step, and
 example 2's new question replaced it and its eval case; the VIX flagship replaced
-examples 1 and 5 and their eval cases. No narrative raises N01, and no example or
-eval request raises R01.
+examples 1 and 5 and their eval cases; buy the dip replaced example 6 and its eval
+case, and the eval case nasdaq_weekly_log_vol, which matched the old example 6 in
+mock mode and now matches none. No narrative raises N01, and no example or eval
+request raises R01.
 
 The fixture is a frozen reference: a record is never regenerated.
 """
@@ -185,6 +190,19 @@ REPLACED_BY_VIX = (
 )
 VIX_FLAGSHIP = Migration({code: code for code in GUARDRAILS}, {}, False, REPLACED_BY_VIX)
 
+# Buy the dip: example 6 (NASDAQ volatility regimes) became a buy-the-dip analysis, so
+# it and its eval case (under every id they have had) were replaced, and so was the eval
+# case nasdaq_weekly_log_vol, whose mock plan was the old example 6's. The old plan is
+# kept as a test fixture (conftest.VOLATILITY_PLAN).
+REPLACED_BY_DIP = (
+    "volatility_flag_success",
+    "nasdaq_volatility_success",
+    "s1_volatility_flag_success",
+    "s6_nasdaq_volatility",
+    "nasdaq_weekly_log_vol",
+)
+BUY_THE_DIP = Migration({code: code for code in GUARDRAILS}, {}, False, REPLACED_BY_DIP)
+
 # The changes made since each record was recorded, oldest first.
 MIGRATIONS = {
     "before_simplification": (
@@ -196,6 +214,7 @@ MIGRATIONS = {
         FLAGSHIP_MOVE,
         DIRECTION,
         VIX_FLAGSHIP,
+        BUY_THE_DIP,
     ),
     "final_examples": (
         RESTRUCTURE,
@@ -205,6 +224,7 @@ MIGRATIONS = {
         FLAGSHIP_MOVE,
         DIRECTION,
         VIX_FLAGSHIP,
+        BUY_THE_DIP,
     ),
     "before_restructure": (
         RESTRUCTURE,
@@ -214,12 +234,22 @@ MIGRATIONS = {
         FLAGSHIP_MOVE,
         DIRECTION,
         VIX_FLAGSHIP,
+        BUY_THE_DIP,
     ),
-    "before_stage_codes": (STAGES, INJECTION, RENUMBERING, FLAGSHIP_MOVE, DIRECTION, VIX_FLAGSHIP),
-    "simulated_injection": (RENUMBERING, FLAGSHIP_MOVE, DIRECTION, VIX_FLAGSHIP),
-    "safe_haven_flagship": (DIRECTION, VIX_FLAGSHIP),
-    "yield_curve_below": (VIX_FLAGSHIP,),
-    "vix_flagship": (),
+    "before_stage_codes": (
+        STAGES,
+        INJECTION,
+        RENUMBERING,
+        FLAGSHIP_MOVE,
+        DIRECTION,
+        VIX_FLAGSHIP,
+        BUY_THE_DIP,
+    ),
+    "simulated_injection": (RENUMBERING, FLAGSHIP_MOVE, DIRECTION, VIX_FLAGSHIP, BUY_THE_DIP),
+    "safe_haven_flagship": (DIRECTION, VIX_FLAGSHIP, BUY_THE_DIP),
+    "yield_curve_below": (VIX_FLAGSHIP, BUY_THE_DIP),
+    "vix_flagship": (BUY_THE_DIP,),
+    "buy_the_dip": (),
 }
 # The records that hold (part of) the mock eval set.
 EVAL_RECORDS = (
@@ -229,6 +259,7 @@ EVAL_RECORDS = (
     "safe_haven_flagship",
     "yield_curve_below",
     "vix_flagship",
+    "buy_the_dip",
 )
 
 # Output metadata compared step by step (the notes are free text and are not).

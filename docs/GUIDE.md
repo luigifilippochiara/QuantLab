@@ -94,10 +94,10 @@ one of its two `resample` steps raises V08 (the flags and the returns would no
 longer share a frequency); and a quantile outside the registry's range would be
 blocked too (V03), though its field does not accept one. In example 6, changing
 `load_series.dataset_id` from NASDAQCOM to DGS10 is blocked by V07 (returns of a
-yield are meaningless). Windows are counted in periods of the series' frequency, as
-their fields and the step summaries say: in example 6, switching `resample.freq`
-from W to D keeps `window` at 12, which then means 12 trading days instead of 12
-weeks. Any edit resets the
+yield are meaningless, plus V04: a forward return needs a price level). Windows and
+minimum histories are counted in periods of the series' frequency, as their fields
+and the step summaries say: in example 6, switching `resample.freq` from W to D
+keeps `min_periods` at 52, which then means 52 trading days instead of 52 weeks. Any edit resets the
 approvals, which are recorded with the hash of the plan version they were given
 for. Execute stays disabled, with a one-line reason, while changes are unapplied,
 a BLOCK remains or an approval is unticked. Edited values are marked ("edited
@@ -139,8 +139,9 @@ app or with `cli demo`.
    states this convention, read from the dataset catalog, and so does every
    USD/CHF result.
 2. **Frequency-alignment protection** (`spread_frequency_mismatch_block`):
-   "Compute the spread between the weekly 10-year Treasury yield and the daily
-   2-year Treasury yield, and show the weeks when the curve was most negative."
+   "When did the recession alarm ring? Compute the spread between the weekly 10-year
+   Treasury yield and the daily 2-year Treasury yield, and show the weeks when the
+   curve was most negative."
    Planned exactly as asked, the spread of a weekly and a daily series would
    silently keep only the Fridays and mix two frequencies. The validator, not the
    planner, blocks it (V08) before anything runs and states the fix: resample the
@@ -181,24 +182,21 @@ app or with `cli demo`.
    is an approval, not a block: a full-sample threshold is fine for labelling past
    stress weeks but invalid as a signal or in a backtest, and only the analyst knows
    which is meant. The outcome's return method is approved as in example 1 (V10).
-6. **NASDAQ after volatile weeks** (`nasdaq_volatility_success`), the earlier
-   flagship, on the NASDAQ alone: weeks of high NASDAQ volatility, compared with the
-   following week's NASDAQ return.
+6. **Buy the dip in tech?** (`buy_the_dip_tech`): does the NASDAQ bounce back the
+   week after its biggest drops?
 
-   > Using NASDAQ, calculate weekly log returns, 12-week volatility, and flag unusually volatile weeks. Compare next-week simple returns after volatile weeks with those after normal weeks, then test whether the difference in means is statistically significant.
+   > Buy the dip in tech? Using weekly NASDAQ returns, flag the weeks in the bottom 10%, the biggest drops, using only past data. Then test whether next week's return is higher after those weeks than after the other weeks.
 
-   Weekly Friday closes; weekly log returns for the volatility (they add up over
-   time, as square-root-of-time annualisation assumes); 12-week annualised
-   rolling volatility; flags above the 90th percentile of past volatility only
-   (expanding, after 52 weeks); the following week's simple return stamped on
-   each week (`forward_return`: a mean of log returns would be lower by about
-   half the variance and bias the comparison against volatile weeks); a
-   descriptive comparison first (`compare_groups`), then the significance test
-   (`hac_mean_difference`). The analyst confirms the two return-method choices
-   (V10); there is no warning and no block. The result shows the volatility with
-   the high-volatility weeks shaded, both groups' means and standard deviations,
-   the number of distinct episodes, and the test's difference, p-value and 95%
-   confidence interval.
+   Weekly Friday closes; weekly simple returns, so a dip is the percentage lost in
+   the week; the dips are the weeks below the 10th percentile of past weekly returns
+   only (`flag_regime` with direction below, expanding, after 52 weeks), so every
+   dip could have been seen at the time; the following week's simple return
+   (`forward_return`); a descriptive comparison (`compare_groups`), then the
+   significance test (`hac_mean_difference`). The analyst confirms the two
+   return-method choices (V10); there is no warning and no block. The narrative
+   answers the question first: whether the following week's return was higher or
+   lower after a dip, by how much on average, and whether the difference is
+   statistically significant.
 
 **Example output.** For example workflow 1 on the committed snapshots, QuantLab
 flags 221 of 1,867 weeks (11.8%) whose VIX close was above the 90th percentile of
@@ -210,9 +208,12 @@ on average after stress weeks, the opposite of a safe haven. The difference, +0.
 percentage points, has a Newey-West standard error of 0.133 percentage points (7
 lags) and a p-value of 0.51, so there is no statistically significant difference:
 in this sample the franc does not strengthen in the week after a stress week. The
-test looks at the following week, not at the stress week itself. Example 6, on
-NASDAQ volatility flags, finds the following week's NASDAQ return averaging 0.209%
-after a flagged week and 0.230% after a normal week (p-value 0.93).
+test looks at the following week, not at the stress week itself. Example 6 finds
+no bounce after the biggest NASDAQ drops: 334 dip weeks (below the 10th percentile
+of past weekly returns, from -1.5% in 1972 to -2.9% today), and the following
+week's return averaged -0.124% after a dip against +0.275% after other weeks, lower
+by 0.40 percentage points, with a p-value of 0.068: not statistically significant
+at the 5% level.
 
 **Audit trail.** For any executed result, such as example 1's p-value, **Trace a
 result** shows the full chain: `hac_mean_difference` -> `forward_return` ->

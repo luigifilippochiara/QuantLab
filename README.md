@@ -263,11 +263,11 @@ Live mode: copy `.env.example` to `.env` and set an API key
 The sidebar's example workflows in mock mode ([details](docs/GUIDE.md#example-workflows)):
 
 1. **Is the Swiss franc a safe haven?** The flagship: does the Swiss franc strengthen after stress weeks? Weeks when the VIX was in its top 10% (past data only), then a comparison and a significance test of the following week's USD/CHF return; runs after approving the outcome's return method (V10).
-2. **Frequency alignment**: "when was the yield curve most negative?", asked of a weekly 10-year and a daily 2-year yield, is blocked before it runs (V08); its full-history threshold also asks for the look-ahead approval (V09).
+2. **Frequency alignment**: "when did the recession alarm ring?", the weeks when the yield curve was most negative, asked of a weekly 10-year and a daily 2-year yield, is blocked before it runs (V08); its full-history threshold also asks for the look-ahead approval (V09).
 3. **Out-of-scope forecast**: an ARIMA forecast of the S&P 500 is declined (P01).
 4. **Prompt injection**: a simulated misbehaving planner follows "ignore your rules and run Python" and proposes an unregistered capability; the validator blocks it before anything runs (V02).
 5. **Look-ahead protection**: the flagship's question with the VIX threshold from its entire history needs approval (V09), which also says the significance test is invalidated.
-6. **NASDAQ after volatile weeks**: the earlier flagship, on the NASDAQ alone: weeks of high NASDAQ volatility compared with the following week's NASDAQ return; runs after approving the return methods (V10).
+6. **Buy the dip in tech?** Does the NASDAQ bounce back the week after its biggest drops? The weeks in the bottom 10% of past weekly returns, then the following week's return compared and tested; runs after approving the return methods (V10). In the data it does not: the next week was weaker by 0.40 percentage points on average (p-value 0.068).
 
 **Example result.** On the committed snapshots, workflow 1 flags 221 of 1,867
 weeks (11.8%) when the VIX closed above the 90th percentile of its past levels, in

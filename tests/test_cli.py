@@ -23,7 +23,7 @@ def test_demo_behaves_as_expected(cli_env: Settings, capsys: pytest.CaptureFixtu
     assert "MISMATCH" not in output
     assert len(list_runs(cli_env.runs_dir)) == 6
     for scenario_id in ["chf_safe_haven_success", "spread_frequency_mismatch_block",
-                        "nasdaq_volatility_success"]:  # fmt: skip
+                        "buy_the_dip_tech"]:  # fmt: skip
         assert scenario_id in output
     # The audit trail: scenario 1's significance test traced down to both files.
     trace = output.split("Audit trail (traceability)")[1]

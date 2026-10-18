@@ -33,7 +33,7 @@ from pydantic import BaseModel, Field
 
 from quantlab.capabilities import count_episodes
 from quantlab.config import Settings
-from quantlab.guardrails import Action, Issue, make_issue
+from quantlab.guardrails import PERIOD_NAMES, Action, Issue, make_issue
 from quantlab.plan import Plan, describe_plan
 from quantlab.planner import (
     FALLBACK_BETA,
@@ -43,7 +43,7 @@ from quantlab.planner import (
 )
 from quantlab.types import ANNUALISATION_FACTORS, Artifact, DataType, TokenUsage
 
-NARRATOR_PROMPT_VERSION = "narrator-v5"
+NARRATOR_PROMPT_VERSION = "narrator-v6"
 
 # The note shown directly under the narrative (app and CLI) and kept in the run
 # record: who wrote it and, only when the grounding check passed, that its numbers
@@ -70,7 +70,9 @@ write a decimal as a percentage (0.1275 as 12.75%).
 6. Describe what was computed; do not claim causes or forecasts. Never say that a flag causes \
 or predicts returns: a comparison or test shows an association in this sample, nothing more.
 7. Claim statistical significance only from a significance test (hac_mean_difference); \
-compare_groups is descriptive. For a test, state the difference in means and its p-value, and \
+compare_groups is descriptive. For a test, first answer the question plainly: was the outcome \
+higher or lower after flagged periods, by how much on average, and is the difference \
+statistically significant. Then state the difference in means and its p-value, and \
 always the number of distinct flagged episodes. If the p-value is 0.05 or more, write "no \
 statistically significant difference" (never "no difference"); below 0.05, write "a \
 statistically significant difference at the 5% level".
@@ -447,6 +449,22 @@ def template_narrative(
                 "a statistically significant difference at the 5% level"
                 if significant
                 else "no statistically significant difference at the 5% level"
+            )
+            # The answer first, in plain words: which way the outcome moved after the
+            # flagged periods, by how much on average, and whether that is significant.
+            # The direction comes from the exact difference; the size is its displayed
+            # value without the sign (the grounding check accepts absolute values).
+            difference = artifacts[sid].value["diff_means"]
+            period = PERIOD_NAMES.get(artifacts[sid].meta.frequency, "period")
+            if "horizon" in d:  # forward returns: the period after each flag
+                subject, when = f"Next-{period} returns", "after"
+            else:  # returns of the flagged periods themselves
+                subject, when = "Returns", "in"
+            direction = "higher" if difference > 0 else "lower" if difference < 0 else "the same"
+            sentences.append(
+                f"{subject} were {direction} {when} flagged {period}s than {when} the other "
+                f"{period}s, by {d['diff_means'].lstrip('-')} on average, and the difference "
+                f"is{'' if significant else ' not'} statistically significant at the 5% level."
             )
             outcome = f"{d['horizon']}-period forward returns" if "horizon" in d else "returns"
             sentences.append(

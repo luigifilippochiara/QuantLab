@@ -23,19 +23,18 @@ from quantlab.types import Artifact, ArtifactMeta, DataType, Frequency, SeriesKi
 from conftest import (
     ARIMA_PLAN,
     RETURN_METHOD_APPROVAL,
-    SCENARIO_6_APPROVALS,
     SPREAD_PLAN,
+    VOLATILITY_APPROVALS,
     as_plan,
     build_synthetic_data_dir,
     raw_plan,
+    volatility_plan,
 )
 
-SUCCESS = "nasdaq_volatility_success"  # scenario 6
 
-
-def daily_scenario_6() -> dict:
-    """Scenario 6 kept at daily frequency (resample D): windows count trading days."""
-    raw = raw_plan(SUCCESS)
+def daily_volatility_plan() -> dict:
+    """The volatility plan kept at daily frequency (resample D): windows count trading days."""
+    raw = volatility_plan()
     raw["steps"][1]["params"]["freq"] = "D"
     return raw
 
@@ -61,14 +60,14 @@ def test_blocked_plan_runs_nothing(catalog: Catalog) -> None:
 
 
 def test_unapproved_plan_runs_nothing(catalog: Catalog) -> None:
-    result = execute_plan(as_plan(raw_plan(SUCCESS)), catalog, approved_issue_ids=set())
+    result = execute_plan(as_plan(volatility_plan()), catalog, approved_issue_ids=set())
     assert result.status == "blocked"
     assert result.step_records == []
     assert RETURN_METHOD_APPROVAL in result.error
 
 
-def test_scenario_6_flags_high_volatility_weeks(catalog: Catalog) -> None:
-    result = execute_plan(as_plan(raw_plan(SUCCESS)), catalog, set(SCENARIO_6_APPROVALS))
+def test_volatility_plan_flags_high_volatility_weeks(catalog: Catalog) -> None:
+    result = execute_plan(as_plan(volatility_plan()), catalog, set(VOLATILITY_APPROVALS))
     assert result.status == "completed", result.error
     assert [r.step_id for r in result.step_records] == [f"s{i}" for i in range(1, 9)]
     assert all(r.output_hash and len(r.output_hash) == 64 for r in result.step_records)
@@ -83,8 +82,8 @@ def test_scenario_6_flags_high_volatility_weeks(catalog: Catalog) -> None:
 
 
 def test_compare_groups_and_the_test_on_aligned_inputs(catalog: Catalog) -> None:
-    # Scenario 6: next-week forward returns (s6) against the weekly flags (s5).
-    result = execute_plan(as_plan(raw_plan(SUCCESS)), catalog, set(SCENARIO_6_APPROVALS))
+    # The volatility plan: next-week forward returns (s6) against the weekly flags (s5).
+    result = execute_plan(as_plan(volatility_plan()), catalog, set(VOLATILITY_APPROVALS))
     assert result.status == "completed", result.error
     forward, flags = result.artifacts["s6"].value, result.artifacts["s5"].value
     # The flags start after the warm-up; the forward returns stop one week early.
@@ -108,13 +107,13 @@ def test_execution_is_deterministic(catalog: Catalog) -> None:
     ]
 
 
-@pytest.mark.parametrize("name", ["scenario_6", "spread", "daily_scenario_6", "lookahead"])
+@pytest.mark.parametrize("name", ["volatility", "spread", "daily_volatility", "lookahead"])
 def test_dry_run_metadata_matches_runtime_metadata(name: str, catalog: Catalog) -> None:
     """The validator's predictions must equal what the capability functions produce."""
     raw = {
-        "scenario_6": raw_plan(SUCCESS),
+        "volatility": volatility_plan(),
         "spread": SPREAD_PLAN,
-        "daily_scenario_6": daily_scenario_6(),
+        "daily_volatility": daily_volatility_plan(),
         "lookahead": raw_plan("vix_full_sample_lookahead"),
     }
     plan = as_plan(raw[name])
@@ -139,7 +138,7 @@ def test_dry_run_metadata_matches_runtime_metadata(name: str, catalog: Catalog) 
 def test_e01_tampered_snapshot_blocks_cleanly(catalog: Catalog) -> None:
     path = catalog.path_for("NASDAQCOM")
     path.write_text(path.read_text() + "2099-01-01,1.0\n")
-    result = execute_plan(as_plan(raw_plan(SUCCESS)), catalog, set(SCENARIO_6_APPROVALS))
+    result = execute_plan(as_plan(volatility_plan()), catalog, set(VOLATILITY_APPROVALS))
     assert result.status == "blocked"
     assert "E01" in runtime_codes(result)
     assert result.step_records[0].status == "blocked"

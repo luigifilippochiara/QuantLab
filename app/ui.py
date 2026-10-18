@@ -327,15 +327,16 @@ def series_figure(
         )
     )
     if flags is not None:
-        for start, end in flag_spans(flags):
-            figure.add_vrect(
-                x0=start,
-                x1=end,
-                fillcolor=REGIME_COLOR,
-                opacity=0.22,
-                line_width=0,
-                layer="below",
-            )
+        # One full-height band per flagged span, all set in one layout update:
+        # add_vrect, called once per span, re-validates every shape added before it,
+        # which takes seconds for hundreds of spans (e.g. scattered single-week dips).
+        bands = [
+            {"type": "rect", "xref": "x", "yref": "y domain", "x0": start, "x1": end, "y0": 0,
+             "y1": 1, "fillcolor": REGIME_COLOR, "opacity": 0.22, "line": {"width": 0},
+             "layer": "below"}
+            for start, end in flag_spans(flags)
+        ]  # fmt: skip
+        figure.update_layout(shapes=bands)
         # Legend-only entry so the shading is named, not identified by colour alone.
         figure.add_trace(
             go.Scatter(

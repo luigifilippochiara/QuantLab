@@ -16,7 +16,7 @@ from quantlab.types import TokenUsage
 from conftest import SCENARIO_6_APPROVALS, raw_plan
 from fakes import FakeAnthropicClient, text_response, tool_response
 
-SUCCESS = SCENARIOS_BY_ID["nasdaq_volatility_success"]  # scenario 6
+SUCCESS = SCENARIOS_BY_ID["buy_the_dip_tech"]  # scenario 6
 
 
 def start(settings: Settings, scenario_id: str = SUCCESS.id) -> Session:
@@ -50,7 +50,7 @@ def test_end_to_end_scenario_6_with_manifest_and_replay(settings: Settings) -> N
         ("V10", "Validator", "Deterministic")}  # fmt: skip
     assert [a.issue_id for a in record.approvals] == SCENARIO_6_APPROVALS
     assert record.llm.provider == "mock" and record.registry_version
-    assert record.plan_original["steps"][4]["params"]["quantile"] == 0.9  # as proposed
+    assert record.plan_original["steps"][3]["params"]["quantile"] == 0.10  # as proposed
     assert record.plan_final["steps"] == record.plan_original["steps"]  # no hidden defaults
     assert set(record.stage_timings_ms) == {"planning", "validation", "execution", "narration"}
 
@@ -85,29 +85,29 @@ def test_ungrounded_llm_narrative_is_withheld_and_recorded_as_n01(settings: Sett
 def test_param_edit_revalidates_and_clears_approvals(settings: Settings) -> None:
     session = start(settings)
     session.approve(SCENARIO_6_APPROVALS)
-    report = session.apply_param_edits({"s3": {"method": "simple"}, "s4": {"window": 26}})
+    report = session.apply_param_edits({"s3": {"method": "log"}, "s4": {"min_periods": 104}})
     assert not report.is_blocked
     assert session.approvals == []  # the approved plan changed: approve again
-    assert "method='simple'" in session.unresolved_approvals()[0].message
+    assert "method='log'" in session.unresolved_approvals()[0].message
     assert [(e.step_id, e.param, e.old, e.new) for e in session.edits] == [
-        ("s3", "method", "log", "simple"),
-        ("s4", "window", 12, 26),
+        ("s3", "method", "simple", "log"),
+        ("s4", "min_periods", 52, 104),
     ]
     session.approve(SCENARIO_6_APPROVALS)
     session.execute()
-    assert session.execution.artifacts["s3"].meta.return_method == "simple"
+    assert session.execution.artifacts["s3"].meta.return_method == "log"
 
 
 def test_invalid_edit_blocks_execution(settings: Settings) -> None:
     session = start(settings)
-    report = session.apply_param_edits({"s4": {"window": 1}})
+    report = session.apply_param_edits({"s4": {"min_periods": 1}})
     assert report.is_blocked and "V03" in report.codes()
     allowed, reason = session.can_execute()
     assert not allowed and "V03" in reason
     with pytest.raises(ExecutionRefusedError):
         session.execute()
     # Fixing the edit unblocks it again.
-    assert not session.apply_param_edits({"s4": {"window": 12}}).is_blocked
+    assert not session.apply_param_edits({"s4": {"min_periods": 52}}).is_blocked
 
 
 def test_only_open_approval_issues_can_be_approved(settings: Settings) -> None:
@@ -194,8 +194,8 @@ def test_a_plan_shown_is_saved_while_it_awaits_a_decision(settings: Settings) ->
     assert record.plan_shown_at and record.decision is None and record.decided_at is None
     assert record.stage_tokens == {"planning": TokenUsage()}  # mock: zero tokens
     # An edit re-validates and saves again, so the record always holds the current plan.
-    session.apply_param_edits({"s4": {"window": 26}})
-    assert load_run(session.run_id, settings.runs_dir).param_diff[0].final == 26
+    session.apply_param_edits({"s4": {"min_periods": 104}})
+    assert load_run(session.run_id, settings.runs_dir).param_diff[0].final == 104
 
 
 def test_executing_is_the_approval_decision(settings: Settings) -> None:

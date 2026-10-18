@@ -1793,3 +1793,45 @@ set. A `VIX_FLAGSHIP` migration marks examples 1 and 5 and their eval cases as r
 the older records. The canned plans are now `canned-scenarios-v13`. The flagship's
 description is now "does the Swiss franc strengthen after stress weeks?", since the stress
 signal is no longer US tech equities.
+
+## Example 6 asks "Buy the dip in tech?"
+
+**Example 6 is now `buy_the_dip_tech`**: does the NASDAQ bounce back the week after its
+biggest drops?
+- **The plan, seven steps:** weekly Friday closes, weekly simple returns, the weeks below
+  the 10th percentile of past weekly returns (`flag_regime`, direction below, expanding,
+  after 52 weeks), then the following week's simple return, compared and tested.
+- **Approvals:** two V10s (the two return methods), and nothing else fires.
+- **The dips:** 334 weeks in 258 episodes. The cutoff is −1.5% in 1972 and −2.9% today.
+- **The answer:** no bounce. The following week averaged −0.124% after a dip and +0.275%
+  otherwise, lower by 0.40 percentage points, p-value 0.068, so not significant at 5%.
+- **The narrative answers the question first.** The template's test now starts with
+  one sentence: "Next-week returns were higher/lower after flagged weeks than after the
+  other weeks, by X on average, and the difference is / is not statistically significant
+  at the 5% level". The direction comes from the exact difference. The size is the
+  displayed difference without its sign, which the grounding check accepts.
+- **The live narrator gets the same rule** (`narrator-v6`).
+
+**The old example 6 lives on as a test fixture.** It was the only plan using log
+returns and `rolling_volatility`, and the anchor of most guardrail tests (V01, V03,
+V04, V08, V09, V10, V11, the dry run). It is now `conftest.VOLATILITY_PLAN`, so those
+tests and the executor, lineage, narrator, planner and scoring tests keep their
+assertions. The tests that need a plan from the mock planner were ported to the new
+example 6: engine, editing, app editor and monitoring. The editor's number field is now
+the flag's `min_periods`, also counted in periods. Every capability stays tested.
+
+**One eval case changes in mock mode.** `nasdaq_weekly_log_vol` matched the old example 6
+in mock mode (partial credit). It now matches nothing and is declined, like the other
+free-form requests. Partial credit is still tested with a fake live planner. Golden
+records: a `BUY_THE_DIP` migration marks the old example 6, its eval case and
+`nasdaq_weekly_log_vol` as replaced, and the record `buy_the_dip` holds all six examples.
+
+**Example 2's request** is now "When did the recession alarm ring? Compute the spread
+... and show the weeks when the curve was most negative." The plan and outcome are
+unchanged, and the earlier section above keeps the wording it was written with.
+
+**Shading many flagged spans at once.** Example 6 flags scattered single weeks (258
+spans weekly, about 700 if switched to daily), and adding one `add_vrect` per span took
+7 and 60 seconds, because each call re-validates every shape before it. The chart now
+builds all the bands as one list of shapes in a single layout update, with the same
+extent, colour and layer (0.02 s for 258 spans). A test pins one band per span.

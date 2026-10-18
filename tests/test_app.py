@@ -32,11 +32,11 @@ from quantlab.plan import Step
 from quantlab.registry import REGISTRY
 from quantlab.types import TokenUsage
 
-from conftest import SCENARIO_6_APPROVALS, as_plan, raw_plan
+from conftest import SCENARIO_6_APPROVALS, as_plan, volatility_plan
 from fakes import FakeAnthropicClient, text_response
 
 PAGES = PROJECT_ROOT / "app" / "pages"
-SCENARIO_6_REQUEST = SCENARIOS_BY_ID["nasdaq_volatility_success"].request
+SCENARIO_6_REQUEST = SCENARIOS_BY_ID["buy_the_dip_tech"].request
 
 
 @pytest.fixture
@@ -234,7 +234,7 @@ def test_scenario_4_shows_a_simulated_planner_blocked_by_v02(app_env: Settings) 
 
 def test_execute_is_green_and_reject_red(app_env: Settings) -> None:
     app = open_page("analysis.py")
-    app.sidebar.button(key="scenario-nasdaq_volatility_success").click().run()
+    app.sidebar.button(key="scenario-buy_the_dip_tech").click().run()
     button(app, "Generate plan").click().run()
     # Each decision button has a key, whose CSS class the page's style block colours.
     assert (app.button(key="execute").label, app.button(key="reject-plan").label) == (
@@ -246,7 +246,7 @@ def test_execute_is_green_and_reject_red(app_env: Settings) -> None:
 
 def test_the_reviewer_can_reject_a_plan(app_env: Settings) -> None:
     app = open_page("analysis.py")
-    app.sidebar.button(key="scenario-nasdaq_volatility_success").click().run()
+    app.sidebar.button(key="scenario-buy_the_dip_tech").click().run()
     button(app, "Generate plan").click().run()
     button(app, "Reject plan").click().run()
     assert not app.exception, app.exception
@@ -259,7 +259,7 @@ def test_the_reviewer_can_reject_a_plan(app_env: Settings) -> None:
 @pytest.mark.parametrize(
     ("scenario_id", "enforcer", "category"),
     [
-        ("nasdaq_volatility_success", "Validator · Type: Deterministic", "Methodology"),
+        ("buy_the_dip_tech", "Validator · Type: Deterministic", "Methodology"),
         ("arima_forecast_block", "Planner · Type: LLM", "Approved scope"),
         ("spread_frequency_mismatch_block", "Validator · Type: Deterministic", "Methodology"),
     ],
@@ -280,7 +280,7 @@ def test_every_issue_shows_who_enforces_it(
 def test_ungrounded_llm_narrative_is_withheld_with_an_n01_issue(app_env: Settings) -> None:
     # Planned and executed in mock mode; only the narrative comes from a (fake) LLM,
     # which invents a number.
-    scenario = SCENARIOS_BY_ID["nasdaq_volatility_success"]
+    scenario = SCENARIOS_BY_ID["buy_the_dip_tech"]
     session = Session.start(scenario.request, list(scenario.dataset_ids), "mock", app_env)
     session.create_plan()
     session.approve(SCENARIO_6_APPROVALS)
@@ -469,7 +469,7 @@ def issue_codes(app: AppTest) -> set[str]:
 def plan_scenario_6(app_env: Settings) -> AppTest:
     """The analysis page with scenario 6's plan generated (the NASDAQ-only analysis)."""
     app = open_page("analysis.py")
-    app.sidebar.button(key="scenario-nasdaq_volatility_success").click().run()
+    app.sidebar.button(key="scenario-buy_the_dip_tech").click().run()
     button(app, "Generate plan").click().run()
     return app
 
@@ -477,8 +477,9 @@ def plan_scenario_6(app_env: Settings) -> AppTest:
 def test_weekly_to_daily_edit_re_validates_and_runs_after_re_approval(app_env: Settings) -> None:
     app = plan_scenario_6(app_env)
     assert any("adjust parameters below" in i.value for i in app.info)
-    window = next(n for n in app.number_input if n.key.endswith("-s4-window"))
-    assert window.label == "window (in periods of the series frequency)" and window.value == 12
+    history = next(n for n in app.number_input if n.key.endswith("-s4-min_periods"))
+    assert history.label == "min_periods (in periods of the series frequency)"
+    assert history.value == 52
 
     next(s for s in app.selectbox if s.key.endswith("-s2-freq")).select("D").run()
     assert button(app, "Execute").disabled  # the change is not applied yet
@@ -507,11 +508,11 @@ def test_one_click_applies_a_typed_value(app_env: Settings) -> None:
     assert any(i.value.startswith("No changes to apply") for i in app.info)
     assert issue_codes(app) == {"V10"}
     # The typed value and the click arrive in the same run: one click applies it.
-    window = next(n for n in app.number_input if n.key.endswith("-s4-window"))
-    window.set_value(26)
+    history = next(n for n in app.number_input if n.key.endswith("-s4-min_periods"))
+    history.set_value(104)
     button(app, "Apply changes").click().run()
     assert any("Changes applied and re-validated" in i.value for i in app.info)
-    assert any(c.value == ":blue[edited (was 12)]" for c in app.caption)
+    assert any(c.value == ":blue[edited (was 52)]" for c in app.caption)
 
 
 def test_apply_is_highlighted_only_while_there_are_unapplied_edits(app_env: Settings) -> None:
@@ -521,17 +522,17 @@ def test_apply_is_highlighted_only_while_there_are_unapplied_edits(app_env: Sett
         return app.button(key="apply-edits").proto.type
 
     def quantile():  # the field of the plan version shown now
-        return next(n for n in app.number_input if n.key.endswith("-s5-quantile"))
+        return next(n for n in app.number_input if n.key.endswith("-s4-quantile"))
 
     assert apply_style() == "secondary"  # no edits: white
-    quantile().set_value(0.95).run()
+    quantile().set_value(0.05).run()
     assert apply_style() == "primary"  # an edit not applied yet: red
     app.button(key="apply-edits").click().run()
     assert any("Changes applied and re-validated" in i.value for i in app.info)
     assert apply_style() == "secondary"  # the applied plan is the new baseline
-    quantile().set_value(0.9).run()
+    quantile().set_value(0.1).run()
     assert apply_style() == "primary"
-    quantile().set_value(0.95).run()  # set back to the applied value: nothing to apply
+    quantile().set_value(0.05).run()  # set back to the applied value: nothing to apply
     assert apply_style() == "secondary"
     assert not any("not applied yet" in c.value for c in app.caption)
 
@@ -541,7 +542,7 @@ def test_execute_ignores_a_click_while_a_change_is_not_applied(app_env: Settings
     approve_all(app)
     # A value typed, then Execute clicked straight away: both reach the same run, where
     # the unapplied change disables Execute, so Streamlit does not count the click.
-    next(n for n in app.number_input if n.key.endswith("-s4-window")).set_value(26)
+    next(n for n in app.number_input if n.key.endswith("-s4-min_periods")).set_value(104)
     button(app, "Execute").click().run()
     assert not app.exception, app.exception
     assert "Results" not in [h.value for h in app.subheader]  # nothing ran
@@ -550,7 +551,7 @@ def test_execute_ignores_a_click_while_a_change_is_not_applied(app_env: Settings
 
 def test_full_sample_edit_raises_v09_and_reset_clears_it(app_env: Settings) -> None:
     app = plan_scenario_6(app_env)
-    next(s for s in app.selectbox if s.key.endswith("-s5-method")).select("full_sample").run()
+    next(s for s in app.selectbox if s.key.endswith("-s4-method")).select("full_sample").run()
     button(app, "Apply changes").click().run()
     assert issue_codes(app) == {"V09", "V10"}
     button(app, "Reset to planner").click().run()
@@ -565,37 +566,42 @@ def step_headers(app: AppTest) -> list[tuple[str, bool]]:
 def test_plan_steps_are_collapsed_and_approvals_stay_in_validation(app_env: Settings) -> None:
     app = plan_scenario_6(app_env)
     headers = step_headers(app)
-    assert [is_open for _, is_open in headers] == [False] * 8  # the V10 steps too
+    assert [is_open for _, is_open in headers] == [False] * 7  # the V10 steps too
     assert headers[0][0] == "Step 1 · C01 · Load series · NASDAQCOM — Synthetic equity index"
-    assert headers[2][0] == "Step 3 · C03 · Compute returns · method: log, periods: 1"  # no badge
-    assert headers[3][0] == "Step 4 · C06 · Rolling volatility · window: 12 weeks, annualize: yes"
-    assert headers[5][0] == "Step 6 · C08 · Forward return · method: simple"
-    assert headers[7][0] == "Step 8 · C10 · HAC mean difference"  # no parameters: no summary
+    assert (
+        headers[2][0] == "Step 3 · C03 · Compute returns · method: simple, periods: 1"
+    )  # no badge
+    assert headers[3][0] == (
+        "Step 4 · C07 · Flag regime · quantile: 0\\.1, method: expanding, direction: below"
+    )
+    assert headers[4][0] == "Step 5 · C08 · Forward return · method: simple"
+    assert headers[6][0] == "Step 7 · C10 · HAC mean difference"  # no parameters: no summary
     # The V10 approvals are still required, in the Validation section, naming their steps.
     v10 = [m.value for m in app.markdown if "**V10 MATERIAL_ASSUMPTION**" in m.value]
     assert v10[0].endswith("· Step 3 · C03 · Compute returns (s3)")
-    assert v10[1].endswith("· Step 6 · C08 · Forward return (s6)")
+    assert v10[1].endswith("· Step 5 · C08 · Forward return (s5)")
     assert len([c for c in app.checkbox if c.key.startswith("approve-")]) == 2
     assert button(app, "Execute").disabled
     # Collapsing is visual only: the editor still runs.
-    assert next(n for n in app.number_input if n.key.endswith("-s4-window")).value == 12
+    assert next(n for n in app.number_input if n.key.endswith("-s4-min_periods")).value == 52
 
 
-def test_edits_are_marked_and_window_units_follow_the_frequency(app_env: Settings) -> None:
+def test_edits_are_marked_and_period_counts_follow_the_frequency(app_env: Settings) -> None:
     app = plan_scenario_6(app_env)
     next(s for s in app.selectbox if s.key.endswith("-s2-freq")).select("D").run()
     button(app, "Apply changes").click().run()
     headers = step_headers(app)
     assert headers[1] == ("Step 2 · C02 · Resample · freq: D, how: last :blue-badge[:material/"
                           "edit: edited]", False)  # fmt: skip
-    # Window 12 now counts trading days: the summary says so, and nothing warns.
-    assert headers[3] == (
-        "Step 4 · C06 · Rolling volatility · window: 12 trading days, annualize: yes",
-        False,
-    )
+    # min_periods 52 now counts trading days: its field says it is counted in periods
+    # of the series frequency (the summary of a window shows the unit: see
+    # test_step_summary_falls_back_to_every_parameter), and nothing warns.
+    history = next(n for n in app.number_input if n.key.endswith("-s4-min_periods"))
+    assert history.label == "min_periods (in periods of the series frequency)"
+    assert history.value == 52
     assert not any("Warning]" in label for label, _ in headers)
     # The new V10 approvals of this plan version open nothing and add no badge.
-    assert headers[2] == ("Step 3 · C03 · Compute returns · method: log, periods: 1", False)
+    assert headers[2] == ("Step 3 · C03 · Compute returns · method: simple, periods: 1", False)
 
 
 def test_step_summary_falls_back_to_every_parameter(app_env: Settings) -> None:
@@ -608,6 +614,10 @@ def test_step_summary_falls_back_to_every_parameter(app_env: Settings) -> None:
     assert ui.step_summary(flag, spec, "W", catalog) == "quantile: 0.9, method: expanding"
     every = dataclasses.replace(spec, summary_params=())
     assert ui.step_summary(flag, every, "W", catalog).endswith("min periods: 52 weeks")
+    # A window counted in periods shows its unit, which follows the input's frequency.
+    volatility = Step(**volatility_plan()["steps"][3])  # rolling_volatility, window 12
+    summary = ui.step_summary(volatility, REGISTRY["rolling_volatility"], "D", catalog)
+    assert summary == "window: 12 trading days, annualize: yes"
     unknown = Step(id="s2", capability="arima", params={"steps_ahead": 1})
     assert ui.step_summary(unknown, None, None, catalog) == "steps ahead: 1"
     header = ui.step_header(2, unknown, "steps ahead: 1", {Action.BLOCK}, edited=False)
@@ -619,7 +629,7 @@ def test_unapplied_edits_compares_the_fields_with_the_last_validated_plan(
 ) -> None:
     import ui  # importable once app_env has put app/ on the path
 
-    plan = as_plan(raw_plan("nasdaq_volatility_success"))
+    plan = as_plan(volatility_plan())
     fields = {step.id: dict(step.params) for step in plan.steps}  # every field as planned
     assert ui.unapplied_edits(plan, fields) == {}  # no change
     fields["s5"]["quantile"] = 0.95
@@ -629,11 +639,24 @@ def test_unapplied_edits_compares_the_fields_with_the_last_validated_plan(
 
     # Types count, as for the validator: a planner's 12.0 for the int window (V03)
     # differs from the field's 12, so applying the field's value fixes it.
-    raw = raw_plan("nasdaq_volatility_success")
+    raw = volatility_plan()
     next(s for s in raw["steps"] if s["id"] == "s4")["params"]["window"] = 12.0
     assert ui.unapplied_edits(as_plan(raw), fields) == {"s4": {"window": 12}}
     assert not ui.same_value(True, 1)
     assert ui.same_value({"a": [0.9], "b": 1}, {"b": 1, "a": [0.9]})  # key order is no change
+
+
+def test_flagged_spans_are_shaded_one_band_each(app_env: Settings) -> None:
+    import ui  # importable once app_env has put app/ on the path
+
+    days = pd.bdate_range("2024-01-01", periods=6)
+    values = pd.Series([1.0, 2.0, 3.0, 4.0, 5.0, 6.0], index=days)
+    flags = pd.Series([True, True, False, True, False, False], index=days)
+    bands = ui.series_figure(values, "title", "name", flags).layout.shapes
+    # Two flagged spans, each from its first date to the next observation's date, the
+    # full height of the chart, behind the line.
+    assert [(b.x0, b.x1) for b in bands] == [(days[0], days[2]), (days[3], days[4])]
+    assert {(b.yref, b.y0, b.y1, b.layer) for b in bands} == {("y domain", 0, 1, "below")}
 
 
 def chart_bars(app: AppTest) -> list[int]:
@@ -672,7 +695,7 @@ def app_session(scenario_id: str, settings: Settings) -> Session:
 
 def headless_replayed_run(settings: Settings) -> str:
     """A headless run (as the CLI makes), replayed once; returns its run id."""
-    scenario = SCENARIOS_BY_ID["nasdaq_volatility_success"]
+    scenario = SCENARIOS_BY_ID["buy_the_dip_tech"]
     session = run_request(scenario.request, list(scenario.dataset_ids), "mock", approve=True,
                           settings=settings)  # fmt: skip
     assert replay(session.run_id, settings).all_match
@@ -682,15 +705,15 @@ def headless_replayed_run(settings: Settings) -> str:
 def test_monitoring_page_sections_cards_and_charts(app_env: Settings) -> None:
     # Counted: approved and executed, rejected, blocked (V08, with a V09 to approve), failed,
     # and a live run.
-    approved = app_session("nasdaq_volatility_success", app_env)
+    approved = app_session("buy_the_dip_tech", app_env)
     approved.approve([i.issue_id for i in approved.unresolved_approvals()])
     approved.execute()
     approved.narrate()
     approved.save_record()
-    app_session("nasdaq_volatility_success", app_env).reject()
+    app_session("buy_the_dip_tech", app_env).reject()
     app_session("spread_frequency_mismatch_block", app_env)
     # Left out: a plan still awaiting a decision, and a headless run (whose replay counts).
-    app_session("nasdaq_volatility_success", app_env)
+    app_session("buy_the_dip_tech", app_env)
     headless_replayed_run(app_env)
     now = utc_now()
     save_run(RunRecord(run_id=new_run_id(), created_at=now, status="failed", request="x",
@@ -779,7 +802,7 @@ def test_monitoring_page_sections_cards_and_charts(app_env: Settings) -> None:
 
 def test_monitoring_page_with_no_counted_run_still_shows_replays(app_env: Settings) -> None:
     headless_replayed_run(app_env)
-    app_session("nasdaq_volatility_success", app_env)  # awaiting a decision
+    app_session("buy_the_dip_tech", app_env)  # awaiting a decision
     app = open_page("monitoring.py")
     assert app.info[0].value.startswith("No decided runs from the Analysis page yet")
     cards = {m.proto.label: m.proto for m in app.metric}

@@ -45,12 +45,11 @@ from quantlab.plan import Plan, plan_tool_schema
 
 from conftest import (
     ARIMA_PLAN,
-    SCENARIO_6_APPROVALS,
     SPREAD_PLAN,
+    VOLATILITY_APPROVALS,
     raw_plan,
+    volatility_plan,
 )
-
-SUCCESS = "nasdaq_volatility_success"  # scenario 6, the anchor case
 
 
 def validate(raw: dict[str, Any], catalog: Catalog, **budgets: int) -> ValidationReport:
@@ -69,17 +68,18 @@ def step(raw: dict[str, Any], step_id: str) -> dict[str, Any]:
 
 @pytest.mark.parametrize("code", [c for c in GUARDRAILS if c.startswith("V")])
 def test_clean_plan_triggers_nothing(code: str, catalog: Catalog) -> None:
-    # The spread plan is fully clean; scenario 6 only needs the return-method approvals.
+    # The spread plan is fully clean; the volatility plan (the anchor of the tests
+    # below, see conftest) only needs the return-method approvals.
     assert code not in validate(SPREAD_PLAN, catalog).codes()
     if code != "V10":
-        assert code not in validate(raw_plan(SUCCESS), catalog).codes()
+        assert code not in validate(volatility_plan(), catalog).codes()
 
 
-def test_scenario_6_needs_only_the_return_method_approvals(catalog: Catalog) -> None:
+def test_volatility_plan_needs_only_the_return_method_approvals(catalog: Catalog) -> None:
     # One for compute_returns (s3) and one for forward_return (s6); no BLOCK, no WARN.
-    report = validate(raw_plan(SUCCESS), catalog)
+    report = validate(volatility_plan(), catalog)
     assert not report.is_blocked and report.warnings == []
-    assert [i.issue_id for i in report.approvals_required] == SCENARIO_6_APPROVALS
+    assert [i.issue_id for i in report.approvals_required] == VOLATILITY_APPROVALS
 
 
 # --- R01 REQUEST_TOO_LONG (the request check, before the planner) ----------------
@@ -109,7 +109,7 @@ def test_r01_blocks_too_many_words_or_characters(text: str, counted: str) -> Non
 
 
 def test_v01_extra_fields_are_rejected() -> None:
-    raw = {"plan_id": "p", "request": "r", **raw_plan(SUCCESS)}
+    raw = {"plan_id": "p", "request": "r", **volatility_plan()}
     raw["steps"][0]["code"] = "import os"
     plan, issues = check_schema(raw)
     assert plan is None
@@ -121,11 +121,11 @@ def test_v01_wrong_structure_and_planner_failure() -> None:
     plan, issues = check_schema({"plan_id": "p", "request": "r", "steps": "not a list"})
     assert plan is None and issues[0].code == "V01"
     assert planner_failure_issue("timeout").code == "V01"
-    assert check_schema({"plan_id": "p", "request": "r", **raw_plan(SUCCESS)})[1] == []
+    assert check_schema({"plan_id": "p", "request": "r", **volatility_plan()})[1] == []
 
 
 def test_v01_empty_plan(catalog: Catalog) -> None:
-    raw = raw_plan(SUCCESS)
+    raw = volatility_plan()
     raw["steps"] = []
     assert "V01" in validate(raw, catalog).codes()
 
@@ -141,7 +141,7 @@ def test_v01_empty_plan(catalog: Catalog) -> None:
     ],
 )
 def test_v01_bad_references(inputs: dict[str, str], catalog: Catalog) -> None:
-    raw = raw_plan(SUCCESS)
+    raw = volatility_plan()
     step(raw, "s4")["inputs"] = inputs
     report = validate(raw, catalog)
     assert "V01" in report.codes() and report.is_blocked
@@ -149,7 +149,7 @@ def test_v01_bad_references(inputs: dict[str, str], catalog: Catalog) -> None:
 
 
 def test_v01_duplicate_step_ids(catalog: Catalog) -> None:
-    raw = raw_plan(SUCCESS)
+    raw = volatility_plan()
     step(raw, "s5")["id"] = "s4"
     assert "V01:s4:duplicate" in [i.issue_id for i in validate(raw, catalog).blocks]
 
@@ -184,14 +184,14 @@ def test_v02_a_planner_that_invents_a_model_is_still_blocked(catalog: Catalog) -
     ],
 )
 def test_v03_invalid_params(step_id: str, params: dict[str, Any], catalog: Catalog) -> None:
-    raw = raw_plan(SUCCESS)
+    raw = volatility_plan()
     step(raw, step_id)["params"] = params
     report = validate(raw, catalog)
     assert "V03" in report.codes() and report.is_blocked
 
 
 def test_defaults_are_filled_in() -> None:
-    raw = raw_plan(SUCCESS)
+    raw = volatility_plan()
     del step(raw, "s5")["params"]["min_periods"], step(raw, "s5")["params"]["direction"]
     filled = fill_defaults(Plan(plan_id="p", request="r", **raw))
     assert filled.steps[4].params == {"method": "expanding", "quantile": 0.90,
@@ -204,7 +204,7 @@ def test_defaults_are_filled_in() -> None:
 
 
 def test_v04_volatility_of_a_price_level(catalog: Catalog) -> None:
-    raw = raw_plan(SUCCESS)
+    raw = volatility_plan()
     step(raw, "s4")["inputs"] = {"series": "s2"}  # weekly prices, not returns
     report = validate(raw, catalog)
     assert "V04" in report.codes()
@@ -212,14 +212,14 @@ def test_v04_volatility_of_a_price_level(catalog: Catalog) -> None:
 
 
 def test_v04_flags_are_not_a_series(catalog: Catalog) -> None:
-    raw = raw_plan(SUCCESS)
+    raw = volatility_plan()
     raw["steps"].append({"id": "s9", "capability": "difference", "inputs": {"series": "s5"},
                          "params": {"periods": 1}})  # fmt: skip
     assert "V04:s9:series" in [i.issue_id for i in validate(raw, catalog).blocks]
 
 
 def test_v04_compare_groups_needs_flags(catalog: Catalog) -> None:
-    raw = raw_plan(SUCCESS)
+    raw = volatility_plan()
     raw["steps"].append(
         {"id": "s9", "capability": "compare_groups", "inputs": {"values": "s3", "flags": "s4"}}
     )  # s4 is a volatility series, not flags
@@ -228,7 +228,7 @@ def test_v04_compare_groups_needs_flags(catalog: Catalog) -> None:
 
 @pytest.mark.parametrize(("outcome", "kind"), [("s2", "price_level"), ("s4", "volatility")])
 def test_v04_the_test_needs_a_return_outcome(outcome: str, kind: str, catalog: Catalog) -> None:
-    raw = raw_plan(SUCCESS)
+    raw = volatility_plan()
     step(raw, "s8")["inputs"]["outcome"] = outcome  # a weekly price level or the volatility
     report = validate(raw, catalog)
     assert [i.issue_id for i in report.blocks] == ["V04:s8:outcome"]
@@ -244,7 +244,7 @@ def test_v04_the_test_needs_a_return_outcome(outcome: str, kind: str, catalog: C
 
 
 def test_v05_too_many_steps(catalog: Catalog) -> None:
-    raw = raw_plan(SUCCESS)
+    raw = volatility_plan()
     for i in range(9, 17):
         raw["steps"].append({"id": f"s{i}", "capability": "difference",
                              "inputs": {"series": "s2"}, "params": {"periods": 1}})  # fmt: skip
@@ -263,10 +263,10 @@ def test_the_validator_does_not_check_the_request(catalog: Catalog) -> None:
 
 
 def test_v06_unknown_dataset(catalog: Catalog) -> None:
-    raw = raw_plan(SUCCESS)
+    raw = volatility_plan()
     step(raw, "s1")["params"] = {"dataset_id": "BITCOIN"}
     assert "V06" in validate(raw, catalog).codes()
-    raw = raw_plan(SUCCESS)
+    raw = volatility_plan()
     raw["dataset_ids"].append("BITCOIN")
     assert "V06" in validate(raw, catalog).codes()
 
@@ -308,7 +308,7 @@ def test_v08_spread_of_a_weekly_and_a_daily_yield(catalog: Catalog) -> None:
 
 
 def test_v08_daily_flags_against_weekly_returns(catalog: Catalog) -> None:
-    raw = raw_plan(SUCCESS)
+    raw = volatility_plan()
     step(raw, "s5")["inputs"] = {"series": "s1"}  # flags on the DAILY prices, not the weekly vol
     report = validate(raw, catalog)
     assert {i.issue_id for i in report.blocks} == {"V08:s7", "V08:s8"}
@@ -336,8 +336,8 @@ def test_v09_full_sample_threshold_needs_approval_and_explains_why(catalog: Cata
 
 
 def test_v09_says_when_it_also_invalidates_the_significance_test(catalog: Catalog) -> None:
-    # A demo edit: scenario 6's flags switched to a full-sample threshold.
-    raw = raw_plan(SUCCESS)
+    # The volatility plan's flags switched to a full-sample threshold.
+    raw = volatility_plan()
     step(raw, "s5")["params"]["method"] = "full_sample"
     report = validate(raw, catalog)
     assert not report.is_blocked
@@ -353,7 +353,7 @@ def test_v09_says_when_it_also_invalidates_the_significance_test(catalog: Catalo
 
 
 def test_v10_message_names_the_chosen_value(catalog: Catalog) -> None:
-    issues = validate(raw_plan(SUCCESS), catalog).approvals_required
+    issues = validate(volatility_plan(), catalog).approvals_required
     assert [i.code for i in issues] == ["V10", "V10"]
     assert "method='log'" in issues[0].message  # compute_returns, for the volatility
     assert "method='simple'" in issues[1].message  # forward_return applies V10 the same way
@@ -394,7 +394,7 @@ def test_v02_blocks_a_planner_that_follows_an_injection(catalog: Catalog) -> Non
 def test_v11_forward_returns_are_only_an_outcome(
     capability: str, inputs: dict[str, str], params: dict[str, Any], catalog: Catalog
 ) -> None:
-    raw = raw_plan(SUCCESS)
+    raw = volatility_plan()
     raw["steps"].append({"id": "s9", "capability": capability, "inputs": inputs,
                          "params": params})  # fmt: skip
     report = validate(raw, catalog)
@@ -408,7 +408,7 @@ def test_v11_forward_returns_are_only_an_outcome(
 
 
 def test_dry_run_propagates_metadata(catalog: Catalog) -> None:
-    dry = validate(raw_plan(SUCCESS), catalog).dry_run
+    dry = validate(volatility_plan(), catalog).dry_run
     assert dry["s1"]["frequency"] == "D" and dry["s2"]["frequency"] == "W"
     assert dry["s3"]["kind"] == "returns" and dry["s3"]["return_method"] == "log"
     assert dry["s4"]["kind"] == "volatility" and dry["s5"]["data_type"] == "flags"

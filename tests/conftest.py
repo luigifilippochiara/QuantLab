@@ -206,20 +206,83 @@ ARIMA_PLAN: dict[str, Any] = {
     "cannot_fulfill": False,
 }
 
+# A NASDAQ volatility-regime plan, kept as a test fixture (it was example 6 until the
+# buy-the-dip example replaced it): weekly log returns, their 12-week annualised
+# rolling volatility, flags above its expanding 90th percentile, then the following
+# week's simple return, compared and tested. The only plan using log returns and
+# rolling_volatility, and the anchor of most guardrail tests (each mutates a copy).
+VOLATILITY_PLAN: dict[str, Any] = {
+    "dataset_ids": ["NASDAQCOM"],
+    "steps": [
+        {"id": "s1", "capability": "load_series", "params": {"dataset_id": "NASDAQCOM"}},
+        {
+            "id": "s2",
+            "capability": "resample",
+            "inputs": {"series": "s1"},
+            "params": {"freq": "W", "how": "last"},
+        },
+        {
+            "id": "s3",
+            "capability": "compute_returns",
+            "inputs": {"series": "s2"},
+            "params": {"method": "log", "periods": 1},
+        },
+        {
+            "id": "s4",
+            "capability": "rolling_volatility",
+            "inputs": {"series": "s3"},
+            "params": {"window": 12, "annualize": True},
+        },
+        {
+            "id": "s5",
+            "capability": "flag_regime",
+            "inputs": {"series": "s4"},
+            "params": {
+                "method": "expanding",
+                "quantile": 0.90,
+                "min_periods": 52,
+                "direction": "above",
+            },
+        },
+        {
+            "id": "s6",
+            "capability": "forward_return",
+            "inputs": {"series": "s2"},
+            "params": {"method": "simple"},
+        },
+        {"id": "s7", "capability": "compare_groups", "inputs": {"values": "s6", "flags": "s5"}},
+        {
+            "id": "s8",
+            "capability": "hac_mean_difference",
+            "inputs": {"outcome": "s6", "flags": "s5"},
+        },
+    ],  # fmt: skip
+    "cannot_fulfill": False,
+}
+
+# The approvals the volatility plan needs: the return-method assumption of
+# compute_returns (s3, log) and of forward_return (s6, simple).
+RETURN_METHOD_APPROVAL = "V10:s3:return_method"
+FORWARD_METHOD_APPROVAL = "V10:s6:return_method"
+VOLATILITY_APPROVALS = [RETURN_METHOD_APPROVAL, FORWARD_METHOD_APPROVAL]
+
 # The approval the flagship (scenario 1) needs: the return-method assumption of its
 # outcome, forward_return (s6, next week's simple USD/CHF return).
 SCENARIO_1_APPROVALS = ["V10:s6:return_method"]
 
-# The approvals scenario 6 (the NASDAQ-only analysis) needs: the return-method
-# assumption of compute_returns (s3) and of forward_return (s6).
-RETURN_METHOD_APPROVAL = "V10:s3:return_method"
-FORWARD_METHOD_APPROVAL = "V10:s6:return_method"
-SCENARIO_6_APPROVALS = [RETURN_METHOD_APPROVAL, FORWARD_METHOD_APPROVAL]
+# The approvals scenario 6 (buy the dip) needs: the return method of the weekly
+# returns it flags (s3) and of the following week's return (s5), both simple.
+SCENARIO_6_APPROVALS = ["V10:s3:return_method", "V10:s5:return_method"]
 
 
 def raw_plan(scenario_id: str) -> dict[str, Any]:
     """A deep copy of a demo scenario's canned plan, as a dict a test may mutate."""
     return copy.deepcopy(SCENARIOS_BY_ID[scenario_id].plan)
+
+
+def volatility_plan() -> dict[str, Any]:
+    """A deep copy of VOLATILITY_PLAN, as a dict a test may mutate."""
+    return copy.deepcopy(VOLATILITY_PLAN)
 
 
 def as_plan(raw: dict[str, Any], request: str = "test request") -> Plan:

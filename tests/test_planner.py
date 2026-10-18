@@ -10,7 +10,7 @@ import pytest
 
 from quantlab.config import Settings
 from quantlab.data import Catalog, load_dataset
-from quantlab.mock_scenarios import SCENARIOS, SCENARIOS_BY_ID
+from quantlab.mock_scenarios import SCENARIOS
 from quantlab.plan import plan_tool_schema
 from quantlab.planner import (
     MockPlanner,
@@ -22,6 +22,7 @@ from quantlab.planner import (
     plan_from_output,
 )
 
+from conftest import VOLATILITY_PLAN
 from fakes import (
     FakeAnthropicClient,
     FakeOpenAIClient,
@@ -31,7 +32,7 @@ from fakes import (
     tool_response,
 )
 
-PLAN_A = SCENARIOS_BY_ID["nasdaq_volatility_success"].plan  # scenario 6
+PLAN_A = VOLATILITY_PLAN  # a valid NASDAQ plan (conftest), as a planner LLM writes it
 
 
 @pytest.mark.parametrize("scenario", SCENARIOS, ids=lambda s: s.id)

@@ -27,11 +27,11 @@ from quantlab.narrator import (
 from quantlab.plan import Plan
 from quantlab.types import Artifact, ArtifactMeta, DataType, Frequency, TokenUsage
 
-from conftest import QUOTE_CONVENTIONS, SPREAD_PLAN, as_plan, raw_plan
+from conftest import QUOTE_CONVENTIONS, SPREAD_PLAN, as_plan, raw_plan, volatility_plan
 from fakes import FakeAnthropicClient, FakeOpenAIClient, openai_text_response, text_response
 
 PLANS = {
-    "scenario_6": raw_plan("nasdaq_volatility_success"),
+    "volatility": volatility_plan(),
     "lookahead": raw_plan("vix_full_sample_lookahead"),
     "spread": SPREAD_PLAN,
 }
@@ -70,7 +70,7 @@ def test_facts_sheet_covers_tables_flags_and_series(catalog: Catalog) -> None:
         assert fact_id in facts
     assert facts["s3.last_value"].value == result.artifacts["s3"].value.iloc[-1]
 
-    plan, result, _ = run_scenario("scenario_6", catalog)
+    plan, result, _ = run_scenario("volatility", catalog)
     facts = {f.fact_id: f for f in build_facts_sheet(plan, result.artifacts)}
     for fact_id in ["s4.last_value", "s5.n_flagged", "s5.share_flagged", "s5.n_episodes",
                     "s7.mean_flagged", "s7.diff_means", "s7.n_episodes_flagged"]:  # fmt: skip
@@ -241,7 +241,7 @@ def test_n01_also_guards_the_template_narrative() -> None:
 def test_llm_narrative_with_a_wrong_date_fails_grounding(
     settings: Settings, catalog: Catalog
 ) -> None:
-    plan, result, issues = run_scenario("scenario_6", catalog)
+    plan, result, issues = run_scenario("volatility", catalog)
     facts = {f.fact_id: f.display for f in build_facts_sheet(plan, result.artifacts)}
     value, latest = facts["s4.last_value"], facts["s4.end"]
     # A week inside the data that is no date of the facts sheet.
@@ -262,7 +262,7 @@ def test_llm_narrative_with_a_wrong_date_fails_grounding(
 def test_llm_narrative_with_a_wrong_p_value_fails_grounding(
     settings: Settings, catalog: Catalog
 ) -> None:
-    plan, result, issues = run_scenario("scenario_6", catalog)
+    plan, result, issues = run_scenario("volatility", catalog)
     facts = {f.fact_id: f for f in build_facts_sheet(plan, result.artifacts)}
     p_value = facts["s8.p_value"]
     wrong = f"{p_value.value + 0.11:.4f}"  # four decimals, like the displayed value
@@ -311,6 +311,21 @@ def test_template_reads_the_test_without_overclaiming(p_value: float, verdict: s
     assert "23 distinct episodes" in text  # always the number of episodes
     assert "no difference" not in text.replace("significant difference", "")
     assert "causes" not in text and "predicts" not in text
+    assert check_grounding(text, facts, plan).grounded
+
+
+@pytest.mark.parametrize(("difference", "direction"), [(-0.0012, "lower"), (0.0012, "higher")])
+def test_template_answers_the_question_first(difference: float, direction: str) -> None:
+    plan, artifacts = hac_artifacts(0.4321)
+    artifacts["s8"].value["diff_means"] = difference
+    facts = build_facts_sheet(plan, artifacts)
+    text = template_narrative(plan, artifacts, facts, [])
+    # The direction, the size without its sign, and the verdict, before the details.
+    assert text.startswith(
+        f"Next-week returns were {direction} after flagged weeks than after the other weeks, "
+        "by 0.001200 on average, and the difference is not statistically significant at the "
+        "5% level."
+    )
     assert check_grounding(text, facts, plan).grounded
 
 

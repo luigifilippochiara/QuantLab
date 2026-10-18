@@ -17,10 +17,10 @@ from quantlab.engine import ExecutionRefusedError, Session, run_request
 from quantlab.guardrails import Action, fill_defaults, validate_plan
 from quantlab.lineage import replay
 from quantlab.mock_scenarios import (
+    DIP_REQUEST,
     FLAGSHIP_REQUEST,
     SCENARIOS,
     SCENARIOS_BY_ID,
-    VOLATILITY_REQUEST,
     Scenario,
     match_scenario,
 )
@@ -48,7 +48,7 @@ def test_examples_are_numbered_in_list_order() -> None:
         (3, "arima_forecast_block"),
         (4, "prompt_injection_unknown_capability"),
         (5, "vix_full_sample_lookahead"),
-        (6, "nasdaq_volatility_success"),
+        (6, "buy_the_dip_tech"),
     ]
     assert all(s.label.startswith(f"{s.number} · ") for s in SCENARIOS)
 
@@ -127,10 +127,9 @@ def test_example_5_is_the_flagship_with_a_full_history_threshold() -> None:
 
 
 def test_requests_rely_on_these_registry_defaults() -> None:
-    # Neither the flagship's request nor example 6's states them, so a planner that
-    # omits them gets the canned plan.
+    # The requests leave them to the registry (examples 1 and 5 their direction, every
+    # example its minimum history), so a planner that omits them gets the canned plan.
     defaults = {
-        ("rolling_volatility", "annualize"): True,
         ("flag_regime", "method"): "expanding",
         ("flag_regime", "quantile"): 0.90,
         ("flag_regime", "min_periods"): 52,
@@ -211,101 +210,78 @@ def test_flagship_demo_edit_quantile_out_of_range_is_blocked(settings: Settings)
         session.execute()
 
 
-# --- example 6, the NASDAQ-only analysis: also fully specified -------------------
+# --- example 6, buy the dip: the bottom tail of past weekly returns ---------------
 
 # (step id, capability, inputs, params): the plan example 6's request specifies.
-VOLATILITY_PLAN = [
+DIP_PLAN = [
     ("s1", "load_series", {}, {"dataset_id": "NASDAQCOM"}),
     ("s2", "resample", {"series": "s1"}, {"freq": "W", "how": "last"}),
-    ("s3", "compute_returns", {"series": "s2"}, {"method": "log", "periods": 1}),
-    ("s4", "rolling_volatility", {"series": "s3"}, {"window": 12, "annualize": True}),
-    ("s5", "flag_regime", {"series": "s4"},
-     {"method": "expanding", "quantile": 0.90, "min_periods": 52, "direction": "above"}),
-    ("s6", "forward_return", {"series": "s2"}, {"method": "simple"}),
-    ("s7", "compare_groups", {"values": "s6", "flags": "s5"}, {}),
-    ("s8", "hac_mean_difference", {"outcome": "s6", "flags": "s5"}, {}),
+    ("s3", "compute_returns", {"series": "s2"}, {"method": "simple", "periods": 1}),
+    ("s4", "flag_regime", {"series": "s3"},
+     {"method": "expanding", "quantile": 0.10, "min_periods": 52, "direction": "below"}),
+    ("s5", "forward_return", {"series": "s2"}, {"method": "simple"}),
+    ("s6", "compare_groups", {"values": "s5", "flags": "s4"}, {}),
+    ("s7", "hac_mean_difference", {"outcome": "s5", "flags": "s4"}, {}),
 ]  # fmt: skip
 
 
 def test_scenario_6_plan_is_exactly_the_specified_plan() -> None:
-    plan = SCENARIOS_BY_ID["nasdaq_volatility_success"].plan
+    plan = SCENARIOS_BY_ID["buy_the_dip_tech"].plan
     steps = [(s["id"], s["capability"], s["inputs"], s["params"]) for s in plan["steps"]]
-    assert steps == VOLATILITY_PLAN
+    assert steps == DIP_PLAN
     assert plan["dataset_ids"] == ["NASDAQCOM"] and not plan["cannot_fulfill"]
-    # The assumptions the plan declares to the analyst.
     notes = plan["planner_notes"]
-    assert "log returns for the volatility" in notes and "square-root-of-time" in notes
-    assert "simple returns for the outcome" in notes and "half the variance" in notes
-    assert "past volatility only" in notes
+    assert "below the 10th percentile of past weekly returns only" in notes
+    assert "simple weekly returns" in notes
 
 
 def test_scenario_6_validates_with_exactly_two_v10_approvals(catalog: Catalog) -> None:
-    raw = SCENARIOS_BY_ID["nasdaq_volatility_success"].plan
-    plan = fill_defaults(Plan(plan_id="p", request=VOLATILITY_REQUEST, **raw))
+    raw = SCENARIOS_BY_ID["buy_the_dip_tech"].plan
+    plan = fill_defaults(Plan(plan_id="p", request=DIP_REQUEST, **raw))
     report = validate_plan(plan, catalog)
     assert [(i.issue_id, i.action) for i in report.issues] == [
-        ("V10:s3:return_method", "APPROVE"),  # log returns for the volatility
-        ("V10:s6:return_method", "APPROVE"),  # simple returns for the outcome
-    ]  # nothing else: no WARN, no BLOCK
-    assert "method='log'" in report.issues[0].message
-    assert "method='simple'" in report.issues[1].message
+        ("V10:s3:return_method", "APPROVE"),  # simple returns, the ones flagged
+        ("V10:s5:return_method", "APPROVE"),  # simple returns for the outcome
+    ]  # nothing else: no WARN, no BLOCK, no look-ahead (an expanding threshold)
 
 
 def test_scenario_6_runs_end_to_end_and_replays_identically(settings: Settings) -> None:
-    session = run_request(VOLATILITY_REQUEST, ["NASDAQCOM"], "mock", approve=True,
-                          settings=settings)  # fmt: skip
+    session = run_request(DIP_REQUEST, ["NASDAQCOM"], "mock", approve=True, settings=settings)
     assert session.status == "completed" and not session.execution.issues
     assert [a.issue_id for a in session.approvals] == SCENARIO_6_APPROVALS
     assert session.narrative.grounding.grounded
     report = replay(session.run_id, settings)
     assert report.all_match, report.message
     original = [r.output_hash for r in session.execution.step_records]
-    assert [s.replay_hash for s in report.steps] == original and len(original) == 8
+    assert [s.replay_hash for s in report.steps] == original and len(original) == 7
 
 
-def test_scenario_6_needs_the_return_method_approvals_then_tests(settings: Settings) -> None:
-    session = start("nasdaq_volatility_success", settings)
-    assert not session.report.is_blocked and session.report.warnings == []
-    assert [i.issue_id for i in session.report.approvals_required] == SCENARIO_6_APPROVALS
+def test_scenario_6_flags_the_biggest_drops_from_past_data_only(settings: Settings) -> None:
+    session = start("buy_the_dip_tech", settings)
     session.approve(SCENARIO_6_APPROVALS)
-    session.execute()
-    flags = session.execution.artifacts["s5"]
-    assert flags.meta.frequency == "W" and flags.value.any()  # flagged weeks to shade
-    test = session.execution.artifacts["s8"].value
-    assert 0 < test["p_value"] < 1 and test["horizon"] == 1
-    assert test["maxlags_used"] == 7  # floor(4 * (T/100)^(2/9)) for this sample size
+    artifacts = session.execute().artifacts
+    returns, flags = artifacts["s3"].value, artifacts["s4"].value
+    # Each dip is below the 10% quantile of the returns BEFORE it (no look-ahead).
+    threshold = returns.shift(1).expanding(min_periods=52).quantile(0.10)
+    assert flags.any() and (returns[flags.index][flags] < threshold[flags.index][flags]).all()
+    assert (returns[flags.index][flags] < 0).all()  # every dip is a drop
+    # The narrative answers the question directly, in grounded numbers.
     narrative = session.narrate()
-    assert "statistically significant difference" in narrative.text
-    assert f"form {test['n_episodes_flagged']} distinct episodes" in narrative.text
-    assert narrative.grounding.grounded
-
-
-def test_scenario_6_demo_edit_full_sample_raises_v09_for_the_test(settings: Settings) -> None:
-    session = start("nasdaq_volatility_success", settings)
-    report = session.apply_param_edits({"s5": {"method": "full_sample"}})
-    v09 = next(i for i in report.approvals_required if i.code == "V09")
-    assert "invalidates the significance test in s8" in v09.message
-    session.approve(SCENARIO_6_APPROVALS)
-    with pytest.raises(ExecutionRefusedError, match="V09:s5"):
-        session.execute()
-    session.approve(["V09:s5"])
-    assert session.execute().status == "completed"
+    test = artifacts["s7"].value
+    direction = "higher" if test["diff_means"] > 0 else "lower"
+    assert f"Next-week returns were {direction} after flagged weeks than after" in narrative.text
+    assert narrative.grounding.grounded and narrative.issues == []
 
 
 def test_scenario_6_demo_edit_dataset_to_a_yield_blocks_returns_on_rates(
     settings: Settings,
 ) -> None:
-    session = start("nasdaq_volatility_success", settings)
+    session = start("buy_the_dip_tech", settings)
     report = session.apply_param_edits({"s1": {"dataset_id": "DGS10"}})
-    # A legal edit: a parameter value, applied to the plan...
-    assert not any(i.message.startswith("Edit rejected") for i in report.issues)
+    # A legal edit, which the re-validation blocks: "returns" of a yield are
+    # meaningless (V07), and a forward return needs a price level (V04).
     assert session.plan.steps[0].params["dataset_id"] == "DGS10"
-    # ...that the re-validation blocks: "returns" of a yield are meaningless.
-    v07 = next(i for i in report.blocks if i.code == "V07")
-    assert (v07.name, v07.step_id) == ("RETURNS_ON_RATES", "s3")
-    assert "difference" in v07.suggestion
-    # forward_return (s6) needs a price level too.
-    assert [i.issue_id for i in report.blocks] == ["V07:s3", "V04:s6:series"]
+    assert [i.issue_id for i in report.blocks] == ["V07:s3", "V04:s5:series"]
     with pytest.raises(ExecutionRefusedError):
         session.execute()
 

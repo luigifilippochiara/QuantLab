@@ -16,7 +16,7 @@ from quantlab.mock_scenarios import SCENARIOS_BY_ID
 from conftest import RETURN_METHOD_APPROVAL, SCENARIO_6_APPROVALS
 
 
-def start(settings: Settings, scenario_id: str = "nasdaq_volatility_success") -> Session:
+def start(settings: Settings, scenario_id: str = "buy_the_dip_tech") -> Session:
     """A mock-mode session for a scenario, with its plan created and validated."""
     scenario = SCENARIOS_BY_ID[scenario_id]
     session = Session.start(scenario.request, list(scenario.dataset_ids), "mock", settings)
@@ -48,15 +48,15 @@ def test_structural_edits_are_rejected_with_a_block(edits: Any, settings: Settin
     assert session.plan == before  # nothing was applied
     assert session.status == "blocked" and not session.can_execute()[0]
     # A valid edit afterwards clears the block again.
-    assert not session.apply_param_edits({"s4": {"window": 26}}).is_blocked
+    assert not session.apply_param_edits({"s4": {"min_periods": 104}}).is_blocked
 
 
 def test_out_of_range_value_is_blocked_by_the_validator(settings: Settings) -> None:
     """The bounded widgets should prevent this; the validator is the backstop."""
     session = start(settings)
-    report = session.apply_param_edits({"s5": {"quantile": 1.5}})
+    report = session.apply_param_edits({"s4": {"quantile": 1.5}})
     assert report.is_blocked and "V03" in report.codes()
-    assert session.plan.steps[4].params["quantile"] == 1.5  # applied, then judged
+    assert session.plan.steps[3].params["quantile"] == 1.5  # applied, then judged
     with pytest.raises(ExecutionRefusedError):
         session.execute()
 
@@ -68,15 +68,15 @@ def test_switching_to_full_sample_raises_v09_and_switching_back_clears_it(
     settings: Settings,
 ) -> None:
     session = start(settings)
-    report = session.apply_param_edits({"s5": {"method": "full_sample"}})
+    report = session.apply_param_edits({"s4": {"method": "full_sample"}})
     assert "V09" in report.codes()
-    report = session.apply_param_edits({"s5": {"method": "expanding"}})
+    report = session.apply_param_edits({"s4": {"method": "expanding"}})
     assert "V09" not in report.codes()
 
 
 def test_weekly_to_daily_is_re_validated_and_runs_after_re_approval(settings: Settings) -> None:
-    # The windows keep their values, now counted in trading days instead of weeks
-    # (the registry describes them as periods of the input's frequency).
+    # The minimum history keeps its value, now counted in trading days instead of
+    # weeks (the registry describes it in periods of the input's frequency).
     session = start(settings)
     report = session.apply_param_edits({"s2": {"freq": "D"}})
     assert report.warnings == [] and not report.is_blocked
@@ -84,9 +84,9 @@ def test_weekly_to_daily_is_re_validated_and_runs_after_re_approval(settings: Se
     assert report.dry_run["s4"]["frequency"] == "D"
     session.approve(SCENARIO_6_APPROVALS)
     assert session.execute().status == "completed"
-    volatility = session.execution.artifacts["s4"].meta
-    assert volatility.frequency == "D" and volatility.notes[0].endswith("sqrt(252)")
-    assert "over 12 observations" in volatility.notes[0]  # 12 trading days
+    flags = session.execution.artifacts["s4"].meta
+    assert flags.frequency == "D"
+    assert "(at least 52 past values)" in flags.notes[0]  # 52 trading days
 
 
 # --- approvals belong to one plan version ----------------------------------------
@@ -97,7 +97,7 @@ def test_any_edit_resets_approvals_and_approvals_record_the_plan_hash(settings: 
     first_version = session.plan_hash
     session.approve(SCENARIO_6_APPROVALS)
     assert {a.plan_hash for a in session.approvals} == {first_version}
-    session.apply_param_edits({"s4": {"window": 26}})
+    session.apply_param_edits({"s4": {"min_periods": 104}})
     assert session.plan_hash != first_version
     assert session.approvals == []
     assert [i.issue_id for i in session.unresolved_approvals()] == SCENARIO_6_APPROVALS
@@ -116,7 +116,7 @@ def test_an_approval_for_another_plan_version_does_not_count(settings: Settings)
 def test_reset_to_the_planners_proposal(settings: Settings) -> None:
     session = start(settings)
     proposal = session.plan.model_copy(deep=True)
-    session.apply_param_edits({"s2": {"freq": "D"}, "s4": {"window": 60}})
+    session.apply_param_edits({"s2": {"freq": "D"}, "s4": {"min_periods": 60}})
     session.reset_to_proposal()
     assert session.plan.steps == proposal.steps
     assert session.build_record().param_diff == []
@@ -130,22 +130,23 @@ def test_edited_run_records_the_diff_traces_it_and_replays_identically(
     settings: Settings,
 ) -> None:
     session = start(settings)
-    session.apply_param_edits({"s4": {"window": 26}})
+    session.apply_param_edits({"s4": {"min_periods": 104}})
     session.approve(SCENARIO_6_APPROVALS)
     session.execute()
     session.narrate()
     session.save_record()
 
     record = load_run(session.run_id, settings.runs_dir)
-    assert record.plan_original["steps"][3]["params"]["window"] == 12  # as proposed
-    assert record.plan_final["steps"][3]["params"]["window"] == 26  # as run
+    assert record.plan_original["steps"][3]["params"]["min_periods"] == 52  # as proposed
+    assert record.plan_final["steps"][3]["params"]["min_periods"] == 104  # as run
     (change,) = record.param_diff
-    assert (change.step_id, change.param, change.original, change.final) == ("s4", "window", 12, 26)
+    assert (change.step_id, change.param, change.original, change.final) == (
+        "s4", "min_periods", 52, 104)  # fmt: skip
     assert change.edited_at
     assert record.approvals[0].plan_hash == record.plan_hash
 
-    chain = {step.step_id: step for step in session.trace("s5").chain}
-    assert chain["s4"].edited == {"window": 12}  # user-edited, planner proposed 12
+    chain = {step.step_id: step for step in session.trace("s7").chain}
+    assert chain["s4"].edited == {"min_periods": 52}  # user-edited, planner proposed 52
     assert chain["s3"].edited == {}  # planner-proposed values only
 
     report = replay(session.run_id, settings)  # replays plan_final, without the LLM
