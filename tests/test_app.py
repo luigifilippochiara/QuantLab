@@ -671,6 +671,9 @@ def test_monitoring_page_sections_cards_and_charts(app_env: Settings) -> None:
     # The undecided and headless runs are left out, so the shares add up to 100%.
     assert values == {"Total runs": "5", "Completed": "2 (40%)", "Blocked": "1 (20%)",
                       "Failed": "1 (20%)", "Rejected by human": "1 (20%)"}  # fmt: skip
+    # The activity cards, in order.
+    assert [m.proto.label for m in app.metric][:5] == [
+        "Total runs", "Completed", "Blocked", "Rejected by human", "Failed"]  # fmt: skip
     # Every card says what its number is out of; Total runs splits by LLM mode.
     assert cards["Total runs"].delta == "1 live · 0 cached · 4 mock"
     assert cards["Completed"].delta == "of 5 runs"

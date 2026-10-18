@@ -46,7 +46,7 @@ import ui
 # and Failed (its "Needs attention" line). Quality and governance: two rows of three
 # equal columns, aligned; its six labels need about 1,260 px in one row, more than
 # the page has on a laptop screen.
-ACTIVITY_COLUMNS = [1.4, 1, 1, 1.45, 1.05]
+ACTIVITY_COLUMNS = [1.4, 1, 1, 1.05, 1.45]
 QUALITY_COLUMNS = [1, 1, 1]
 # The cost and latency sections set a table beside a chart. A small gap under the
 # section header moves both columns down; the chart's title sits higher in its column
@@ -205,7 +205,7 @@ total_col, *outcome_cols = st.columns(ACTIVITY_COLUMNS)
 with total_col:
     card("Total runs", f"{counts['total']:,}", " · ".join(f"{n:,} {m}" for m, n in modes.items()))
 for column, (outcome, label) in zip(outcome_cols, [("completed", "Completed"),
-        ("blocked", "Blocked"), ("failed", "Failed"), ("rejected", "Rejected by human")],
+        ("blocked", "Blocked"), ("rejected", "Rejected by human"), ("failed", "Failed")],
         strict=True):  # fmt: skip
     with column:
         card(
