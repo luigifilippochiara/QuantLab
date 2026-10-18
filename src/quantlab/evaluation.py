@@ -98,7 +98,8 @@ class CaseScore:
             for normal cases; refused/blocked for adversarial ones.
         error: planner error, if any.
         guardrails_match: issues are exactly the expected ones (None if not specified).
-        checks: the item-by-item comparison (normal cases).
+        checks: the item-by-item comparison (normal cases, and adversarial cases that
+            give an expected outcome).
     """
 
     case_id: str
@@ -238,10 +239,16 @@ def score_case(
     checks: list[ItemCheck] = []
     if case.expect == "plan":
         checks = sequence_checks(case.capabilities, planned) + params
-        if case.guardrails is not None:
-            outcome = guardrail_checks(case.guardrails, report.issues if report else result.issues)
-            guardrails_match = all(check.match for check in outcome)
-            checks += outcome
+    if case.guardrails is not None:
+        # An adversarial case with an expected outcome (an example workflow) is reported
+        # item by item too, for information: it stays correct if refused or blocked for
+        # another reason, e.g. a live planner refusing what the canned plan lets the
+        # validator block.
+        if case.expect != "plan":
+            checks = sequence_checks(case.capabilities, planned)
+        outcome = guardrail_checks(case.guardrails, report.issues if report else result.issues)
+        guardrails_match = all(check.match for check in outcome)
+        checks += outcome
 
     sequence_match = planned == case.capabilities
     if case.expect == "plan":

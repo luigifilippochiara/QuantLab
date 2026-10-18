@@ -1,18 +1,23 @@
-"""The five example workflows give exactly the results recorded before the registry simplification.
+"""The five example workflows give exactly the results of their golden record.
 
-tests/fixtures/golden_scenarios.json was recorded at commit 6e1a74b, before the
-capability registry and the guardrails were simplified and their codes
-renumbered (docs/DECISIONS.md). For each example workflow, run in mock mode and
-auto-approved as `cli demo` does, it holds: the status, every static and
-runtime issue, the plan, every step's input and output hashes and metadata, the
-numbers of every output table and the facts sheet. It was recorded on two data
-sets: the synthetic test data (conftest.py) and the committed FRED snapshots.
+tests/fixtures/golden_scenarios.json holds two records. For each example
+workflow, run in mock mode and auto-approved as `cli demo` does, each holds: the
+status, every static and runtime issue, the plan, every step's input and output
+hashes and metadata, the numbers of every output table and the facts sheet, on
+two data sets: the synthetic test data (conftest.py) and the committed FRED
+snapshots.
 
-These tests re-run the workflows and require the same results. The only allowed
-differences are the ones the simplification made on purpose: guardrail codes,
-and the issue ids that contain them, translated with OLD_TO_NEW_CODES, and the
-parameters it removed from the plans (REMOVED_PARAMS). The fixture is a frozen
-reference: it is never regenerated.
+- "before_simplification": examples 1 and 4, recorded at commit 6e1a74b, before
+  the capability registry and the guardrails were simplified and their codes
+  renumbered (docs/DECISIONS.md). They must give the same results. The only
+  allowed differences are the ones the simplification made on purpose: guardrail
+  codes, and the issue ids that contain them, translated with OLD_TO_NEW_CODES,
+  and the parameters it removed from the plans (REMOVED_PARAMS).
+- "final_examples": examples 2, 3 and 5, which replaced the earlier ones after the
+  simplification (commit 08b1547), recorded with the current codes and compared
+  exactly.
+
+The fixture is a frozen reference: a record is never regenerated.
 """
 
 import json
@@ -182,19 +187,30 @@ def golden() -> dict[str, Any]:
     return json.loads(FIXTURE.read_text(encoding="utf-8"))
 
 
-def compare(actual: dict[str, dict[str, Any]], recorded: dict[str, dict[str, Any]]) -> None:
-    """Assert each workflow's result equals the recorded one, part by part (clear failures)."""
-    assert list(actual) == list(recorded)
+def expected_results(golden: dict[str, Any], data: str) -> dict[str, dict[str, Any]]:
+    """Scenario id -> the result each example workflow must give now, on one data set.
+
+    Args:
+        golden: the fixture.
+        data: "synthetic" or "committed".
+    """
+    before = golden["before_simplification"][data]["scenarios"]
+    final = golden["final_examples"][data]["scenarios"]  # current codes: used as recorded
+    return {**{sid: expected_result(r) for sid, r in before.items()}, **final}
+
+
+def compare(actual: dict[str, dict[str, Any]], expected: dict[str, dict[str, Any]]) -> None:
+    """Assert each workflow's result equals the expected one, part by part (clear failures)."""
+    assert sorted(actual) == sorted(expected)  # every example workflow has a golden record
     for scenario_id, result in actual.items():
-        expected = expected_result(recorded[scenario_id])
-        for part, value in expected.items():
+        for part, value in expected[scenario_id].items():
             assert result[part] == value, f"{scenario_id}: {part} differs"
 
 
 def test_scenarios_match_the_golden_record_on_synthetic_data(
     golden: dict[str, Any], settings: Settings
 ) -> None:
-    compare(run_scenarios(settings), golden["synthetic"]["scenarios"])
+    compare(run_scenarios(settings), expected_results(golden, "synthetic"))
 
 
 def test_scenarios_match_the_golden_record_on_the_committed_snapshots(
@@ -202,8 +218,8 @@ def test_scenarios_match_the_golden_record_on_the_committed_snapshots(
 ) -> None:
     settings = committed_data_settings(tmp_path / "runs")
     catalog = load_catalog(settings.catalog_path)
-    recorded = golden["committed"]
-    current = {d: catalog.entries[d].sha256 for d in recorded["dataset_sha256"]}
-    if current != recorded["dataset_sha256"]:
-        pytest.skip("the committed FRED snapshots changed since the golden record was made")
-    compare(run_scenarios(settings), recorded["scenarios"])
+    for record in ("before_simplification", "final_examples"):
+        recorded = golden[record]["committed"]["dataset_sha256"]
+        if {d: catalog.entries[d].sha256 for d in recorded} != recorded:
+            pytest.skip("the committed FRED snapshots changed since the golden record was made")
+    compare(run_scenarios(settings), expected_results(golden, "committed"))

@@ -132,7 +132,9 @@ and input references are locked, and the engine rejects any other edit with a
 BLOCK. **Apply changes & re-validate** runs the same validator again, so issues
 appear and clear as the plan changes: in example 1, switching
 `flag_regime.method` to `full_sample` raises G09, which then also says the
-significance test is invalidated. Windows are counted in periods of the
+significance test is invalidated, and changing `load_series.dataset_id` from
+NASDAQCOM to DGS10 is a legal edit that the validator then blocks (G07: returns
+of a yield are meaningless). Windows are counted in periods of the
 series' frequency, as their fields and the step summaries say: switching
 `resample.freq` from W to D keeps `window` at 12, which then means 12 trading
 days instead of 12 weeks. Any edit resets the
@@ -173,26 +175,30 @@ app or with `cli demo`.
    the high-volatility weeks shaded, both groups' means and standard deviations,
    the number of distinct episodes, and the test's difference, p-value and 95%
    confidence interval.
-2. **Look-ahead protection** (`volatility_flag_lookahead`): the high-volatility
-   flags of example 1 (without the comparison), with a full-sample
-   95th-percentile threshold. QuantLab allows it only with
-   explicit approval (G09), explains that a full-sample threshold judges past
-   weeks using information from the future, and recommends the expanding method.
-   This protects the analyst from the most common source of overstated backtests.
+2. **Look-ahead protection** (`vix_full_sample_lookahead`): "Flag the days when
+   the VIX was in the top 5% of its entire history." The plan flags the days above
+   the 95th percentile of the whole VIX history, a full-sample threshold that uses
+   data nobody had on the flagged day. QuantLab runs it only with explicit approval
+   (G09), explains that such a threshold judges past days using information from
+   the future, and recommends the expanding method. It is an approval, not a
+   block: a full-sample threshold is fine for labelling past stress days but
+   invalid as a signal or in a backtest, and only the analyst knows which is meant.
 3. **Out-of-scope forecast request** (`arima_forecast_block`): "Fit an ARIMA
-   model to forecast next week's NASDAQ return." The registry has no capability for model
-   fitting or prediction, so the planner declines (G11) and lists what is
-   available instead. If a planner ever proposed such a step anyway, the
-   validator would block it independently (G02).
+   model to forecast next week's USD/CHF exchange rate." The registry has no
+   capability that fits a model or makes a forecast, so the planner declines
+   (G11) and lists the registered capabilities instead. If a planner ever
+   proposed such a step anyway, the validator would block it independently (G02).
 4. **Prompt-injection protection** (`prompt_injection_block`): a request that
    tells the assistant to ignore its rules and run Python is treated as data,
    not as instructions, and declined (G11). There is no code path that could run
    it, and automated tests confirm that nothing from the request reaches a shell
    or a subprocess.
-5. **Frequency-alignment protection** (`frequency_mismatch_block`): comparing
-   weekly NASDAQ returns with daily VIX flags would silently keep only the dates
-   the two share. The validator blocks the comparison (G08) before anything runs
-   and states the fix: resample VIX to weekly first.
+5. **Frequency-alignment protection** (`spread_frequency_mismatch_block`):
+   "Compute the spread between the weekly 10-year Treasury yield and the daily
+   2-year Treasury yield." Planned exactly as asked, the spread of a weekly and a
+   daily series would silently keep only the Fridays and mix two frequencies. The
+   validator, not the planner, blocks it (G08) before anything runs and states the
+   fix: resample the 2-year yield to weekly first.
 
 **Audit trail.** For any executed result, such as example 1's p-value, **Trace a
 result** shows the full chain `hac_mean_difference` -> `forward_return` and
@@ -237,7 +243,7 @@ plans instantly and identically, even on a slow network (the
 narrator still calls the model, and falls back to the deterministic template if
 it cannot). A live model may decline a request for a different reason than the
 canned plan (for example refuse example 5 outright with G11, rather than
-proposing the misaligned plan that the validator blocks with G08); the command
+proposing the misaligned spread that the validator blocks with G08); the command
 only checks that blocked workflows stay blocked.
 
 **4. Start the app**, open http://localhost:8501 and pick **cached** (the default

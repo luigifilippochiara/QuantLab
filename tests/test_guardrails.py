@@ -25,7 +25,6 @@ from quantlab.plan import Plan, plan_tool_schema
 
 from conftest import (
     ARIMA_PLAN,
-    RETURN_METHOD_APPROVAL,
     SCENARIO_1_APPROVALS,
     SPREAD_PLAN,
     raw_plan,
@@ -149,9 +148,10 @@ def test_g03_invalid_params(step_id: str, params: dict[str, Any], catalog: Catal
 
 
 def test_defaults_are_filled_in() -> None:
-    raw = raw_plan("frequency_mismatch_block")  # its compute_returns omits `periods`
+    raw = raw_plan("vix_full_sample_lookahead")  # its flag_regime omits `min_periods`
     filled = fill_defaults(Plan(plan_id="p", request="r", **raw))
-    assert filled.steps[4].params == {"method": "simple", "periods": 1}  # default added
+    assert filled.steps[1].params == {"quantile": 0.95, "method": "full_sample",
+                                      "min_periods": 52}  # default added  # fmt: skip
     unknown = fill_defaults(Plan(plan_id="p", request="r", **ARIMA_PLAN))
     assert unknown.steps[1].params == ARIMA_PLAN["steps"][1]["params"]  # left untouched
 
@@ -253,13 +253,21 @@ def test_g07_returns_on_rates_replaces_generic_type_error(catalog: Catalog) -> N
 # --- G08 FREQUENCY_MISMATCH -----------------------------------------------------
 
 
-def test_g08_daily_vix_flags_against_weekly_returns(catalog: Catalog) -> None:
-    report = validate(raw_plan("frequency_mismatch_block"), catalog)
-    assert report.is_blocked and report.codes() == ["G08", "G10"]
-    g08 = next(i for i in report.issues if i.code == "G08")
-    assert g08.step_id == "s6"  # the compare_groups step
-    assert "'flags' is daily" in g08.message
-    assert "Resample VIXCLS to weekly" in g08.suggestion
+def test_g08_spread_of_a_weekly_and_a_daily_yield(catalog: Catalog) -> None:
+    report = validate(raw_plan("spread_frequency_mismatch_block"), catalog)  # scenario 5
+    assert report.is_blocked and report.codes() == ["G08"]
+    (g08,) = report.issues
+    assert g08.step_id == "s4"  # the spread step
+    assert "'b' is daily" in g08.message
+    assert "Resample DGS2 to weekly" in g08.suggestion
+
+
+def test_g08_daily_flags_against_weekly_returns(catalog: Catalog) -> None:
+    raw = raw_plan(SUCCESS)
+    step(raw, "s5")["inputs"] = {"series": "s1"}  # flags on the DAILY prices, not the weekly vol
+    report = validate(raw, catalog)
+    assert {i.issue_id for i in report.blocks} == {"G08:s7", "G08:s8"}
+    assert "'flags' is daily" in report.blocks[0].message
 
 
 def test_g08_spread_of_weekly_and_daily_series(catalog: Catalog) -> None:
@@ -274,11 +282,11 @@ def test_g08_spread_of_weekly_and_daily_series(catalog: Catalog) -> None:
 
 
 def test_g09_full_sample_threshold_needs_approval_and_explains_why(catalog: Catalog) -> None:
-    report = validate(raw_plan("volatility_flag_lookahead"), catalog)
+    report = validate(raw_plan("vix_full_sample_lookahead"), catalog)  # scenario 2
     assert not report.is_blocked
-    assert [i.issue_id for i in report.approvals_required] == [RETURN_METHOD_APPROVAL, "G09:s5"]
-    g09 = report.approvals_required[1]
-    assert "judges past weeks using information from the future" in g09.message
+    assert [i.issue_id for i in report.approvals_required] == ["G09:s2"]
+    g09 = report.approvals_required[0]
+    assert "judges past days using information from the future" in g09.message
     assert "expanding" in g09.suggestion
 
 
@@ -293,7 +301,7 @@ def test_g09_says_when_it_also_invalidates_the_significance_test(catalog: Catalo
     assert "It also invalidates the significance test in s8" in g09.message
     assert "would not have been" in g09.message
     # Without a test downstream (scenario 2), the message does not mention one.
-    plain = validate(raw_plan("volatility_flag_lookahead"), catalog).approvals_required[1]
+    plain = validate(raw_plan("vix_full_sample_lookahead"), catalog).approvals_required[0]
     assert "significance test" not in plain.message
 
 
@@ -352,9 +360,9 @@ def test_dry_run_propagates_metadata(catalog: Catalog) -> None:
     assert dry["s4"]["kind"] == "volatility" and dry["s5"]["data_type"] == "flags"
     assert (dry["s6"]["kind"], dry["s6"]["horizon"]) == ("forward_returns", 1)
     assert (dry["s8"]["data_type"], dry["s8"]["horizon"]) == ("table", 1)  # from the outcome
-    mismatch = validate(raw_plan("frequency_mismatch_block"), catalog).dry_run
-    assert mismatch["s6"]["data_type"] == "table"
-    assert mismatch["s6"]["dataset_ids"] == ["NASDAQCOM", "VIXCLS"]
+    mismatch = validate(raw_plan("spread_frequency_mismatch_block"), catalog).dry_run
+    assert (mismatch["s2"]["frequency"], mismatch["s3"]["frequency"]) == ("W", "D")
+    assert (mismatch["s4"]["kind"], mismatch["s4"]["dataset_ids"]) == ("spread", ["DGS10", "DGS2"])
 
 
 def test_tool_schema_excludes_system_fields_and_has_no_refs() -> None:

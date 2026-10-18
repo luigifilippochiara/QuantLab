@@ -162,7 +162,8 @@ def test_datasets_are_labelled_id_first_with_full_names_on_hover(app_env: Settin
 
 
 @pytest.mark.parametrize(
-    "scenario_id", ["arima_forecast_block", "prompt_injection_block", "frequency_mismatch_block"]
+    "scenario_id",
+    ["arima_forecast_block", "prompt_injection_block", "spread_frequency_mismatch_block"],
 )
 def test_blocked_scenario_cannot_execute(scenario_id: str, app_env: Settings) -> None:
     app = open_page("analysis.py")

@@ -43,7 +43,7 @@ from quantlab.registry import llm_summary, registry_version
 # Bump whenever SYSTEM_PROMPT changes: it is part of the plan-cache key and of
 # every run record, so old cached plans are not reused with a new prompt.
 PROMPT_VERSION = "planner-v6"
-MOCK_PROMPT_VERSION = "canned-scenarios-v9"
+MOCK_PROMPT_VERSION = "canned-scenarios-v10"
 TOOL_NAME = "submit_plan"
 
 # Server-side refusal fallback (Anthropic API beta): if the model declines a

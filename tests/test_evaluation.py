@@ -25,7 +25,7 @@ def test_golden_file_resolves_scenarios() -> None:
 def test_mock_evaluation_scores_and_report(settings: Settings, tmp_path: Path) -> None:
     report = run_evaluation("mock", settings)
     scores = {s.case_id: s for s in report.scores}
-    for case_id in ["s1_volatility_flag_success", "s2_volatility_flag_lookahead"]:
+    for case_id in ["s1_volatility_flag_success", "s2_vix_full_sample_lookahead"]:
         assert (
             scores[case_id].correct and scores[case_id].params_hit == scores[case_id].params_total
         )
@@ -43,6 +43,27 @@ def test_mock_evaluation_scores_and_report(settings: Settings, tmp_path: Path) -
     text = path.read_text()
     assert "Valid-plan rate" in text and "Mock mode tests the evaluation harness" in text
     assert "## Item checks" in text and "| forward_return.method | simple | simple | yes |" in text
+
+
+def test_example_workflows_report_their_canned_outcome_item_by_item(settings: Settings) -> None:
+    report = run_evaluation("mock", settings, case_ids=["s5_spread_frequency_mismatch"])
+    (score,) = report.scores
+    assert score.correct and score.guardrails_match  # blocked, by G08, as canned
+    items = {c.item: (c.expected, c.actual, c.match) for c in score.checks}
+    assert items["step 4"] == ("spread", "spread", True)
+    assert items["blocks"] == ("G08", "G08", True)
+
+
+def test_a_different_block_reason_is_reported_but_still_correct(
+    settings: Settings, catalog: Catalog
+) -> None:
+    # A live planner that refuses scenario 5 outright instead of planning it.
+    case = next(c for c in load_golden() if c.id == "s5_spread_frequency_mismatch")
+    refusal = {"dataset_ids": [], "steps": [], "cannot_fulfill": True, "refusal_reason": "no"}
+    score = score_case(case, settings, catalog, "live", FakeAnthropicClient(tool_response(refusal)))
+    assert score.correct and score.guardrails_match is False
+    wrong = {c.item: (c.expected, c.actual) for c in score.checks if not c.match}
+    assert wrong["blocks"] == ("G08", "G11")
 
 
 def test_one_case_can_be_evaluated_on_its_own(settings: Settings) -> None:

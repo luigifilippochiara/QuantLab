@@ -50,7 +50,7 @@ def test_mock_planner_returns_each_canned_plan(scenario) -> None:
 def test_mock_planner_matches_by_keyword() -> None:
     result = MockPlanner().generate_plan("please PREDICT the nasdaq with a neural net", [])
     assert result.plan.cannot_fulfill  # scenario 3's refusal, not a NASDAQ plan
-    result = MockPlanner().generate_plan("NASDAQ volatility flags, full-sample threshold", [])
+    result = MockPlanner().generate_plan("VIX days above a full-sample threshold", [])
     assert result.plan.steps[-1].params["method"] == "full_sample"  # scenario 2
 
 

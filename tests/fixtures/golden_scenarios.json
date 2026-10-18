@@ -1,1826 +1,1478 @@
 {
- "recorded_at_commit": "6e1a74b",
- "synthetic": {
-  "scenarios": {
-   "volatility_flag_success": {
-    "status": "completed",
-    "static_issues": [
-     {
-      "code": "G12",
-      "issue_id": "G12:s3:return_method",
-      "severity": "APPROVAL",
-      "step_id": "s3"
-     },
-     {
-      "code": "G12",
-      "issue_id": "G12:s6:return_method",
-      "severity": "APPROVAL",
-      "step_id": "s6"
-     }
-    ],
-    "runtime_issues": [],
-    "approvals": [
-     "G12:s3:return_method",
-     "G12:s6:return_method"
-    ],
-    "plan": [
-     {
-      "id": "s1",
-      "capability": "load_series",
-      "inputs": {},
-      "params": {
-       "dataset_id": "NASDAQCOM"
+ "before_simplification": {
+  "recorded_at_commit": "6e1a74b",
+  "synthetic": {
+   "scenarios": {
+    "volatility_flag_success": {
+     "status": "completed",
+     "static_issues": [
+      {
+       "code": "G12",
+       "issue_id": "G12:s3:return_method",
+       "severity": "APPROVAL",
+       "step_id": "s3"
+      },
+      {
+       "code": "G12",
+       "issue_id": "G12:s6:return_method",
+       "severity": "APPROVAL",
+       "step_id": "s6"
       }
-     },
-     {
-      "id": "s2",
-      "capability": "resample",
-      "inputs": {
-       "series": "s1"
+     ],
+     "runtime_issues": [],
+     "approvals": [
+      "G12:s3:return_method",
+      "G12:s6:return_method"
+     ],
+     "plan": [
+      {
+       "id": "s1",
+       "capability": "load_series",
+       "inputs": {},
+       "params": {
+        "dataset_id": "NASDAQCOM"
+       }
       },
-      "params": {
-       "freq": "W",
-       "how": "last"
+      {
+       "id": "s2",
+       "capability": "resample",
+       "inputs": {
+        "series": "s1"
+       },
+       "params": {
+        "freq": "W",
+        "how": "last"
+       }
+      },
+      {
+       "id": "s3",
+       "capability": "compute_returns",
+       "inputs": {
+        "series": "s2"
+       },
+       "params": {
+        "method": "log",
+        "periods": 1
+       }
+      },
+      {
+       "id": "s4",
+       "capability": "rolling_volatility",
+       "inputs": {
+        "series": "s3"
+       },
+       "params": {
+        "window": 12,
+        "annualize": true
+       }
+      },
+      {
+       "id": "s5",
+       "capability": "flag_regime",
+       "inputs": {
+        "series": "s4"
+       },
+       "params": {
+        "quantile": 0.9,
+        "method": "expanding",
+        "min_periods": 52
+       }
+      },
+      {
+       "id": "s6",
+       "capability": "forward_return",
+       "inputs": {
+        "series": "s2"
+       },
+       "params": {
+        "method": "simple",
+        "horizon": 1
+       }
+      },
+      {
+       "id": "s7",
+       "capability": "compare_groups",
+       "inputs": {
+        "values": "s6",
+        "flags": "s5"
+       },
+       "params": {}
+      },
+      {
+       "id": "s8",
+       "capability": "hac_mean_difference",
+       "inputs": {
+        "outcome": "s6",
+        "flags": "s5"
+       },
+       "params": {
+        "maxlags": null
+       }
       }
-     },
-     {
-      "id": "s3",
-      "capability": "compute_returns",
-      "inputs": {
-       "series": "s2"
+     ],
+     "steps": [
+      {
+       "step_id": "s1",
+       "capability": "load_series",
+       "status": "completed",
+       "input_hashes": {
+        "dataset:NASDAQCOM": "2778eb072f1395b0a7a8b63370caf08a7f062c74b0f7ff8c56e493f52891b367"
+       },
+       "output_hash": "e353c6004b9dfbbd2b0adc092d872f5fb565c1cf418899db74177cef641577f6",
+       "n_obs": 7644,
+       "start": "1996-01-01",
+       "end": "2025-11-20",
+       "meta": {
+        "kind": "price_level",
+        "frequency": "D",
+        "return_method": null,
+        "periods": null,
+        "horizon": null,
+        "source_dataset_ids": [
+         "NASDAQCOM"
+        ]
+       }
       },
-      "params": {
-       "method": "log",
-       "periods": 1
+      {
+       "step_id": "s2",
+       "capability": "resample",
+       "status": "completed",
+       "input_hashes": {
+        "series": "e353c6004b9dfbbd2b0adc092d872f5fb565c1cf418899db74177cef641577f6"
+       },
+       "output_hash": "0b83847a5101d7608ea56451fb52a5c30103a6c733cb01d2e5f5f07e6a192933",
+       "n_obs": 1559,
+       "start": "1996-01-05",
+       "end": "2025-11-14",
+       "meta": {
+        "kind": "price_level",
+        "frequency": "W",
+        "return_method": null,
+        "periods": null,
+        "horizon": null,
+        "source_dataset_ids": [
+         "NASDAQCOM"
+        ]
+       }
+      },
+      {
+       "step_id": "s3",
+       "capability": "compute_returns",
+       "status": "completed",
+       "input_hashes": {
+        "series": "0b83847a5101d7608ea56451fb52a5c30103a6c733cb01d2e5f5f07e6a192933"
+       },
+       "output_hash": "34b81249bbf5114c4ed5dee4588d13eab980c38321e8cd0f765ba6b1c2df14dd",
+       "n_obs": 1558,
+       "start": "1996-01-12",
+       "end": "2025-11-14",
+       "meta": {
+        "kind": "returns",
+        "frequency": "W",
+        "return_method": "log",
+        "periods": 1,
+        "horizon": null,
+        "source_dataset_ids": [
+         "NASDAQCOM"
+        ]
+       }
+      },
+      {
+       "step_id": "s4",
+       "capability": "rolling_volatility",
+       "status": "completed",
+       "input_hashes": {
+        "series": "34b81249bbf5114c4ed5dee4588d13eab980c38321e8cd0f765ba6b1c2df14dd"
+       },
+       "output_hash": "25598765fa714755bac82462b0b0c22100cc5806846b83a16a3ca52ffc511ef0",
+       "n_obs": 1547,
+       "start": "1996-03-29",
+       "end": "2025-11-14",
+       "meta": {
+        "kind": "volatility",
+        "frequency": "W",
+        "return_method": "log",
+        "periods": 1,
+        "horizon": null,
+        "source_dataset_ids": [
+         "NASDAQCOM"
+        ]
+       }
+      },
+      {
+       "step_id": "s5",
+       "capability": "flag_regime",
+       "status": "completed",
+       "input_hashes": {
+        "series": "25598765fa714755bac82462b0b0c22100cc5806846b83a16a3ca52ffc511ef0"
+       },
+       "output_hash": "7d20b7db1cb06f434930fa300d02812f65538a4e52758cacccb03559d4e2e16d",
+       "n_obs": 1495,
+       "start": "1997-03-28",
+       "end": "2025-11-14",
+       "meta": {
+        "kind": "flags",
+        "frequency": "W",
+        "return_method": "log",
+        "periods": 1,
+        "horizon": null,
+        "source_dataset_ids": [
+         "NASDAQCOM"
+        ]
+       }
+      },
+      {
+       "step_id": "s6",
+       "capability": "forward_return",
+       "status": "completed",
+       "input_hashes": {
+        "series": "0b83847a5101d7608ea56451fb52a5c30103a6c733cb01d2e5f5f07e6a192933"
+       },
+       "output_hash": "e889e9adbc35c48241aefeea1672392440af6de767881d1c49698b45c069115b",
+       "n_obs": 1558,
+       "start": "1996-01-05",
+       "end": "2025-11-07",
+       "meta": {
+        "kind": "forward_returns",
+        "frequency": "W",
+        "return_method": "simple",
+        "periods": null,
+        "horizon": 1,
+        "source_dataset_ids": [
+         "NASDAQCOM"
+        ]
+       }
+      },
+      {
+       "step_id": "s7",
+       "capability": "compare_groups",
+       "status": "completed",
+       "input_hashes": {
+        "values": "e889e9adbc35c48241aefeea1672392440af6de767881d1c49698b45c069115b",
+        "flags": "7d20b7db1cb06f434930fa300d02812f65538a4e52758cacccb03559d4e2e16d"
+       },
+       "output_hash": "ae155462648c40573f115e0926f0d86a6a414053fdad5db58f200df65c6c0e31",
+       "n_obs": 1494,
+       "start": "1997-03-28",
+       "end": "2025-11-07",
+       "meta": {
+        "kind": null,
+        "frequency": "W",
+        "return_method": "simple",
+        "periods": null,
+        "horizon": 1,
+        "source_dataset_ids": [
+         "NASDAQCOM"
+        ]
+       }
+      },
+      {
+       "step_id": "s8",
+       "capability": "hac_mean_difference",
+       "status": "completed",
+       "input_hashes": {
+        "outcome": "e889e9adbc35c48241aefeea1672392440af6de767881d1c49698b45c069115b",
+        "flags": "7d20b7db1cb06f434930fa300d02812f65538a4e52758cacccb03559d4e2e16d"
+       },
+       "output_hash": "f6ddb80bb936d28aa871b4734b1c122f1a43c166f289e71a5328e40254203d13",
+       "n_obs": 1494,
+       "start": "1997-03-28",
+       "end": "2025-11-07",
+       "meta": {
+        "kind": null,
+        "frequency": "W",
+        "return_method": "simple",
+        "periods": null,
+        "horizon": 1,
+        "source_dataset_ids": [
+         "NASDAQCOM"
+        ]
+       }
       }
-     },
-     {
-      "id": "s4",
-      "capability": "rolling_volatility",
-      "inputs": {
-       "series": "s3"
+     ],
+     "tables": {
+      "s7": {
+       "diff_means": -0.00166488045685,
+       "end": "2025-11-07",
+       "mean_flagged": 4.5162097041e-06,
+       "mean_normal": 0.00166939666655,
+       "n_episodes_flagged": 24,
+       "n_flagged": 133,
+       "n_normal": 1361,
+       "start": "1997-03-28",
+       "std_flagged": 0.0566096695897,
+       "std_normal": 0.0433565443647
       },
-      "params": {
-       "window": 12,
-       "annualize": true
-      }
-     },
-     {
-      "id": "s5",
-      "capability": "flag_regime",
-      "inputs": {
-       "series": "s4"
-      },
-      "params": {
-       "quantile": 0.9,
-       "method": "expanding",
-       "min_periods": 52
-      }
-     },
-     {
-      "id": "s6",
-      "capability": "forward_return",
-      "inputs": {
-       "series": "s2"
-      },
-      "params": {
-       "method": "simple",
-       "horizon": 1
-      }
-     },
-     {
-      "id": "s7",
-      "capability": "compare_groups",
-      "inputs": {
-       "values": "s6",
-       "flags": "s5"
-      },
-      "params": {}
-     },
-     {
-      "id": "s8",
-      "capability": "hac_mean_difference",
-      "inputs": {
-       "outcome": "s6",
-       "flags": "s5"
-      },
-      "params": {
-       "maxlags": null
-      }
-     }
-    ],
-    "steps": [
-     {
-      "step_id": "s1",
-      "capability": "load_series",
-      "status": "completed",
-      "input_hashes": {
-       "dataset:NASDAQCOM": "2778eb072f1395b0a7a8b63370caf08a7f062c74b0f7ff8c56e493f52891b367"
-      },
-      "output_hash": "e353c6004b9dfbbd2b0adc092d872f5fb565c1cf418899db74177cef641577f6",
-      "n_obs": 7644,
-      "start": "1996-01-01",
-      "end": "2025-11-20",
-      "meta": {
-       "kind": "price_level",
-       "frequency": "D",
-       "return_method": null,
-       "periods": null,
-       "horizon": null,
-       "source_dataset_ids": [
-        "NASDAQCOM"
-       ]
-      }
-     },
-     {
-      "step_id": "s2",
-      "capability": "resample",
-      "status": "completed",
-      "input_hashes": {
-       "series": "e353c6004b9dfbbd2b0adc092d872f5fb565c1cf418899db74177cef641577f6"
-      },
-      "output_hash": "0b83847a5101d7608ea56451fb52a5c30103a6c733cb01d2e5f5f07e6a192933",
-      "n_obs": 1559,
-      "start": "1996-01-05",
-      "end": "2025-11-14",
-      "meta": {
-       "kind": "price_level",
-       "frequency": "W",
-       "return_method": null,
-       "periods": null,
-       "horizon": null,
-       "source_dataset_ids": [
-        "NASDAQCOM"
-       ]
-      }
-     },
-     {
-      "step_id": "s3",
-      "capability": "compute_returns",
-      "status": "completed",
-      "input_hashes": {
-       "series": "0b83847a5101d7608ea56451fb52a5c30103a6c733cb01d2e5f5f07e6a192933"
-      },
-      "output_hash": "34b81249bbf5114c4ed5dee4588d13eab980c38321e8cd0f765ba6b1c2df14dd",
-      "n_obs": 1558,
-      "start": "1996-01-12",
-      "end": "2025-11-14",
-      "meta": {
-       "kind": "returns",
-       "frequency": "W",
-       "return_method": "log",
-       "periods": 1,
-       "horizon": null,
-       "source_dataset_ids": [
-        "NASDAQCOM"
-       ]
-      }
-     },
-     {
-      "step_id": "s4",
-      "capability": "rolling_volatility",
-      "status": "completed",
-      "input_hashes": {
-       "series": "34b81249bbf5114c4ed5dee4588d13eab980c38321e8cd0f765ba6b1c2df14dd"
-      },
-      "output_hash": "25598765fa714755bac82462b0b0c22100cc5806846b83a16a3ca52ffc511ef0",
-      "n_obs": 1547,
-      "start": "1996-03-29",
-      "end": "2025-11-14",
-      "meta": {
-       "kind": "volatility",
-       "frequency": "W",
-       "return_method": "log",
-       "periods": 1,
-       "horizon": null,
-       "source_dataset_ids": [
-        "NASDAQCOM"
-       ]
-      }
-     },
-     {
-      "step_id": "s5",
-      "capability": "flag_regime",
-      "status": "completed",
-      "input_hashes": {
-       "series": "25598765fa714755bac82462b0b0c22100cc5806846b83a16a3ca52ffc511ef0"
-      },
-      "output_hash": "7d20b7db1cb06f434930fa300d02812f65538a4e52758cacccb03559d4e2e16d",
-      "n_obs": 1495,
-      "start": "1997-03-28",
-      "end": "2025-11-14",
-      "meta": {
-       "kind": "flags",
-       "frequency": "W",
-       "return_method": "log",
-       "periods": 1,
-       "horizon": null,
-       "source_dataset_ids": [
-        "NASDAQCOM"
-       ]
-      }
-     },
-     {
-      "step_id": "s6",
-      "capability": "forward_return",
-      "status": "completed",
-      "input_hashes": {
-       "series": "0b83847a5101d7608ea56451fb52a5c30103a6c733cb01d2e5f5f07e6a192933"
-      },
-      "output_hash": "e889e9adbc35c48241aefeea1672392440af6de767881d1c49698b45c069115b",
-      "n_obs": 1558,
-      "start": "1996-01-05",
-      "end": "2025-11-07",
-      "meta": {
-       "kind": "forward_returns",
-       "frequency": "W",
-       "return_method": "simple",
-       "periods": null,
+      "s8": {
+       "ci_high": 0.00730169472116,
+       "ci_low": -0.0106314556349,
+       "diff_means": -0.00166488045685,
+       "end": "2025-11-07",
        "horizon": 1,
-       "source_dataset_ids": [
-        "NASDAQCOM"
-       ]
+       "maxlags_used": 7,
+       "mean_normal": 0.00166939666655,
+       "n_episodes_flagged": 24,
+       "n_flagged": 133,
+       "n_normal": 1361,
+       "n_obs": 1494,
+       "p_value": 0.715918607594,
+       "se_hac": 0.00457486731835,
+       "start": "1997-03-28",
+       "t_stat": -0.363918850755
       }
      },
-     {
-      "step_id": "s7",
-      "capability": "compare_groups",
-      "status": "completed",
-      "input_hashes": {
-       "values": "e889e9adbc35c48241aefeea1672392440af6de767881d1c49698b45c069115b",
-       "flags": "7d20b7db1cb06f434930fa300d02812f65538a4e52758cacccb03559d4e2e16d"
-      },
-      "output_hash": "ae155462648c40573f115e0926f0d86a6a414053fdad5db58f200df65c6c0e31",
-      "n_obs": 1494,
-      "start": "1997-03-28",
-      "end": "2025-11-07",
-      "meta": {
-       "kind": null,
-       "frequency": "W",
-       "return_method": "simple",
-       "periods": null,
-       "horizon": 1,
-       "source_dataset_ids": [
-        "NASDAQCOM"
-       ]
-      }
-     },
-     {
-      "step_id": "s8",
-      "capability": "hac_mean_difference",
-      "status": "completed",
-      "input_hashes": {
-       "outcome": "e889e9adbc35c48241aefeea1672392440af6de767881d1c49698b45c069115b",
-       "flags": "7d20b7db1cb06f434930fa300d02812f65538a4e52758cacccb03559d4e2e16d"
-      },
-      "output_hash": "f6ddb80bb936d28aa871b4734b1c122f1a43c166f289e71a5328e40254203d13",
-      "n_obs": 1494,
-      "start": "1997-03-28",
-      "end": "2025-11-07",
-      "meta": {
-       "kind": null,
-       "frequency": "W",
-       "return_method": "simple",
-       "periods": null,
-       "horizon": 1,
-       "source_dataset_ids": [
-        "NASDAQCOM"
-       ]
-      }
-     }
-    ],
-    "tables": {
-     "s7": {
-      "diff_means": -0.00166488045685,
-      "end": "2025-11-07",
-      "mean_flagged": 4.5162097041e-06,
-      "mean_normal": 0.00166939666655,
-      "n_episodes_flagged": 24,
-      "n_flagged": 133,
-      "n_normal": 1361,
-      "start": "1997-03-28",
-      "std_flagged": 0.0566096695897,
-      "std_normal": 0.0433565443647
-     },
-     "s8": {
-      "ci_high": 0.00730169472116,
-      "ci_low": -0.0106314556349,
-      "diff_means": -0.00166488045685,
-      "end": "2025-11-07",
-      "horizon": 1,
-      "maxlags_used": 7,
-      "mean_normal": 0.00166939666655,
-      "n_episodes_flagged": 24,
-      "n_flagged": 133,
-      "n_normal": 1361,
-      "n_obs": 1494,
-      "p_value": 0.715918607594,
-      "se_hac": 0.00457486731835,
-      "start": "1997-03-28",
-      "t_stat": -0.363918850755
-     }
+     "facts": [
+      [
+       "s1.n_obs",
+       "7,644"
+      ],
+      [
+       "s1.start",
+       "1996-01-01"
+      ],
+      [
+       "s1.end",
+       "2025-11-20"
+      ],
+      [
+       "s1.last_value",
+       "172.2"
+      ],
+      [
+       "s2.n_obs",
+       "1,559"
+      ],
+      [
+       "s2.start",
+       "1996-01-05"
+      ],
+      [
+       "s2.end",
+       "2025-11-14"
+      ],
+      [
+       "s2.last_value",
+       "168.8"
+      ],
+      [
+       "s3.n_obs",
+       "1,558"
+      ],
+      [
+       "s3.start",
+       "1996-01-12"
+      ],
+      [
+       "s3.end",
+       "2025-11-14"
+      ],
+      [
+       "s3.last_value",
+       "0.001479"
+      ],
+      [
+       "s4.n_obs",
+       "1,547"
+      ],
+      [
+       "s4.start",
+       "1996-03-29"
+      ],
+      [
+       "s4.end",
+       "2025-11-14"
+      ],
+      [
+       "s4.last_value",
+       "0.1281"
+      ],
+      [
+       "s5.n_obs",
+       "1,495"
+      ],
+      [
+       "s5.n_flagged",
+       "133"
+      ],
+      [
+       "s5.share_flagged",
+       "0.08896"
+      ],
+      [
+       "s5.n_episodes",
+       "24"
+      ],
+      [
+       "s6.n_obs",
+       "1,558"
+      ],
+      [
+       "s6.start",
+       "1996-01-05"
+      ],
+      [
+       "s6.end",
+       "2025-11-07"
+      ],
+      [
+       "s6.last_value",
+       "0.001480"
+      ],
+      [
+       "s7.n_flagged",
+       "133"
+      ],
+      [
+       "s7.n_normal",
+       "1,361"
+      ],
+      [
+       "s7.n_episodes_flagged",
+       "24"
+      ],
+      [
+       "s7.mean_flagged",
+       "0.000004516"
+      ],
+      [
+       "s7.mean_normal",
+       "0.001669"
+      ],
+      [
+       "s7.diff_means",
+       "-0.001665"
+      ],
+      [
+       "s7.std_flagged",
+       "0.05661"
+      ],
+      [
+       "s7.std_normal",
+       "0.04336"
+      ],
+      [
+       "s7.start",
+       "1997-03-28"
+      ],
+      [
+       "s7.end",
+       "2025-11-07"
+      ],
+      [
+       "s8.diff_means",
+       "-0.001665"
+      ],
+      [
+       "s8.mean_normal",
+       "0.001669"
+      ],
+      [
+       "s8.se_hac",
+       "0.004575"
+      ],
+      [
+       "s8.t_stat",
+       "-0.3639"
+      ],
+      [
+       "s8.p_value",
+       "0.7159"
+      ],
+      [
+       "s8.ci_low",
+       "-0.01063"
+      ],
+      [
+       "s8.ci_high",
+       "0.007302"
+      ],
+      [
+       "s8.n_obs",
+       "1,494"
+      ],
+      [
+       "s8.n_flagged",
+       "133"
+      ],
+      [
+       "s8.n_normal",
+       "1,361"
+      ],
+      [
+       "s8.n_episodes_flagged",
+       "24"
+      ],
+      [
+       "s8.maxlags_used",
+       "7"
+      ],
+      [
+       "s8.horizon",
+       "1"
+      ],
+      [
+       "s8.start",
+       "1997-03-28"
+      ],
+      [
+       "s8.end",
+       "2025-11-07"
+      ]
+     ]
     },
-    "facts": [
-     [
-      "s1.n_obs",
-      "7,644"
+    "prompt_injection_block": {
+     "status": "blocked",
+     "static_issues": [
+      {
+       "code": "G13",
+       "issue_id": "G13:plan",
+       "severity": "BLOCK",
+       "step_id": null
+      }
      ],
-     [
-      "s1.start",
-      "1996-01-01"
+     "runtime_issues": [],
+     "approvals": [],
+     "plan": [],
+     "steps": [],
+     "tables": {},
+     "facts": []
+    }
+   }
+  },
+  "committed": {
+   "dataset_sha256": {
+    "NASDAQCOM": "b1c65ade24861ff5dc51bd5bbd4d8b7ed8e68af20a6181b2457c6bfe64289520"
+   },
+   "scenarios": {
+    "volatility_flag_success": {
+     "status": "completed",
+     "static_issues": [
+      {
+       "code": "G12",
+       "issue_id": "G12:s3:return_method",
+       "severity": "APPROVAL",
+       "step_id": "s3"
+      },
+      {
+       "code": "G12",
+       "issue_id": "G12:s6:return_method",
+       "severity": "APPROVAL",
+       "step_id": "s6"
+      }
      ],
-     [
-      "s1.end",
-      "2025-11-20"
+     "runtime_issues": [],
+     "approvals": [
+      "G12:s3:return_method",
+      "G12:s6:return_method"
      ],
-     [
-      "s1.last_value",
-      "172.2"
+     "plan": [
+      {
+       "id": "s1",
+       "capability": "load_series",
+       "inputs": {},
+       "params": {
+        "dataset_id": "NASDAQCOM"
+       }
+      },
+      {
+       "id": "s2",
+       "capability": "resample",
+       "inputs": {
+        "series": "s1"
+       },
+       "params": {
+        "freq": "W",
+        "how": "last"
+       }
+      },
+      {
+       "id": "s3",
+       "capability": "compute_returns",
+       "inputs": {
+        "series": "s2"
+       },
+       "params": {
+        "method": "log",
+        "periods": 1
+       }
+      },
+      {
+       "id": "s4",
+       "capability": "rolling_volatility",
+       "inputs": {
+        "series": "s3"
+       },
+       "params": {
+        "window": 12,
+        "annualize": true
+       }
+      },
+      {
+       "id": "s5",
+       "capability": "flag_regime",
+       "inputs": {
+        "series": "s4"
+       },
+       "params": {
+        "quantile": 0.9,
+        "method": "expanding",
+        "min_periods": 52
+       }
+      },
+      {
+       "id": "s6",
+       "capability": "forward_return",
+       "inputs": {
+        "series": "s2"
+       },
+       "params": {
+        "method": "simple",
+        "horizon": 1
+       }
+      },
+      {
+       "id": "s7",
+       "capability": "compare_groups",
+       "inputs": {
+        "values": "s6",
+        "flags": "s5"
+       },
+       "params": {}
+      },
+      {
+       "id": "s8",
+       "capability": "hac_mean_difference",
+       "inputs": {
+        "outcome": "s6",
+        "flags": "s5"
+       },
+       "params": {
+        "maxlags": null
+       }
+      }
      ],
-     [
-      "s2.n_obs",
-      "1,559"
+     "steps": [
+      {
+       "step_id": "s1",
+       "capability": "load_series",
+       "status": "completed",
+       "input_hashes": {
+        "dataset:NASDAQCOM": "b1c65ade24861ff5dc51bd5bbd4d8b7ed8e68af20a6181b2457c6bfe64289520"
+       },
+       "output_hash": "19533e0349f1c64363fb6ca588288acb676fe8f3b3baba27df2a9de674466700",
+       "n_obs": 14042,
+       "start": "1971-02-05",
+       "end": "2026-10-15",
+       "meta": {
+        "kind": "price_level",
+        "frequency": "D",
+        "return_method": null,
+        "periods": null,
+        "horizon": null,
+        "source_dataset_ids": [
+         "NASDAQCOM"
+        ]
+       }
+      },
+      {
+       "step_id": "s2",
+       "capability": "resample",
+       "status": "completed",
+       "input_hashes": {
+        "series": "19533e0349f1c64363fb6ca588288acb676fe8f3b3baba27df2a9de674466700"
+       },
+       "output_hash": "0c44f38c8ce12abc086f1416f5bd5a174afe0cfa3b6b38d52efcfad89d19489f",
+       "n_obs": 2906,
+       "start": "1971-02-05",
+       "end": "2026-10-09",
+       "meta": {
+        "kind": "price_level",
+        "frequency": "W",
+        "return_method": null,
+        "periods": null,
+        "horizon": null,
+        "source_dataset_ids": [
+         "NASDAQCOM"
+        ]
+       }
+      },
+      {
+       "step_id": "s3",
+       "capability": "compute_returns",
+       "status": "completed",
+       "input_hashes": {
+        "series": "0c44f38c8ce12abc086f1416f5bd5a174afe0cfa3b6b38d52efcfad89d19489f"
+       },
+       "output_hash": "01837c38b955bb6f6083d742180eca712f66ba470ea00e487ccfbe844ea94c56",
+       "n_obs": 2905,
+       "start": "1971-02-12",
+       "end": "2026-10-09",
+       "meta": {
+        "kind": "returns",
+        "frequency": "W",
+        "return_method": "log",
+        "periods": 1,
+        "horizon": null,
+        "source_dataset_ids": [
+         "NASDAQCOM"
+        ]
+       }
+      },
+      {
+       "step_id": "s4",
+       "capability": "rolling_volatility",
+       "status": "completed",
+       "input_hashes": {
+        "series": "01837c38b955bb6f6083d742180eca712f66ba470ea00e487ccfbe844ea94c56"
+       },
+       "output_hash": "2bf94759d74c4e5e548689ed09aa407febbc1b60ca31986f609bea3ae82b8e36",
+       "n_obs": 2894,
+       "start": "1971-04-30",
+       "end": "2026-10-09",
+       "meta": {
+        "kind": "volatility",
+        "frequency": "W",
+        "return_method": "log",
+        "periods": 1,
+        "horizon": null,
+        "source_dataset_ids": [
+         "NASDAQCOM"
+        ]
+       }
+      },
+      {
+       "step_id": "s5",
+       "capability": "flag_regime",
+       "status": "completed",
+       "input_hashes": {
+        "series": "2bf94759d74c4e5e548689ed09aa407febbc1b60ca31986f609bea3ae82b8e36"
+       },
+       "output_hash": "d9d8384c06029549e0927279cfdac330dc4123c3fbfdd7db4b40a51763d8fbd4",
+       "n_obs": 2842,
+       "start": "1972-04-28",
+       "end": "2026-10-09",
+       "meta": {
+        "kind": "flags",
+        "frequency": "W",
+        "return_method": "log",
+        "periods": 1,
+        "horizon": null,
+        "source_dataset_ids": [
+         "NASDAQCOM"
+        ]
+       }
+      },
+      {
+       "step_id": "s6",
+       "capability": "forward_return",
+       "status": "completed",
+       "input_hashes": {
+        "series": "0c44f38c8ce12abc086f1416f5bd5a174afe0cfa3b6b38d52efcfad89d19489f"
+       },
+       "output_hash": "b4b3370e2ab07a1ba6cc4d825785a3ae3e2441fecaafa9f157b7b345896af1f3",
+       "n_obs": 2905,
+       "start": "1971-02-05",
+       "end": "2026-10-02",
+       "meta": {
+        "kind": "forward_returns",
+        "frequency": "W",
+        "return_method": "simple",
+        "periods": null,
+        "horizon": 1,
+        "source_dataset_ids": [
+         "NASDAQCOM"
+        ]
+       }
+      },
+      {
+       "step_id": "s7",
+       "capability": "compare_groups",
+       "status": "completed",
+       "input_hashes": {
+        "values": "b4b3370e2ab07a1ba6cc4d825785a3ae3e2441fecaafa9f157b7b345896af1f3",
+        "flags": "d9d8384c06029549e0927279cfdac330dc4123c3fbfdd7db4b40a51763d8fbd4"
+       },
+       "output_hash": "60848b819f14b21e6cb21f0689179f9633a4f87b92cb5da4e940f2e3f00b56d5",
+       "n_obs": 2841,
+       "start": "1972-04-28",
+       "end": "2026-10-02",
+       "meta": {
+        "kind": null,
+        "frequency": "W",
+        "return_method": "simple",
+        "periods": null,
+        "horizon": 1,
+        "source_dataset_ids": [
+         "NASDAQCOM"
+        ]
+       }
+      },
+      {
+       "step_id": "s8",
+       "capability": "hac_mean_difference",
+       "status": "completed",
+       "input_hashes": {
+        "outcome": "b4b3370e2ab07a1ba6cc4d825785a3ae3e2441fecaafa9f157b7b345896af1f3",
+        "flags": "d9d8384c06029549e0927279cfdac330dc4123c3fbfdd7db4b40a51763d8fbd4"
+       },
+       "output_hash": "3efe82a2d65778d4d47fe63ad1861c7968ee5e8e183ce14c66133f92f2eaf9d7",
+       "n_obs": 2841,
+       "start": "1972-04-28",
+       "end": "2026-10-02",
+       "meta": {
+        "kind": null,
+        "frequency": "W",
+        "return_method": "simple",
+        "periods": null,
+        "horizon": 1,
+        "source_dataset_ids": [
+         "NASDAQCOM"
+        ]
+       }
+      }
      ],
-     [
-      "s2.start",
-      "1996-01-05"
-     ],
-     [
-      "s2.end",
-      "2025-11-14"
-     ],
-     [
-      "s2.last_value",
-      "168.8"
-     ],
-     [
-      "s3.n_obs",
-      "1,558"
-     ],
-     [
-      "s3.start",
-      "1996-01-12"
-     ],
-     [
-      "s3.end",
-      "2025-11-14"
-     ],
-     [
-      "s3.last_value",
-      "0.001479"
-     ],
-     [
-      "s4.n_obs",
-      "1,547"
-     ],
-     [
-      "s4.start",
-      "1996-03-29"
-     ],
-     [
-      "s4.end",
-      "2025-11-14"
-     ],
-     [
-      "s4.last_value",
-      "0.1281"
-     ],
-     [
-      "s5.n_obs",
-      "1,495"
-     ],
-     [
-      "s5.n_flagged",
-      "133"
-     ],
-     [
-      "s5.share_flagged",
-      "0.08896"
-     ],
-     [
-      "s5.n_episodes",
-      "24"
-     ],
-     [
-      "s6.n_obs",
-      "1,558"
-     ],
-     [
-      "s6.start",
-      "1996-01-05"
-     ],
-     [
-      "s6.end",
-      "2025-11-07"
-     ],
-     [
-      "s6.last_value",
-      "0.001480"
-     ],
-     [
-      "s7.n_flagged",
-      "133"
-     ],
-     [
-      "s7.n_normal",
-      "1,361"
-     ],
-     [
-      "s7.n_episodes_flagged",
-      "24"
-     ],
-     [
-      "s7.mean_flagged",
-      "0.000004516"
-     ],
-     [
-      "s7.mean_normal",
-      "0.001669"
-     ],
-     [
-      "s7.diff_means",
-      "-0.001665"
-     ],
-     [
-      "s7.std_flagged",
-      "0.05661"
-     ],
-     [
-      "s7.std_normal",
-      "0.04336"
-     ],
-     [
-      "s7.start",
-      "1997-03-28"
-     ],
-     [
-      "s7.end",
-      "2025-11-07"
-     ],
-     [
-      "s8.diff_means",
-      "-0.001665"
-     ],
-     [
-      "s8.mean_normal",
-      "0.001669"
-     ],
-     [
-      "s8.se_hac",
-      "0.004575"
-     ],
-     [
-      "s8.t_stat",
-      "-0.3639"
-     ],
-     [
-      "s8.p_value",
-      "0.7159"
-     ],
-     [
-      "s8.ci_low",
-      "-0.01063"
-     ],
-     [
-      "s8.ci_high",
-      "0.007302"
-     ],
-     [
-      "s8.n_obs",
-      "1,494"
-     ],
-     [
-      "s8.n_flagged",
-      "133"
-     ],
-     [
-      "s8.n_normal",
-      "1,361"
-     ],
-     [
-      "s8.n_episodes_flagged",
-      "24"
-     ],
-     [
-      "s8.maxlags_used",
-      "7"
-     ],
-     [
-      "s8.horizon",
-      "1"
-     ],
-     [
-      "s8.start",
-      "1997-03-28"
-     ],
-     [
-      "s8.end",
-      "2025-11-07"
+     "tables": {
+      "s7": {
+       "diff_means": -0.000208528731161,
+       "end": "2026-10-02",
+       "mean_flagged": 0.0020933815636,
+       "mean_normal": 0.00230191029476,
+       "n_episodes_flagged": 40,
+       "n_flagged": 446,
+       "n_normal": 2395,
+       "start": "1972-04-28",
+       "std_flagged": 0.0448225740108,
+       "std_normal": 0.0231632010123
+      },
+      "s8": {
+       "ci_high": 0.00416068729295,
+       "ci_low": -0.00457774475527,
+       "diff_means": -0.000208528731161,
+       "end": "2026-10-02",
+       "horizon": 1,
+       "maxlags_used": 8,
+       "mean_normal": 0.00230191029476,
+       "n_episodes_flagged": 40,
+       "n_flagged": 446,
+       "n_normal": 2395,
+       "n_obs": 2841,
+       "p_value": 0.925472330684,
+       "se_hac": 0.00222923281171,
+       "start": "1972-04-28",
+       "t_stat": -0.0935428233721
+      }
+     },
+     "facts": [
+      [
+       "s1.n_obs",
+       "14,042"
+      ],
+      [
+       "s1.start",
+       "1971-02-05"
+      ],
+      [
+       "s1.end",
+       "2026-10-15"
+      ],
+      [
+       "s1.last_value",
+       "26,713"
+      ],
+      [
+       "s2.n_obs",
+       "2,906"
+      ],
+      [
+       "s2.start",
+       "1971-02-05"
+      ],
+      [
+       "s2.end",
+       "2026-10-09"
+      ],
+      [
+       "s2.last_value",
+       "27,366"
+      ],
+      [
+       "s3.n_obs",
+       "2,905"
+      ],
+      [
+       "s3.start",
+       "1971-02-12"
+      ],
+      [
+       "s3.end",
+       "2026-10-09"
+      ],
+      [
+       "s3.last_value",
+       "0.006427"
+      ],
+      [
+       "s4.n_obs",
+       "2,894"
+      ],
+      [
+       "s4.start",
+       "1971-04-30"
+      ],
+      [
+       "s4.end",
+       "2026-10-09"
+      ],
+      [
+       "s4.last_value",
+       "0.1368"
+      ],
+      [
+       "s5.n_obs",
+       "2,842"
+      ],
+      [
+       "s5.n_flagged",
+       "446"
+      ],
+      [
+       "s5.share_flagged",
+       "0.1569"
+      ],
+      [
+       "s5.n_episodes",
+       "40"
+      ],
+      [
+       "s6.n_obs",
+       "2,905"
+      ],
+      [
+       "s6.start",
+       "1971-02-05"
+      ],
+      [
+       "s6.end",
+       "2026-10-02"
+      ],
+      [
+       "s6.last_value",
+       "0.006447"
+      ],
+      [
+       "s7.n_flagged",
+       "446"
+      ],
+      [
+       "s7.n_normal",
+       "2,395"
+      ],
+      [
+       "s7.n_episodes_flagged",
+       "40"
+      ],
+      [
+       "s7.mean_flagged",
+       "0.002093"
+      ],
+      [
+       "s7.mean_normal",
+       "0.002302"
+      ],
+      [
+       "s7.diff_means",
+       "-0.0002085"
+      ],
+      [
+       "s7.std_flagged",
+       "0.04482"
+      ],
+      [
+       "s7.std_normal",
+       "0.02316"
+      ],
+      [
+       "s7.start",
+       "1972-04-28"
+      ],
+      [
+       "s7.end",
+       "2026-10-02"
+      ],
+      [
+       "s8.diff_means",
+       "-0.0002085"
+      ],
+      [
+       "s8.mean_normal",
+       "0.002302"
+      ],
+      [
+       "s8.se_hac",
+       "0.002229"
+      ],
+      [
+       "s8.t_stat",
+       "-0.09354"
+      ],
+      [
+       "s8.p_value",
+       "0.9255"
+      ],
+      [
+       "s8.ci_low",
+       "-0.004578"
+      ],
+      [
+       "s8.ci_high",
+       "0.004161"
+      ],
+      [
+       "s8.n_obs",
+       "2,841"
+      ],
+      [
+       "s8.n_flagged",
+       "446"
+      ],
+      [
+       "s8.n_normal",
+       "2,395"
+      ],
+      [
+       "s8.n_episodes_flagged",
+       "40"
+      ],
+      [
+       "s8.maxlags_used",
+       "8"
+      ],
+      [
+       "s8.horizon",
+       "1"
+      ],
+      [
+       "s8.start",
+       "1972-04-28"
+      ],
+      [
+       "s8.end",
+       "2026-10-02"
+      ]
      ]
-    ]
-   },
-   "volatility_flag_lookahead": {
-    "status": "completed",
-    "static_issues": [
-     {
-      "code": "G12",
-      "issue_id": "G12:s3:return_method",
-      "severity": "APPROVAL",
-      "step_id": "s3"
-     },
-     {
-      "code": "G10",
-      "issue_id": "G10:s5",
-      "severity": "APPROVAL",
-      "step_id": "s5"
-     }
-    ],
-    "runtime_issues": [],
-    "approvals": [
-     "G12:s3:return_method",
-     "G10:s5"
-    ],
-    "plan": [
-     {
-      "id": "s1",
-      "capability": "load_series",
-      "inputs": {},
-      "params": {
-       "dataset_id": "NASDAQCOM"
+    },
+    "prompt_injection_block": {
+     "status": "blocked",
+     "static_issues": [
+      {
+       "code": "G13",
+       "issue_id": "G13:plan",
+       "severity": "BLOCK",
+       "step_id": null
       }
-     },
-     {
-      "id": "s2",
-      "capability": "resample",
-      "inputs": {
-       "series": "s1"
-      },
-      "params": {
-       "freq": "W",
-       "how": "last"
-      }
-     },
-     {
-      "id": "s3",
-      "capability": "compute_returns",
-      "inputs": {
-       "series": "s2"
-      },
-      "params": {
-       "method": "simple",
-       "periods": 1
-      }
-     },
-     {
-      "id": "s4",
-      "capability": "rolling_volatility",
-      "inputs": {
-       "series": "s3"
-      },
-      "params": {
-       "window": 12,
-       "annualize": true
-      }
-     },
-     {
-      "id": "s5",
-      "capability": "flag_regime",
-      "inputs": {
-       "series": "s4"
-      },
-      "params": {
-       "quantile": 0.95,
-       "method": "full_sample",
-       "min_periods": 52
-      }
-     }
-    ],
-    "steps": [
-     {
-      "step_id": "s1",
-      "capability": "load_series",
-      "status": "completed",
-      "input_hashes": {
-       "dataset:NASDAQCOM": "2778eb072f1395b0a7a8b63370caf08a7f062c74b0f7ff8c56e493f52891b367"
-      },
-      "output_hash": "e353c6004b9dfbbd2b0adc092d872f5fb565c1cf418899db74177cef641577f6",
-      "n_obs": 7644,
-      "start": "1996-01-01",
-      "end": "2025-11-20",
-      "meta": {
-       "kind": "price_level",
-       "frequency": "D",
-       "return_method": null,
-       "periods": null,
-       "horizon": null,
-       "source_dataset_ids": [
-        "NASDAQCOM"
-       ]
-      }
-     },
-     {
-      "step_id": "s2",
-      "capability": "resample",
-      "status": "completed",
-      "input_hashes": {
-       "series": "e353c6004b9dfbbd2b0adc092d872f5fb565c1cf418899db74177cef641577f6"
-      },
-      "output_hash": "0b83847a5101d7608ea56451fb52a5c30103a6c733cb01d2e5f5f07e6a192933",
-      "n_obs": 1559,
-      "start": "1996-01-05",
-      "end": "2025-11-14",
-      "meta": {
-       "kind": "price_level",
-       "frequency": "W",
-       "return_method": null,
-       "periods": null,
-       "horizon": null,
-       "source_dataset_ids": [
-        "NASDAQCOM"
-       ]
-      }
-     },
-     {
-      "step_id": "s3",
-      "capability": "compute_returns",
-      "status": "completed",
-      "input_hashes": {
-       "series": "0b83847a5101d7608ea56451fb52a5c30103a6c733cb01d2e5f5f07e6a192933"
-      },
-      "output_hash": "a4b72d9e2aa6c1ca9767783791f39c4ad5d5dd6df84cd47136363b5adf887ed4",
-      "n_obs": 1558,
-      "start": "1996-01-12",
-      "end": "2025-11-14",
-      "meta": {
-       "kind": "returns",
-       "frequency": "W",
-       "return_method": "simple",
-       "periods": 1,
-       "horizon": null,
-       "source_dataset_ids": [
-        "NASDAQCOM"
-       ]
-      }
-     },
-     {
-      "step_id": "s4",
-      "capability": "rolling_volatility",
-      "status": "completed",
-      "input_hashes": {
-       "series": "a4b72d9e2aa6c1ca9767783791f39c4ad5d5dd6df84cd47136363b5adf887ed4"
-      },
-      "output_hash": "6a9a1d736ca60fd28621422c1c4b628f11c9ede8ac66135124a7980d125980aa",
-      "n_obs": 1547,
-      "start": "1996-03-29",
-      "end": "2025-11-14",
-      "meta": {
-       "kind": "volatility",
-       "frequency": "W",
-       "return_method": "simple",
-       "periods": 1,
-       "horizon": null,
-       "source_dataset_ids": [
-        "NASDAQCOM"
-       ]
-      }
-     },
-     {
-      "step_id": "s5",
-      "capability": "flag_regime",
-      "status": "completed",
-      "input_hashes": {
-       "series": "6a9a1d736ca60fd28621422c1c4b628f11c9ede8ac66135124a7980d125980aa"
-      },
-      "output_hash": "17fa185f11f0348c9e95f255c05c5c85302f21ffd0c8e18feef4392d75be17a9",
-      "n_obs": 1547,
-      "start": "1996-03-29",
-      "end": "2025-11-14",
-      "meta": {
-       "kind": "flags",
-       "frequency": "W",
-       "return_method": "simple",
-       "periods": 1,
-       "horizon": null,
-       "source_dataset_ids": [
-        "NASDAQCOM"
-       ]
-      }
-     }
-    ],
-    "tables": {},
-    "facts": [
-     [
-      "s1.n_obs",
-      "7,644"
      ],
-     [
-      "s1.start",
-      "1996-01-01"
-     ],
-     [
-      "s1.end",
-      "2025-11-20"
-     ],
-     [
-      "s1.last_value",
-      "172.2"
-     ],
-     [
-      "s2.n_obs",
-      "1,559"
-     ],
-     [
-      "s2.start",
-      "1996-01-05"
-     ],
-     [
-      "s2.end",
-      "2025-11-14"
-     ],
-     [
-      "s2.last_value",
-      "168.8"
-     ],
-     [
-      "s3.n_obs",
-      "1,558"
-     ],
-     [
-      "s3.start",
-      "1996-01-12"
-     ],
-     [
-      "s3.end",
-      "2025-11-14"
-     ],
-     [
-      "s3.last_value",
-      "0.001480"
-     ],
-     [
-      "s4.n_obs",
-      "1,547"
-     ],
-     [
-      "s4.start",
-      "1996-03-29"
-     ],
-     [
-      "s4.end",
-      "2025-11-14"
-     ],
-     [
-      "s4.last_value",
-      "0.1270"
-     ],
-     [
-      "s5.n_obs",
-      "1,547"
-     ],
-     [
-      "s5.n_flagged",
-      "78"
-     ],
-     [
-      "s5.share_flagged",
-      "0.05042"
-     ],
-     [
-      "s5.n_episodes",
-      "17"
-     ]
-    ]
-   },
-   "arima_forecast_block": {
-    "status": "blocked",
-    "static_issues": [
-     {
-      "code": "G13",
-      "issue_id": "G13:plan",
-      "severity": "BLOCK",
-      "step_id": null
-     }
-    ],
-    "runtime_issues": [],
-    "approvals": [],
-    "plan": [],
-    "steps": [],
-    "tables": {},
-    "facts": []
-   },
-   "prompt_injection_block": {
-    "status": "blocked",
-    "static_issues": [
-     {
-      "code": "G13",
-      "issue_id": "G13:plan",
-      "severity": "BLOCK",
-      "step_id": null
-     }
-    ],
-    "runtime_issues": [],
-    "approvals": [],
-    "plan": [],
-    "steps": [],
-    "tables": {},
-    "facts": []
-   },
-   "frequency_mismatch_block": {
-    "status": "blocked",
-    "static_issues": [
-     {
-      "code": "G12",
-      "issue_id": "G12:s5:return_method",
-      "severity": "APPROVAL",
-      "step_id": "s5"
-     },
-     {
-      "code": "G09",
-      "issue_id": "G09:s6",
-      "severity": "BLOCK",
-      "step_id": "s6"
-     }
-    ],
-    "runtime_issues": [],
-    "approvals": [],
-    "plan": [
-     {
-      "id": "s1",
-      "capability": "load_series",
-      "inputs": {},
-      "params": {
-       "dataset_id": "VIXCLS"
-      }
-     },
-     {
-      "id": "s2",
-      "capability": "flag_regime",
-      "inputs": {
-       "series": "s1"
-      },
-      "params": {
-       "quantile": 0.9,
-       "method": "expanding",
-       "min_periods": 252
-      }
-     },
-     {
-      "id": "s3",
-      "capability": "load_series",
-      "inputs": {},
-      "params": {
-       "dataset_id": "NASDAQCOM"
-      }
-     },
-     {
-      "id": "s4",
-      "capability": "resample",
-      "inputs": {
-       "series": "s3"
-      },
-      "params": {
-       "freq": "W",
-       "how": "last"
-      }
-     },
-     {
-      "id": "s5",
-      "capability": "compute_returns",
-      "inputs": {
-       "series": "s4"
-      },
-      "params": {
-       "method": "simple",
-       "periods": 1
-      }
-     },
-     {
-      "id": "s6",
-      "capability": "compare_groups",
-      "inputs": {
-       "values": "s5",
-       "flags": "s2"
-      },
-      "params": {}
-     }
-    ],
-    "steps": [],
-    "tables": {},
-    "facts": []
+     "runtime_issues": [],
+     "approvals": [],
+     "plan": [],
+     "steps": [],
+     "tables": {},
+     "facts": []
+    }
    }
   }
  },
- "committed": {
-  "dataset_sha256": {
-   "NASDAQCOM": "b1c65ade24861ff5dc51bd5bbd4d8b7ed8e68af20a6181b2457c6bfe64289520",
-   "VIXCLS": "90b0099e6536c38d8ed72ef4347977722f33648bb7458827f6c6e5b17a18332c"
-  },
-  "scenarios": {
-   "volatility_flag_success": {
-    "status": "completed",
-    "static_issues": [
-     {
-      "code": "G12",
-      "issue_id": "G12:s3:return_method",
-      "severity": "APPROVAL",
-      "step_id": "s3"
-     },
-     {
-      "code": "G12",
-      "issue_id": "G12:s6:return_method",
-      "severity": "APPROVAL",
-      "step_id": "s6"
-     }
-    ],
-    "runtime_issues": [],
-    "approvals": [
-     "G12:s3:return_method",
-     "G12:s6:return_method"
-    ],
-    "plan": [
-     {
-      "id": "s1",
-      "capability": "load_series",
-      "inputs": {},
-      "params": {
-       "dataset_id": "NASDAQCOM"
+ "final_examples": {
+  "recorded_after_commit": "08b1547",
+  "synthetic": {
+   "scenarios": {
+    "vix_full_sample_lookahead": {
+     "status": "completed",
+     "static_issues": [
+      {
+       "code": "G09",
+       "issue_id": "G09:s2",
+       "severity": "APPROVAL",
+       "step_id": "s2"
       }
-     },
-     {
-      "id": "s2",
-      "capability": "resample",
-      "inputs": {
-       "series": "s1"
+     ],
+     "runtime_issues": [],
+     "approvals": [
+      "G09:s2"
+     ],
+     "plan": [
+      {
+       "id": "s1",
+       "capability": "load_series",
+       "inputs": {},
+       "params": {
+        "dataset_id": "VIXCLS"
+       }
       },
-      "params": {
-       "freq": "W",
-       "how": "last"
+      {
+       "id": "s2",
+       "capability": "flag_regime",
+       "inputs": {
+        "series": "s1"
+       },
+       "params": {
+        "quantile": 0.95,
+        "method": "full_sample",
+        "min_periods": 52
+       }
       }
-     },
-     {
-      "id": "s3",
-      "capability": "compute_returns",
-      "inputs": {
-       "series": "s2"
+     ],
+     "steps": [
+      {
+       "step_id": "s1",
+       "capability": "load_series",
+       "status": "completed",
+       "input_hashes": {
+        "dataset:VIXCLS": "9ea6f0f3d7a4f9a02c525fac53be40042068f3aa1f45943bc1d00dd60a2eb1c3"
+       },
+       "output_hash": "6517d216045b6762ed60365af216ab036488765d8179e80956711160e39dcf58",
+       "n_obs": 7644,
+       "start": "1996-01-01",
+       "end": "2025-11-20",
+       "meta": {
+        "kind": "index_level",
+        "frequency": "D",
+        "return_method": null,
+        "periods": null,
+        "horizon": null,
+        "source_dataset_ids": [
+         "VIXCLS"
+        ]
+       }
       },
-      "params": {
-       "method": "log",
-       "periods": 1
+      {
+       "step_id": "s2",
+       "capability": "flag_regime",
+       "status": "completed",
+       "input_hashes": {
+        "series": "6517d216045b6762ed60365af216ab036488765d8179e80956711160e39dcf58"
+       },
+       "output_hash": "dd63599d4360001720af97e3367f3747f366a653e0ef21f5c29399c73e507e32",
+       "n_obs": 7644,
+       "start": "1996-01-01",
+       "end": "2025-11-20",
+       "meta": {
+        "kind": "flags",
+        "frequency": "D",
+        "return_method": null,
+        "periods": null,
+        "horizon": null,
+        "source_dataset_ids": [
+         "VIXCLS"
+        ]
+       }
       }
-     },
-     {
-      "id": "s4",
-      "capability": "rolling_volatility",
-      "inputs": {
-       "series": "s3"
-      },
-      "params": {
-       "window": 12,
-       "annualize": true
-      }
-     },
-     {
-      "id": "s5",
-      "capability": "flag_regime",
-      "inputs": {
-       "series": "s4"
-      },
-      "params": {
-       "quantile": 0.9,
-       "method": "expanding",
-       "min_periods": 52
-      }
-     },
-     {
-      "id": "s6",
-      "capability": "forward_return",
-      "inputs": {
-       "series": "s2"
-      },
-      "params": {
-       "method": "simple",
-       "horizon": 1
-      }
-     },
-     {
-      "id": "s7",
-      "capability": "compare_groups",
-      "inputs": {
-       "values": "s6",
-       "flags": "s5"
-      },
-      "params": {}
-     },
-     {
-      "id": "s8",
-      "capability": "hac_mean_difference",
-      "inputs": {
-       "outcome": "s6",
-       "flags": "s5"
-      },
-      "params": {
-       "maxlags": null
-      }
-     }
-    ],
-    "steps": [
-     {
-      "step_id": "s1",
-      "capability": "load_series",
-      "status": "completed",
-      "input_hashes": {
-       "dataset:NASDAQCOM": "b1c65ade24861ff5dc51bd5bbd4d8b7ed8e68af20a6181b2457c6bfe64289520"
-      },
-      "output_hash": "19533e0349f1c64363fb6ca588288acb676fe8f3b3baba27df2a9de674466700",
-      "n_obs": 14042,
-      "start": "1971-02-05",
-      "end": "2026-10-15",
-      "meta": {
-       "kind": "price_level",
-       "frequency": "D",
-       "return_method": null,
-       "periods": null,
-       "horizon": null,
-       "source_dataset_ids": [
-        "NASDAQCOM"
-       ]
-      }
-     },
-     {
-      "step_id": "s2",
-      "capability": "resample",
-      "status": "completed",
-      "input_hashes": {
-       "series": "19533e0349f1c64363fb6ca588288acb676fe8f3b3baba27df2a9de674466700"
-      },
-      "output_hash": "0c44f38c8ce12abc086f1416f5bd5a174afe0cfa3b6b38d52efcfad89d19489f",
-      "n_obs": 2906,
-      "start": "1971-02-05",
-      "end": "2026-10-09",
-      "meta": {
-       "kind": "price_level",
-       "frequency": "W",
-       "return_method": null,
-       "periods": null,
-       "horizon": null,
-       "source_dataset_ids": [
-        "NASDAQCOM"
-       ]
-      }
-     },
-     {
-      "step_id": "s3",
-      "capability": "compute_returns",
-      "status": "completed",
-      "input_hashes": {
-       "series": "0c44f38c8ce12abc086f1416f5bd5a174afe0cfa3b6b38d52efcfad89d19489f"
-      },
-      "output_hash": "01837c38b955bb6f6083d742180eca712f66ba470ea00e487ccfbe844ea94c56",
-      "n_obs": 2905,
-      "start": "1971-02-12",
-      "end": "2026-10-09",
-      "meta": {
-       "kind": "returns",
-       "frequency": "W",
-       "return_method": "log",
-       "periods": 1,
-       "horizon": null,
-       "source_dataset_ids": [
-        "NASDAQCOM"
-       ]
-      }
-     },
-     {
-      "step_id": "s4",
-      "capability": "rolling_volatility",
-      "status": "completed",
-      "input_hashes": {
-       "series": "01837c38b955bb6f6083d742180eca712f66ba470ea00e487ccfbe844ea94c56"
-      },
-      "output_hash": "2bf94759d74c4e5e548689ed09aa407febbc1b60ca31986f609bea3ae82b8e36",
-      "n_obs": 2894,
-      "start": "1971-04-30",
-      "end": "2026-10-09",
-      "meta": {
-       "kind": "volatility",
-       "frequency": "W",
-       "return_method": "log",
-       "periods": 1,
-       "horizon": null,
-       "source_dataset_ids": [
-        "NASDAQCOM"
-       ]
-      }
-     },
-     {
-      "step_id": "s5",
-      "capability": "flag_regime",
-      "status": "completed",
-      "input_hashes": {
-       "series": "2bf94759d74c4e5e548689ed09aa407febbc1b60ca31986f609bea3ae82b8e36"
-      },
-      "output_hash": "d9d8384c06029549e0927279cfdac330dc4123c3fbfdd7db4b40a51763d8fbd4",
-      "n_obs": 2842,
-      "start": "1972-04-28",
-      "end": "2026-10-09",
-      "meta": {
-       "kind": "flags",
-       "frequency": "W",
-       "return_method": "log",
-       "periods": 1,
-       "horizon": null,
-       "source_dataset_ids": [
-        "NASDAQCOM"
-       ]
-      }
-     },
-     {
-      "step_id": "s6",
-      "capability": "forward_return",
-      "status": "completed",
-      "input_hashes": {
-       "series": "0c44f38c8ce12abc086f1416f5bd5a174afe0cfa3b6b38d52efcfad89d19489f"
-      },
-      "output_hash": "b4b3370e2ab07a1ba6cc4d825785a3ae3e2441fecaafa9f157b7b345896af1f3",
-      "n_obs": 2905,
-      "start": "1971-02-05",
-      "end": "2026-10-02",
-      "meta": {
-       "kind": "forward_returns",
-       "frequency": "W",
-       "return_method": "simple",
-       "periods": null,
-       "horizon": 1,
-       "source_dataset_ids": [
-        "NASDAQCOM"
-       ]
-      }
-     },
-     {
-      "step_id": "s7",
-      "capability": "compare_groups",
-      "status": "completed",
-      "input_hashes": {
-       "values": "b4b3370e2ab07a1ba6cc4d825785a3ae3e2441fecaafa9f157b7b345896af1f3",
-       "flags": "d9d8384c06029549e0927279cfdac330dc4123c3fbfdd7db4b40a51763d8fbd4"
-      },
-      "output_hash": "60848b819f14b21e6cb21f0689179f9633a4f87b92cb5da4e940f2e3f00b56d5",
-      "n_obs": 2841,
-      "start": "1972-04-28",
-      "end": "2026-10-02",
-      "meta": {
-       "kind": null,
-       "frequency": "W",
-       "return_method": "simple",
-       "periods": null,
-       "horizon": 1,
-       "source_dataset_ids": [
-        "NASDAQCOM"
-       ]
-      }
-     },
-     {
-      "step_id": "s8",
-      "capability": "hac_mean_difference",
-      "status": "completed",
-      "input_hashes": {
-       "outcome": "b4b3370e2ab07a1ba6cc4d825785a3ae3e2441fecaafa9f157b7b345896af1f3",
-       "flags": "d9d8384c06029549e0927279cfdac330dc4123c3fbfdd7db4b40a51763d8fbd4"
-      },
-      "output_hash": "3efe82a2d65778d4d47fe63ad1861c7968ee5e8e183ce14c66133f92f2eaf9d7",
-      "n_obs": 2841,
-      "start": "1972-04-28",
-      "end": "2026-10-02",
-      "meta": {
-       "kind": null,
-       "frequency": "W",
-       "return_method": "simple",
-       "periods": null,
-       "horizon": 1,
-       "source_dataset_ids": [
-        "NASDAQCOM"
-       ]
-      }
-     }
-    ],
-    "tables": {
-     "s7": {
-      "diff_means": -0.000208528731161,
-      "end": "2026-10-02",
-      "mean_flagged": 0.0020933815636,
-      "mean_normal": 0.00230191029476,
-      "n_episodes_flagged": 40,
-      "n_flagged": 446,
-      "n_normal": 2395,
-      "start": "1972-04-28",
-      "std_flagged": 0.0448225740108,
-      "std_normal": 0.0231632010123
-     },
-     "s8": {
-      "ci_high": 0.00416068729295,
-      "ci_low": -0.00457774475527,
-      "diff_means": -0.000208528731161,
-      "end": "2026-10-02",
-      "horizon": 1,
-      "maxlags_used": 8,
-      "mean_normal": 0.00230191029476,
-      "n_episodes_flagged": 40,
-      "n_flagged": 446,
-      "n_normal": 2395,
-      "n_obs": 2841,
-      "p_value": 0.925472330684,
-      "se_hac": 0.00222923281171,
-      "start": "1972-04-28",
-      "t_stat": -0.0935428233721
-     }
+     ],
+     "tables": {},
+     "facts": [
+      [
+       "s1.n_obs",
+       "7,644"
+      ],
+      [
+       "s1.start",
+       "1996-01-01"
+      ],
+      [
+       "s1.end",
+       "2025-11-20"
+      ],
+      [
+       "s1.last_value",
+       "28.33"
+      ],
+      [
+       "s2.n_obs",
+       "7,644"
+      ],
+      [
+       "s2.n_flagged",
+       "383"
+      ],
+      [
+       "s2.share_flagged",
+       "0.05010"
+      ],
+      [
+       "s2.n_episodes",
+       "9"
+      ]
+     ]
     },
-    "facts": [
-     [
-      "s1.n_obs",
-      "14,042"
+    "arima_forecast_block": {
+     "status": "blocked",
+     "static_issues": [
+      {
+       "code": "G11",
+       "issue_id": "G11:plan",
+       "severity": "BLOCK",
+       "step_id": null
+      }
      ],
-     [
-      "s1.start",
-      "1971-02-05"
+     "runtime_issues": [],
+     "approvals": [],
+     "plan": [],
+     "steps": [],
+     "tables": {},
+     "facts": []
+    },
+    "spread_frequency_mismatch_block": {
+     "status": "blocked",
+     "static_issues": [
+      {
+       "code": "G08",
+       "issue_id": "G08:s4",
+       "severity": "BLOCK",
+       "step_id": "s4"
+      }
      ],
-     [
-      "s1.end",
-      "2026-10-15"
+     "runtime_issues": [],
+     "approvals": [],
+     "plan": [
+      {
+       "id": "s1",
+       "capability": "load_series",
+       "inputs": {},
+       "params": {
+        "dataset_id": "DGS10"
+       }
+      },
+      {
+       "id": "s2",
+       "capability": "resample",
+       "inputs": {
+        "series": "s1"
+       },
+       "params": {
+        "freq": "W",
+        "how": "last"
+       }
+      },
+      {
+       "id": "s3",
+       "capability": "load_series",
+       "inputs": {},
+       "params": {
+        "dataset_id": "DGS2"
+       }
+      },
+      {
+       "id": "s4",
+       "capability": "spread",
+       "inputs": {
+        "a": "s2",
+        "b": "s3"
+       },
+       "params": {}
+      }
      ],
-     [
-      "s1.last_value",
-      "26,713"
+     "steps": [],
+     "tables": {},
+     "facts": []
+    }
+   }
+  },
+  "committed": {
+   "dataset_sha256": {
+    "DEXSZUS": "b6dd77b9c99e658326e1488c0d887876af16c8da7ce5ef93235495b417c4215d",
+    "DGS10": "b972c9a2bbfbbe82596aeeef473dbee40490f2c6a773dbd228491df17306a04d",
+    "DGS2": "48529b32b0138fdc623aee0d3e414eff4d41ca35c5545f5652cf47e00aed3299",
+    "VIXCLS": "90b0099e6536c38d8ed72ef4347977722f33648bb7458827f6c6e5b17a18332c"
+   },
+   "scenarios": {
+    "vix_full_sample_lookahead": {
+     "status": "completed",
+     "static_issues": [
+      {
+       "code": "G09",
+       "issue_id": "G09:s2",
+       "severity": "APPROVAL",
+       "step_id": "s2"
+      }
      ],
-     [
-      "s2.n_obs",
-      "2,906"
+     "runtime_issues": [],
+     "approvals": [
+      "G09:s2"
      ],
-     [
-      "s2.start",
-      "1971-02-05"
+     "plan": [
+      {
+       "id": "s1",
+       "capability": "load_series",
+       "inputs": {},
+       "params": {
+        "dataset_id": "VIXCLS"
+       }
+      },
+      {
+       "id": "s2",
+       "capability": "flag_regime",
+       "inputs": {
+        "series": "s1"
+       },
+       "params": {
+        "quantile": 0.95,
+        "method": "full_sample",
+        "min_periods": 52
+       }
+      }
      ],
-     [
-      "s2.end",
-      "2026-10-09"
+     "steps": [
+      {
+       "step_id": "s1",
+       "capability": "load_series",
+       "status": "completed",
+       "input_hashes": {
+        "dataset:VIXCLS": "90b0099e6536c38d8ed72ef4347977722f33648bb7458827f6c6e5b17a18332c"
+       },
+       "output_hash": "cea6097f84483d975fde94559c97b9349188ef7f1024bd4e2b80299747c66172",
+       "n_obs": 9296,
+       "start": "1990-01-02",
+       "end": "2026-10-15",
+       "meta": {
+        "kind": "index_level",
+        "frequency": "D",
+        "return_method": null,
+        "periods": null,
+        "horizon": null,
+        "source_dataset_ids": [
+         "VIXCLS"
+        ]
+       }
+      },
+      {
+       "step_id": "s2",
+       "capability": "flag_regime",
+       "status": "completed",
+       "input_hashes": {
+        "series": "cea6097f84483d975fde94559c97b9349188ef7f1024bd4e2b80299747c66172"
+       },
+       "output_hash": "cc238f67430bfb186cf9876955a8584f5d4fb1425310d84c381d91d09dad94d4",
+       "n_obs": 9296,
+       "start": "1990-01-02",
+       "end": "2026-10-15",
+       "meta": {
+        "kind": "flags",
+        "frequency": "D",
+        "return_method": null,
+        "periods": null,
+        "horizon": null,
+        "source_dataset_ids": [
+         "VIXCLS"
+        ]
+       }
+      }
      ],
-     [
-      "s2.last_value",
-      "27,366"
-     ],
-     [
-      "s3.n_obs",
-      "2,905"
-     ],
-     [
-      "s3.start",
-      "1971-02-12"
-     ],
-     [
-      "s3.end",
-      "2026-10-09"
-     ],
-     [
-      "s3.last_value",
-      "0.006427"
-     ],
-     [
-      "s4.n_obs",
-      "2,894"
-     ],
-     [
-      "s4.start",
-      "1971-04-30"
-     ],
-     [
-      "s4.end",
-      "2026-10-09"
-     ],
-     [
-      "s4.last_value",
-      "0.1368"
-     ],
-     [
-      "s5.n_obs",
-      "2,842"
-     ],
-     [
-      "s5.n_flagged",
-      "446"
-     ],
-     [
-      "s5.share_flagged",
-      "0.1569"
-     ],
-     [
-      "s5.n_episodes",
-      "40"
-     ],
-     [
-      "s6.n_obs",
-      "2,905"
-     ],
-     [
-      "s6.start",
-      "1971-02-05"
-     ],
-     [
-      "s6.end",
-      "2026-10-02"
-     ],
-     [
-      "s6.last_value",
-      "0.006447"
-     ],
-     [
-      "s7.n_flagged",
-      "446"
-     ],
-     [
-      "s7.n_normal",
-      "2,395"
-     ],
-     [
-      "s7.n_episodes_flagged",
-      "40"
-     ],
-     [
-      "s7.mean_flagged",
-      "0.002093"
-     ],
-     [
-      "s7.mean_normal",
-      "0.002302"
-     ],
-     [
-      "s7.diff_means",
-      "-0.0002085"
-     ],
-     [
-      "s7.std_flagged",
-      "0.04482"
-     ],
-     [
-      "s7.std_normal",
-      "0.02316"
-     ],
-     [
-      "s7.start",
-      "1972-04-28"
-     ],
-     [
-      "s7.end",
-      "2026-10-02"
-     ],
-     [
-      "s8.diff_means",
-      "-0.0002085"
-     ],
-     [
-      "s8.mean_normal",
-      "0.002302"
-     ],
-     [
-      "s8.se_hac",
-      "0.002229"
-     ],
-     [
-      "s8.t_stat",
-      "-0.09354"
-     ],
-     [
-      "s8.p_value",
-      "0.9255"
-     ],
-     [
-      "s8.ci_low",
-      "-0.004578"
-     ],
-     [
-      "s8.ci_high",
-      "0.004161"
-     ],
-     [
-      "s8.n_obs",
-      "2,841"
-     ],
-     [
-      "s8.n_flagged",
-      "446"
-     ],
-     [
-      "s8.n_normal",
-      "2,395"
-     ],
-     [
-      "s8.n_episodes_flagged",
-      "40"
-     ],
-     [
-      "s8.maxlags_used",
-      "8"
-     ],
-     [
-      "s8.horizon",
-      "1"
-     ],
-     [
-      "s8.start",
-      "1972-04-28"
-     ],
-     [
-      "s8.end",
-      "2026-10-02"
+     "tables": {},
+     "facts": [
+      [
+       "s1.n_obs",
+       "9,296"
+      ],
+      [
+       "s1.start",
+       "1990-01-02"
+      ],
+      [
+       "s1.end",
+       "2026-10-15"
+      ],
+      [
+       "s1.last_value",
+       "16.46"
+      ],
+      [
+       "s2.n_obs",
+       "9,296"
+      ],
+      [
+       "s2.n_flagged",
+       "465"
+      ],
+      [
+       "s2.share_flagged",
+       "0.05002"
+      ],
+      [
+       "s2.n_episodes",
+       "76"
+      ]
      ]
-    ]
-   },
-   "volatility_flag_lookahead": {
-    "status": "completed",
-    "static_issues": [
-     {
-      "code": "G12",
-      "issue_id": "G12:s3:return_method",
-      "severity": "APPROVAL",
-      "step_id": "s3"
-     },
-     {
-      "code": "G10",
-      "issue_id": "G10:s5",
-      "severity": "APPROVAL",
-      "step_id": "s5"
-     }
-    ],
-    "runtime_issues": [],
-    "approvals": [
-     "G12:s3:return_method",
-     "G10:s5"
-    ],
-    "plan": [
-     {
-      "id": "s1",
-      "capability": "load_series",
-      "inputs": {},
-      "params": {
-       "dataset_id": "NASDAQCOM"
+    },
+    "arima_forecast_block": {
+     "status": "blocked",
+     "static_issues": [
+      {
+       "code": "G11",
+       "issue_id": "G11:plan",
+       "severity": "BLOCK",
+       "step_id": null
       }
-     },
-     {
-      "id": "s2",
-      "capability": "resample",
-      "inputs": {
-       "series": "s1"
+     ],
+     "runtime_issues": [],
+     "approvals": [],
+     "plan": [],
+     "steps": [],
+     "tables": {},
+     "facts": []
+    },
+    "spread_frequency_mismatch_block": {
+     "status": "blocked",
+     "static_issues": [
+      {
+       "code": "G08",
+       "issue_id": "G08:s4",
+       "severity": "BLOCK",
+       "step_id": "s4"
+      }
+     ],
+     "runtime_issues": [],
+     "approvals": [],
+     "plan": [
+      {
+       "id": "s1",
+       "capability": "load_series",
+       "inputs": {},
+       "params": {
+        "dataset_id": "DGS10"
+       }
       },
-      "params": {
-       "freq": "W",
-       "how": "last"
-      }
-     },
-     {
-      "id": "s3",
-      "capability": "compute_returns",
-      "inputs": {
-       "series": "s2"
+      {
+       "id": "s2",
+       "capability": "resample",
+       "inputs": {
+        "series": "s1"
+       },
+       "params": {
+        "freq": "W",
+        "how": "last"
+       }
       },
-      "params": {
-       "method": "simple",
-       "periods": 1
-      }
-     },
-     {
-      "id": "s4",
-      "capability": "rolling_volatility",
-      "inputs": {
-       "series": "s3"
+      {
+       "id": "s3",
+       "capability": "load_series",
+       "inputs": {},
+       "params": {
+        "dataset_id": "DGS2"
+       }
       },
-      "params": {
-       "window": 12,
-       "annualize": true
+      {
+       "id": "s4",
+       "capability": "spread",
+       "inputs": {
+        "a": "s2",
+        "b": "s3"
+       },
+       "params": {}
       }
-     },
-     {
-      "id": "s5",
-      "capability": "flag_regime",
-      "inputs": {
-       "series": "s4"
-      },
-      "params": {
-       "quantile": 0.95,
-       "method": "full_sample",
-       "min_periods": 52
-      }
-     }
-    ],
-    "steps": [
-     {
-      "step_id": "s1",
-      "capability": "load_series",
-      "status": "completed",
-      "input_hashes": {
-       "dataset:NASDAQCOM": "b1c65ade24861ff5dc51bd5bbd4d8b7ed8e68af20a6181b2457c6bfe64289520"
-      },
-      "output_hash": "19533e0349f1c64363fb6ca588288acb676fe8f3b3baba27df2a9de674466700",
-      "n_obs": 14042,
-      "start": "1971-02-05",
-      "end": "2026-10-15",
-      "meta": {
-       "kind": "price_level",
-       "frequency": "D",
-       "return_method": null,
-       "periods": null,
-       "horizon": null,
-       "source_dataset_ids": [
-        "NASDAQCOM"
-       ]
-      }
-     },
-     {
-      "step_id": "s2",
-      "capability": "resample",
-      "status": "completed",
-      "input_hashes": {
-       "series": "19533e0349f1c64363fb6ca588288acb676fe8f3b3baba27df2a9de674466700"
-      },
-      "output_hash": "0c44f38c8ce12abc086f1416f5bd5a174afe0cfa3b6b38d52efcfad89d19489f",
-      "n_obs": 2906,
-      "start": "1971-02-05",
-      "end": "2026-10-09",
-      "meta": {
-       "kind": "price_level",
-       "frequency": "W",
-       "return_method": null,
-       "periods": null,
-       "horizon": null,
-       "source_dataset_ids": [
-        "NASDAQCOM"
-       ]
-      }
-     },
-     {
-      "step_id": "s3",
-      "capability": "compute_returns",
-      "status": "completed",
-      "input_hashes": {
-       "series": "0c44f38c8ce12abc086f1416f5bd5a174afe0cfa3b6b38d52efcfad89d19489f"
-      },
-      "output_hash": "b607a740b7872e1349e5223ab3b22513417c6949a7949ad05bc222e3430d5e04",
-      "n_obs": 2905,
-      "start": "1971-02-12",
-      "end": "2026-10-09",
-      "meta": {
-       "kind": "returns",
-       "frequency": "W",
-       "return_method": "simple",
-       "periods": 1,
-       "horizon": null,
-       "source_dataset_ids": [
-        "NASDAQCOM"
-       ]
-      }
-     },
-     {
-      "step_id": "s4",
-      "capability": "rolling_volatility",
-      "status": "completed",
-      "input_hashes": {
-       "series": "b607a740b7872e1349e5223ab3b22513417c6949a7949ad05bc222e3430d5e04"
-      },
-      "output_hash": "35c7d923a74817f15ce486d1019c2b0007f5001931754fb12a0dc64087cdb83d",
-      "n_obs": 2894,
-      "start": "1971-04-30",
-      "end": "2026-10-09",
-      "meta": {
-       "kind": "volatility",
-       "frequency": "W",
-       "return_method": "simple",
-       "periods": 1,
-       "horizon": null,
-       "source_dataset_ids": [
-        "NASDAQCOM"
-       ]
-      }
-     },
-     {
-      "step_id": "s5",
-      "capability": "flag_regime",
-      "status": "completed",
-      "input_hashes": {
-       "series": "35c7d923a74817f15ce486d1019c2b0007f5001931754fb12a0dc64087cdb83d"
-      },
-      "output_hash": "d730b72a8c88b94109d490f5604bbdf3f018accd26a1606a39dee582de9d1e1f",
-      "n_obs": 2894,
-      "start": "1971-04-30",
-      "end": "2026-10-09",
-      "meta": {
-       "kind": "flags",
-       "frequency": "W",
-       "return_method": "simple",
-       "periods": 1,
-       "horizon": null,
-       "source_dataset_ids": [
-        "NASDAQCOM"
-       ]
-      }
-     }
-    ],
-    "tables": {},
-    "facts": [
-     [
-      "s1.n_obs",
-      "14,042"
      ],
-     [
-      "s1.start",
-      "1971-02-05"
-     ],
-     [
-      "s1.end",
-      "2026-10-15"
-     ],
-     [
-      "s1.last_value",
-      "26,713"
-     ],
-     [
-      "s2.n_obs",
-      "2,906"
-     ],
-     [
-      "s2.start",
-      "1971-02-05"
-     ],
-     [
-      "s2.end",
-      "2026-10-09"
-     ],
-     [
-      "s2.last_value",
-      "27,366"
-     ],
-     [
-      "s3.n_obs",
-      "2,905"
-     ],
-     [
-      "s3.start",
-      "1971-02-12"
-     ],
-     [
-      "s3.end",
-      "2026-10-09"
-     ],
-     [
-      "s3.last_value",
-      "0.006447"
-     ],
-     [
-      "s4.n_obs",
-      "2,894"
-     ],
-     [
-      "s4.start",
-      "1971-04-30"
-     ],
-     [
-      "s4.end",
-      "2026-10-09"
-     ],
-     [
-      "s4.last_value",
-      "0.1386"
-     ],
-     [
-      "s5.n_obs",
-      "2,894"
-     ],
-     [
-      "s5.n_flagged",
-      "145"
-     ],
-     [
-      "s5.share_flagged",
-      "0.05010"
-     ],
-     [
-      "s5.n_episodes",
-      "15"
-     ]
-    ]
-   },
-   "arima_forecast_block": {
-    "status": "blocked",
-    "static_issues": [
-     {
-      "code": "G13",
-      "issue_id": "G13:plan",
-      "severity": "BLOCK",
-      "step_id": null
-     }
-    ],
-    "runtime_issues": [],
-    "approvals": [],
-    "plan": [],
-    "steps": [],
-    "tables": {},
-    "facts": []
-   },
-   "prompt_injection_block": {
-    "status": "blocked",
-    "static_issues": [
-     {
-      "code": "G13",
-      "issue_id": "G13:plan",
-      "severity": "BLOCK",
-      "step_id": null
-     }
-    ],
-    "runtime_issues": [],
-    "approvals": [],
-    "plan": [],
-    "steps": [],
-    "tables": {},
-    "facts": []
-   },
-   "frequency_mismatch_block": {
-    "status": "blocked",
-    "static_issues": [
-     {
-      "code": "G12",
-      "issue_id": "G12:s5:return_method",
-      "severity": "APPROVAL",
-      "step_id": "s5"
-     },
-     {
-      "code": "G09",
-      "issue_id": "G09:s6",
-      "severity": "BLOCK",
-      "step_id": "s6"
-     }
-    ],
-    "runtime_issues": [],
-    "approvals": [],
-    "plan": [
-     {
-      "id": "s1",
-      "capability": "load_series",
-      "inputs": {},
-      "params": {
-       "dataset_id": "VIXCLS"
-      }
-     },
-     {
-      "id": "s2",
-      "capability": "flag_regime",
-      "inputs": {
-       "series": "s1"
-      },
-      "params": {
-       "quantile": 0.9,
-       "method": "expanding",
-       "min_periods": 252
-      }
-     },
-     {
-      "id": "s3",
-      "capability": "load_series",
-      "inputs": {},
-      "params": {
-       "dataset_id": "NASDAQCOM"
-      }
-     },
-     {
-      "id": "s4",
-      "capability": "resample",
-      "inputs": {
-       "series": "s3"
-      },
-      "params": {
-       "freq": "W",
-       "how": "last"
-      }
-     },
-     {
-      "id": "s5",
-      "capability": "compute_returns",
-      "inputs": {
-       "series": "s4"
-      },
-      "params": {
-       "method": "simple",
-       "periods": 1
-      }
-     },
-     {
-      "id": "s6",
-      "capability": "compare_groups",
-      "inputs": {
-       "values": "s5",
-       "flags": "s2"
-      },
-      "params": {}
-     }
-    ],
-    "steps": [],
-    "tables": {},
-    "facts": []
+     "steps": [],
+     "tables": {},
+     "facts": []
+    }
    }
   }
  }

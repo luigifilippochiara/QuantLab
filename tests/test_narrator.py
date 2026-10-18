@@ -24,7 +24,7 @@ from fakes import FakeAnthropicClient, FakeOpenAIClient, openai_text_response, t
 
 PLANS = {
     "scenario_1": raw_plan("volatility_flag_success"),
-    "lookahead": raw_plan("volatility_flag_lookahead"),
+    "lookahead": raw_plan("vix_full_sample_lookahead"),
     "spread": SPREAD_PLAN,
 }
 

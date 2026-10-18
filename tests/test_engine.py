@@ -79,7 +79,7 @@ def test_invalid_edit_blocks_execution(settings: Settings) -> None:
 def test_only_open_approval_issues_can_be_approved(settings: Settings) -> None:
     session = start(settings)
     with pytest.raises(ValueError):
-        session.approve(["G09:s5"])  # only scenario 2 raises it
+        session.approve(["G09:s5"])  # not an issue of scenario 1's plan
     # An edit to a step that does not exist is rejected (see test_editing.py).
     assert session.apply_param_edits({"s99": {"window": 3}}).is_blocked
 

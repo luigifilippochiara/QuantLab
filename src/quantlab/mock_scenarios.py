@@ -2,16 +2,31 @@
 
 The five examples follow one realistic task, a market-risk analyst identifying
 periods of unusual market behaviour, and the protections QuantLab applies along
-the way:
-1. flag high-volatility weeks and test whether the following week's returns
-   differ from normal weeks (the core analysis);
-2. look-ahead protection: a full-sample threshold needs explicit approval;
-3. a request outside the registry (an ARIMA forecast) is declined;
-4. instructions embedded in a request are treated as data and declined;
-5. combining series of different frequencies is blocked before anything runs.
-The audit trail of a result (the trace) is shown on example 1's output.
+the way. They are the only examples: the sidebar, `cli demo`, the golden set and
+the MockPlanner know these five and nothing else.
 
-Role in the architecture: pure data, shared by
+1. High-volatility weeks and what follows (`volatility_flag_success`): the core
+   analysis. Weekly NASDAQ volatility, flags above an expanding threshold, then a
+   comparison and a significance test of the following week's returns. It runs to
+   completion after the analyst approves the two return methods (G10
+   MATERIAL_ASSUMPTION, on s3 and s6). Its result carries the audit trail (the trace).
+2. Look-ahead protection (`vix_full_sample_lookahead`): the days when the VIX was
+   in the top 5% of its entire history. The full-sample threshold uses future data,
+   so it needs approval (G09 LOOK_AHEAD). It is an APPROVAL, not a BLOCK: a
+   full-sample threshold is acceptable for descriptively labelling past stress days
+   but invalid as a signal or in a backtest. The system cannot know the intent, so
+   the human decides.
+3. Out-of-scope forecast request (`arima_forecast_block`): an ARIMA forecast of
+   USD/CHF has no registered capability, so the planner declines (G11
+   PLANNER_REFUSED) and lists what the registry can do instead.
+4. Prompt-injection protection (`prompt_injection_block`): instructions embedded
+   in a request are treated as data and declined (G11 PLANNER_REFUSED); nothing is
+   ever executed.
+5. Frequency-alignment protection (`spread_frequency_mismatch_block`): the spread
+   of a weekly and a daily yield, planned exactly as requested. The validator, not
+   the planner, catches the mismatch (G08 FREQUENCY_MISMATCH) before anything runs.
+
+Role in the architecture: data, shared by
 - the MockPlanner (returns these plans instead of calling an LLM, so the whole
   system works offline and whenever the LLM API is unavailable),
 - the CLI `demo` command (runs all five and checks the expected outcomes),
@@ -19,12 +34,14 @@ Role in the architecture: pure data, shared by
 - the tests and the evaluation golden set.
 
 The canned plans are written exactly as the LLM is asked to write them: only
-the fields of `plan.plan_tool_schema()`. Scenario 5's plan is deliberately
-misaligned, so that the validator, not the planner, has to catch the problem.
+the fields of `plan.plan_tool_schema()`. Scenario 3's refusal lists the
+capabilities from the registry, so it can never name one that does not exist.
 """
 
 from dataclasses import dataclass
 from typing import Any
+
+from quantlab.registry import REGISTRY
 
 
 @dataclass(frozen=True)
@@ -96,20 +113,10 @@ def _refusal(reason: str) -> dict[str, Any]:
     }
 
 
-def _weekly_volatility_flag_steps(flag_params: dict[str, Any]) -> list[dict[str, Any]]:
-    """The steps of scenario 2: weekly simple returns, their volatility and the flags."""
-    return [
-        _step("s1", "load_series", params={"dataset_id": "NASDAQCOM"},
-              rationale="Load the NASDAQ Composite daily closes."),
-        _step("s2", "resample", {"series": "s1"}, {"freq": "W", "how": "last"},
-              rationale="Weekly Friday closes, as requested."),
-        _step("s3", "compute_returns", {"series": "s2"}, {"method": "simple", "periods": 1},
-              rationale="Simple weekly returns of the index."),
-        _step("s4", "rolling_volatility", {"series": "s3"}, {"window": 12, "annualize": True},
-              rationale="12-week rolling annualised volatility."),
-        _step("s5", "flag_regime", {"series": "s4"}, flag_params,
-              rationale="Flag weeks whose volatility is unusually high."),
-    ]  # fmt: skip
+def _registry_menu() -> str:
+    """The registered capability names as one English list, e.g. "a, b and c" (from REGISTRY)."""
+    names = list(REGISTRY)
+    return ", ".join(names[:-1]) + " and " + names[-1]
 
 
 # The flagship request (example 1). It states the choices that have no default (the
@@ -190,41 +197,55 @@ SCENARIOS: list[Scenario] = [
         plan=_plan(["NASDAQCOM"], FLAGSHIP_STEPS, FLAGSHIP_NOTES),
     ),
     Scenario(
-        id="volatility_flag_lookahead",
+        id="vix_full_sample_lookahead",
         number=2,
         label="2 · Look-ahead protection",
-        request=(
-            "Using the NASDAQ, compute weekly returns and 12-week rolling annualised "
-            "volatility, and flag the weeks above the full-sample 95th percentile."
-        ),
-        dataset_ids=("NASDAQCOM",),
+        request="Flag the days when the VIX was in the top 5% of its entire history.",
+        dataset_ids=("VIXCLS",),
         expected_status="completed",
-        expected_codes=("G09", "G10"),
+        expected_codes=("G09",),  # the look-ahead approval of the full-sample threshold only
         auto_approve=True,
-        keywords=(("nasdaq",), ("full-sample", "full sample")),
+        keywords=(("vix",), ("entire history", "full sample", "full-sample", "top 5%")),
         plan=_plan(
-            ["NASDAQCOM"],
-            _weekly_volatility_flag_steps({"method": "full_sample", "quantile": 0.95}),
-            "Full-sample threshold used because the request asks for it explicitly.",
+            ["VIXCLS"],
+            [
+                _step(
+                    "s1",
+                    "load_series",
+                    params={"dataset_id": "VIXCLS"},
+                    rationale="Load the VIX closing levels.",
+                ),
+                # "Its entire history" asks for ONE threshold from all the data, past
+                # and future: method full_sample, and "top 5%" is the 95th percentile.
+                # A correct reading of the request, which still uses data nobody had
+                # on the flagged day: the validator asks the analyst to approve it (G09)
+                # rather than blocking a legitimate descriptive question.
+                _step(
+                    "s2",
+                    "flag_regime",
+                    {"series": "s1"},
+                    {"method": "full_sample", "quantile": 0.95},
+                    rationale="Flag the days above the 95th percentile of the whole VIX history.",
+                ),
+            ],
+            "The request explicitly asks for a threshold from the entire history, so the "
+            "flags use a full-sample threshold (future data included).",
         ),
     ),
     Scenario(
         id="arima_forecast_block",
         number=3,
         label="3 · Out-of-scope forecast request",
-        request="Fit an ARIMA model to forecast next week's NASDAQ return.",
-        dataset_ids=("NASDAQCOM",),
+        request="Fit an ARIMA model to forecast next week's USD/CHF exchange rate.",
+        dataset_ids=("DEXSZUS",),
         expected_status="blocked",
         expected_codes=("G11",),
         auto_approve=False,
-        keywords=(("arima", "predict", "forecast"),),
+        keywords=(("arima", "forecast", "predict"),),
         plan=_refusal(
-            "There is no registered capability for model fitting or prediction (such as "
-            "an ARIMA forecast). The registry can instead: load a dataset, resample it to "
-            "weekly or monthly, compute returns, forward returns or differences, take a "
-            "spread, compute rolling volatility, flag high-volatility periods, summarise a "
-            "series, compare a series between flagged and normal periods, and test whether "
-            "that difference is statistically significant."
+            "No registered capability fits a model or makes a forecast (such as an ARIMA "
+            "forecast of the USD/CHF exchange rate). The registry can instead run: "
+            f"{_registry_menu()}."
         ),
     ),
     Scenario(
@@ -247,64 +268,53 @@ SCENARIOS: list[Scenario] = [
         ),
     ),
     Scenario(
-        id="frequency_mismatch_block",
+        id="spread_frequency_mismatch_block",
         number=5,
         label="5 · Frequency-alignment protection",
         request=(
-            "Compare weekly NASDAQ returns between periods when daily VIX was unusually "
-            "high and normal periods."
+            "Compute the spread between the weekly 10-year Treasury yield and the daily "
+            "2-year Treasury yield."
         ),
-        dataset_ids=("VIXCLS", "NASDAQCOM"),
+        dataset_ids=("DGS10", "DGS2"),
         expected_status="blocked",
-        expected_codes=("G08", "G10"),
+        expected_codes=("G08",),
         auto_approve=False,
-        keywords=(("vix",), ("nasdaq",)),
-        # Deliberately misaligned, as an over-eager planner might write it: the VIX
-        # flags stay DAILY (no resample) while the NASDAQ returns are WEEKLY.
+        keywords=(("spread",), ("treasury", "yield")),
+        # Deliberately misaligned, planned exactly as the request words it: the
+        # 10-year yield is resampled to weekly, the 2-year stays daily. The planner
+        # follows the request; the validator, not the planner, catches the mismatch
+        # (G08) before anything runs: an inner join would silently keep only the
+        # Fridays and mix the two frequencies in one series.
         plan=_plan(
-            ["VIXCLS", "NASDAQCOM"],
+            ["DGS10", "DGS2"],
             [
                 _step(
                     "s1",
                     "load_series",
-                    params={"dataset_id": "VIXCLS"},
-                    rationale="Load the daily VIX.",
+                    params={"dataset_id": "DGS10"},
+                    rationale="Load the daily 10-year Treasury yield.",
                 ),
                 _step(
                     "s2",
-                    "flag_regime",
+                    "resample",
                     {"series": "s1"},
-                    {"method": "expanding", "quantile": 0.90, "min_periods": 252},
-                    rationale="Flag days with an unusually high VIX.",
+                    {"freq": "W", "how": "last"},
+                    rationale="Weekly (Friday) 10-year yield, as requested.",
                 ),
                 _step(
                     "s3",
                     "load_series",
-                    params={"dataset_id": "NASDAQCOM"},
-                    rationale="Load the NASDAQ Composite daily closes.",
+                    params={"dataset_id": "DGS2"},
+                    rationale="Load the daily 2-year Treasury yield, kept daily as requested.",
                 ),
                 _step(
                     "s4",
-                    "resample",
-                    {"series": "s3"},
-                    {"freq": "W", "how": "last"},
-                    rationale="Weekly Friday closes.",
+                    "spread",
+                    {"a": "s2", "b": "s3"},
+                    rationale="10-year minus 2-year yield.",
                 ),
-                _step(
-                    "s5",
-                    "compute_returns",
-                    {"series": "s4"},
-                    {"method": "simple"},
-                    rationale="Simple weekly returns.",
-                ),
-                _step(
-                    "s6",
-                    "compare_groups",
-                    {"values": "s5", "flags": "s2"},
-                    rationale="Average weekly return in high-VIX vs normal periods.",
-                ),
-            ],  # fmt: skip
-            "VIX flags kept daily.",
+            ],
+            "The 10-year yield is weekly and the 2-year yield daily, as the request states.",
         ),
     ),
 ]
@@ -312,13 +322,12 @@ SCENARIOS: list[Scenario] = [
 SCENARIOS_BY_ID: dict[str, Scenario] = {s.id: s for s in SCENARIOS}
 
 # Keyword matching order: most specific first, so the injection wins over
-# everything, "predict" is refused before any NASDAQ plan is considered, and the
-# full-sample variant (2) wins over the plain volatility flag (1).
+# everything and a forecast is refused before any analysis plan is considered.
 MATCH_ORDER = (
     "prompt_injection_block",
     "arima_forecast_block",
-    "frequency_mismatch_block",
-    "volatility_flag_lookahead",
+    "spread_frequency_mismatch_block",
+    "vix_full_sample_lookahead",
     "volatility_flag_success",
 )
 

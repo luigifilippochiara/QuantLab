@@ -15,11 +15,17 @@ from quantlab.data import Catalog
 from quantlab.engine import ExecutionRefusedError, Session, run_request
 from quantlab.guardrails import fill_defaults, validate_plan
 from quantlab.lineage import replay
-from quantlab.mock_scenarios import FLAGSHIP_REQUEST, SCENARIOS, SCENARIOS_BY_ID, Scenario
+from quantlab.mock_scenarios import (
+    FLAGSHIP_REQUEST,
+    SCENARIOS,
+    SCENARIOS_BY_ID,
+    Scenario,
+    match_scenario,
+)
 from quantlab.plan import Plan
 from quantlab.registry import REGISTRY
 
-from conftest import ARIMA_PLAN, RETURN_METHOD_APPROVAL, SCENARIO_1_APPROVALS
+from conftest import ARIMA_PLAN, SCENARIO_1_APPROVALS
 from fakes import FakeAnthropicClient, tool_response
 
 
@@ -47,6 +53,18 @@ def test_scenario_end_to_end(scenario: Scenario, settings: Settings) -> None:
         assert session.narrative.grounding.grounded
     else:
         assert session.execution is None  # nothing ran
+
+
+@pytest.mark.parametrize("scenario", SCENARIOS, ids=lambda s: s.id)
+def test_every_request_matches_only_its_own_scenario(scenario: Scenario) -> None:
+    assert match_scenario(scenario.request) is scenario  # by exact text
+    lowered = scenario.request.lower()
+    by_keywords = [
+        other.id
+        for other in SCENARIOS
+        if all(any(word in lowered for word in group) for group in other.keywords)
+    ]
+    assert by_keywords == [scenario.id]  # and by keywords, whatever the matching order
 
 
 # --- the flagship (example 1): fully specified, so mock and live should agree -----
@@ -147,24 +165,46 @@ def test_scenario_1_demo_edit_full_sample_raises_g09_for_the_test(settings: Sett
     assert session.execute().status == "completed"
 
 
-def test_scenario_2_needs_both_approvals(settings: Settings) -> None:
-    session = start("volatility_flag_lookahead", settings)
-    g09 = next(i for i in session.report.issues if i.code == "G09")
-    assert g09.severity == "APPROVAL" and "information from the future" in g09.message
-    assert "method='expanding'" in g09.suggestion
-    session.approve([RETURN_METHOD_APPROVAL])
-    with pytest.raises(ExecutionRefusedError, match="G09:s5"):
-        session.execute()  # one approval is not enough
-    session.approve(["G09:s5"])
+def test_scenario_1_demo_edit_dataset_to_a_yield_blocks_returns_on_rates(
+    settings: Settings,
+) -> None:
+    session = start("volatility_flag_success", settings)
+    report = session.apply_param_edits({"s1": {"dataset_id": "DGS10"}})
+    # A legal edit: a parameter value, applied to the plan...
+    assert not any(i.message.startswith("Edit rejected") for i in report.issues)
+    assert session.plan.steps[0].params["dataset_id"] == "DGS10"
+    # ...that the re-validation blocks: "returns" of a yield are meaningless.
+    g07 = next(i for i in report.blocks if i.code == "G07")
+    assert (g07.name, g07.step_id) == ("RETURNS_ON_RATES", "s3")
+    assert "difference" in g07.suggestion
+    # forward_return (s6) needs a price level too.
+    assert [i.issue_id for i in report.blocks] == ["G07:s3", "G04:s6:series"]
+    with pytest.raises(ExecutionRefusedError):
+        session.execute()
+
+
+def test_scenario_2_full_sample_threshold_needs_approval_then_runs(settings: Settings) -> None:
+    session = start("vix_full_sample_lookahead", settings)
+    (g09,) = session.report.issues  # the look-ahead approval, and nothing else
+    assert (g09.issue_id, g09.severity) == ("G09:s2", "APPROVAL")
+    assert "information from the future" in g09.message
+    assert "method='expanding'" in g09.suggestion and "descriptive labelling" in g09.suggestion
+    with pytest.raises(ExecutionRefusedError, match="G09:s2"):
+        session.execute()  # not without the human's decision
+    session.approve(["G09:s2"])
     assert session.execute().status == "completed"
+    flags = session.execution.artifacts["s2"]
+    # Daily flags above the whole history's 95th percentile: about 5% of the days.
+    assert flags.meta.frequency == "D" and 0.04 < flags.value.mean() < 0.06
+    assert "uses future data" in flags.meta.notes[0]
 
 
-def test_scenario_3_refusal_explains_what_is_possible(settings: Settings) -> None:
+def test_scenario_3_refusal_lists_what_the_registry_can_do(settings: Settings) -> None:
     session = start("arima_forecast_block", settings)
     reason = session.plan.refusal_reason
-    assert "no registered capability for model fitting or prediction" in reason
-    assert "an ARIMA forecast" in reason
-    assert "rolling volatility" in reason  # what the registry can do instead
+    assert reason.startswith("No registered capability fits a model or makes a forecast")
+    assert "ARIMA forecast of the USD/CHF exchange rate" in reason
+    assert all(name in reason for name in REGISTRY)  # the list comes from the registry
     assert session.status == "blocked" and session.execution is None
 
 
@@ -206,10 +246,11 @@ def test_scenario_4_injection_never_reaches_a_shell(
 
 
 def test_scenario_5_frequency_mismatch_blocks_before_anything_runs(settings: Settings) -> None:
-    session = start("frequency_mismatch_block", settings)
-    g08 = next(i for i in session.report.issues if i.code == "G08")
-    assert g08.severity == "BLOCK" and g08.step_id == "s6"
-    assert "Resample VIXCLS to weekly" in g08.suggestion
+    session = start("spread_frequency_mismatch_block", settings)
+    (g08,) = session.report.issues  # the frequency mismatch, and nothing else
+    assert (g08.issue_id, g08.severity) == ("G08:s4", "BLOCK")
+    assert "'a' is weekly, 'b' is daily" in g08.message
+    assert "Resample DGS2 to weekly" in g08.suggestion
     assert session.status == "blocked" and not session.can_execute()[0]
     with pytest.raises(ExecutionRefusedError):
         session.execute()

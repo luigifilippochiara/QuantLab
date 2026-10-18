@@ -21,7 +21,7 @@ def test_demo_behaves_as_expected(cli_env: Settings, capsys: pytest.CaptureFixtu
     assert "All scenarios behaved as expected." in output
     assert "MISMATCH" not in output
     assert len(list_runs(cli_env.runs_dir)) == 5
-    for scenario_id in ["volatility_flag_success", "frequency_mismatch_block"]:
+    for scenario_id in ["volatility_flag_success", "spread_frequency_mismatch_block"]:
         assert scenario_id in output
     # Scenario 6: the trace of scenario 1's significance test, down to the NASDAQ file.
     trace = output.split("Scenario 6 (traceability)")[1]

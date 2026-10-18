@@ -1089,3 +1089,53 @@ horizon or lag rules; forward returns always cover the next period) and the cann
 plans `canned-scenarios-v9`; with the new registry version, no plan cached before
 is reused. The scenario 3 refusal text, part of a canned plan, was left unchanged.
 
+
+## The final example workflows
+
+**Five examples, and only these.** Examples 1 (high-volatility weeks and what
+follows) and 4 (prompt injection) are unchanged. Examples 2, 3 and 5 were replaced,
+so that each protection is shown by the smallest plan that needs it rather than by
+variations of the NASDAQ analysis. The earlier examples 2 (`volatility_flag_lookahead`)
+and 5 (`frequency_mismatch_block`) and their requests and plans are gone from the
+code, tests, notebooks, README and golden set; the sections above keep their history.
+The canned plans' version moved to `canned-scenarios-v10`; the planner prompt did
+not change (it never named an example).
+
+**Example 2, look-ahead: "Flag the days when the VIX was in the top 5% of its entire
+history."** Two steps, `load_series` and `flag_regime(method=full_sample,
+quantile=0.95)`, and one issue, the G09 LOOK_AHEAD approval. The request asks for a
+threshold from the whole history, so the plan reads it correctly, yet the threshold
+uses data nobody had on the flagged day. That is why G09 is an APPROVAL and not a
+BLOCK: a full-sample threshold is fine for describing past stress days but invalid
+as a signal or in a backtest, and only the analyst knows which is meant.
+
+**Example 3, out of scope: an ARIMA forecast of USD/CHF.** The refusal names what
+the registry can do from `REGISTRY` itself (`mock_scenarios` imports the registry for
+this), so the list can never name a capability that does not exist or miss a new one.
+
+**Example 5, frequency alignment: "the spread between the weekly 10-year Treasury
+yield and the daily 2-year Treasury yield."** The canned plan follows the request
+literally (resample only the 10-year), and the validator blocks the spread with G08
+before anything runs: the validator, not the planner, catches the mismatch. A rates
+example also shows `spread`, which no other example used. Alternative: keep the
+NASDAQ-versus-VIX comparison, rejected because its plan also needed a return-method
+approval, so the example did not isolate the one protection it is about.
+
+**Matching.** Each example has its own keyword groups (2: "vix" and "entire history",
+"full sample", "full-sample" or "top 5%"; 3: "arima", "forecast" or "predict"; 5:
+"spread" and "treasury" or "yield"), tried in the order injection, forecast, spread,
+VIX, flagship. A test checks that every example's request matches its own keywords
+and no other example's, whatever the order.
+
+**A live edit for the demo.** In example 1, changing `load_series.dataset_id` from
+NASDAQCOM to DGS10 is a legal parameter edit, and re-validation blocks it: G07
+RETURNS_ON_RATES on `compute_returns` (s3), and G04 on `forward_return` (s6), which
+also needs a price level. A test pins both.
+
+**Golden records.** `tests/fixtures/golden_scenarios.json` now holds two records:
+examples 1 and 4 as recorded before the simplification (unchanged, compared with the
+code translation), and examples 2, 3 and 5 recorded with the current codes after the
+simplification. The golden set has one entry per example; the adversarial ones (3, 4
+and 5) also give their canned plan and outcome, which the evaluation reports item by
+item for information only: they stay correct if refused or blocked for another
+reason. The other golden requests are valid with the current registry and were kept.

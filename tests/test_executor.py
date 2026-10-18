@@ -115,7 +115,7 @@ def test_dry_run_metadata_matches_runtime_metadata(name: str, catalog: Catalog) 
         "scenario_1": raw_plan(SUCCESS),
         "spread": SPREAD_PLAN,
         "daily_scenario_1": daily_scenario_1(),
-        "lookahead": raw_plan("volatility_flag_lookahead"),
+        "lookahead": raw_plan("vix_full_sample_lookahead"),
     }
     plan = as_plan(raw[name])
     report = validate_plan(plan, catalog)
