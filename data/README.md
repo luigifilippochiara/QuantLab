@@ -29,7 +29,8 @@ Maturity, Quoted on an Investment Basis". The full name is kept in the catalog's
   Older FRED downloads used `DATE` and `.`; the loader accepts both.
 - `catalog.json`: one entry per dataset with display title, full name, description, units, frequency, kind,
   source URL, retrieval time, **SHA-256 of the file**, row and missing counts and
-  date range.
+  date range; for an exchange rate also its quote convention (which way the rate
+  moves when a currency strengthens), which the narrator states.
 
 The snapshot is committed so that a clean clone can run every analysis, test
 and replay without network access. Every load re-hashes the file and refuses to

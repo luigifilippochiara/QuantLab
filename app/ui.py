@@ -23,7 +23,7 @@ from quantlab.data import Catalog, load_catalog
 from quantlab.guardrails import ENFORCERS, GUARDRAILS, Action, Issue
 from quantlab.lineage import ReplayReport, TraceResult
 from quantlab.mock_scenarios import SCENARIOS_BY_ID
-from quantlab.narrator import format_number
+from quantlab.narrator import describe_quotes, format_number
 from quantlab.plan import Plan, Step
 from quantlab.registry import CapabilitySpec, ParamSpec, capability_code
 from quantlab.types import Artifact, DataType, Frequency
@@ -583,6 +583,11 @@ def render_artifact(
         st.dataframe(table_frame(artifact.value), hide_index=True, alt=f"{capability} table")
     sources = ", ".join(dataset_label(catalog, d) for d in meta.source_dataset_ids)
     st.caption("Source: " + escape_md(sources))
+    # An exchange rate's quote convention: which way its returns read (as in the narrative).
+    entries = [catalog.get(d) for d in meta.source_dataset_ids]
+    quotes = {e.dataset_id: e.quote_convention for e in entries if e and e.quote_convention}
+    for sentence in describe_quotes(quotes):
+        st.caption(escape_md(sentence))
     if meta.notes:
         st.caption("Recorded assumptions: " + escape_md("; ".join(meta.notes)))
 

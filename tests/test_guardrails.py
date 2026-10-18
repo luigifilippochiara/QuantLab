@@ -45,12 +45,12 @@ from quantlab.plan import Plan, plan_tool_schema
 
 from conftest import (
     ARIMA_PLAN,
-    SCENARIO_1_APPROVALS,
+    SCENARIO_6_APPROVALS,
     SPREAD_PLAN,
     raw_plan,
 )
 
-SUCCESS = "volatility_flag_success"  # scenario 1, the anchor case
+SUCCESS = "nasdaq_volatility_success"  # scenario 6, the anchor case
 
 
 def validate(raw: dict[str, Any], catalog: Catalog, **budgets: int) -> ValidationReport:
@@ -69,17 +69,17 @@ def step(raw: dict[str, Any], step_id: str) -> dict[str, Any]:
 
 @pytest.mark.parametrize("code", [c for c in GUARDRAILS if c.startswith("V")])
 def test_clean_plan_triggers_nothing(code: str, catalog: Catalog) -> None:
-    # The spread plan is fully clean; scenario 1 only needs the return-method approvals.
+    # The spread plan is fully clean; scenario 6 only needs the return-method approvals.
     assert code not in validate(SPREAD_PLAN, catalog).codes()
     if code != "V10":
         assert code not in validate(raw_plan(SUCCESS), catalog).codes()
 
 
-def test_scenario_1_needs_only_the_return_method_approvals(catalog: Catalog) -> None:
+def test_scenario_6_needs_only_the_return_method_approvals(catalog: Catalog) -> None:
     # One for compute_returns (s3) and one for forward_return (s6); no BLOCK, no WARN.
     report = validate(raw_plan(SUCCESS), catalog)
     assert not report.is_blocked and report.warnings == []
-    assert [i.issue_id for i in report.approvals_required] == SCENARIO_1_APPROVALS
+    assert [i.issue_id for i in report.approvals_required] == SCENARIO_6_APPROVALS
 
 
 # --- R01 REQUEST_TOO_LONG (the request check, before the planner) ----------------
@@ -334,7 +334,7 @@ def test_v09_full_sample_threshold_needs_approval_and_explains_why(catalog: Cata
 
 
 def test_v09_says_when_it_also_invalidates_the_significance_test(catalog: Catalog) -> None:
-    # The flagship demo edit: scenario 1's flags switched to a full-sample threshold.
+    # A demo edit: scenario 6's flags switched to a full-sample threshold.
     raw = raw_plan(SUCCESS)
     step(raw, "s5")["params"]["method"] = "full_sample"
     report = validate(raw, catalog)

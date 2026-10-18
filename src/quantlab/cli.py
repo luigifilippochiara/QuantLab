@@ -5,7 +5,7 @@
     uv run python -m quantlab.cli replay <run_id>          # re-run without the LLM, compare hashes
     uv run python -m quantlab.cli trace <run_id> <step_id> # where does this number come from?
     uv run python -m quantlab.cli eval --mode mock         # planner evaluation report
-    uv run python -m quantlab.cli eval --mode live --case s1_volatility_flag_success
+    uv run python -m quantlab.cli eval --mode live --case s1_chf_safe_haven
 
 Role in the architecture: a thin, headless front end over engine.py,
 lineage.py and evaluation.py; it contains no analysis logic of its own.
@@ -104,9 +104,9 @@ def print_session(session: Session) -> None:
 
 
 def cmd_demo(args: argparse.Namespace, settings: Settings) -> int:
-    """Run example workflows 1-5 headlessly, then print example 1's trace (the audit trail).
+    """Run example workflows 1-6 headlessly, then print example 1's trace (the audit trail).
 
-    Only scenarios 1 and 5 are auto-approved; blocked scenarios stay blocked. In
+    Only scenarios 1, 5 and 6 are auto-approved; blocked scenarios stay blocked. In
     mock mode the plans are the canned ones, so both the status and the issue
     codes must match. With a real LLM (live/cached) only the status is checked:
     the LLM may legitimately block for a different reason, e.g. refuse scenario 2
@@ -140,11 +140,11 @@ def cmd_demo(args: argparse.Namespace, settings: Settings) -> int:
               "status is checked, the issue codes show how each block happened.)")  # fmt: skip
     print("\nAll scenarios behaved as expected." if all_ok else "\nSome scenarios did NOT.")
 
-    # Scenario 6 is the audit trail of scenario 1: trace its last step (the
-    # significance test) back to the snapshot file.
-    first = sessions["volatility_flag_success"]
+    # The audit trail of scenario 1: trace its last step (the significance test)
+    # back to the snapshot files of both series.
+    first = sessions["chf_safe_haven_success"]
     if first.status == "completed":
-        print("\nScenario 6 (traceability): ", end="")
+        print("\nAudit trail (traceability): ", end="")
         print_trace(first.trace(first.plan.steps[-1].id))
     return 0 if all_ok else 1
 
@@ -254,7 +254,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     commands = parser.add_subparsers(dest="command", required=True)
 
-    demo = commands.add_parser("demo", help="run example workflows 1-5, then trace example 1")
+    demo = commands.add_parser("demo", help="run example workflows 1-6, then trace example 1")
     demo.add_argument("--mode", choices=LLM_MODES, default="mock")
 
     run = commands.add_parser("run", help="run one request")

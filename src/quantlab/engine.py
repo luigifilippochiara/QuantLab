@@ -487,7 +487,11 @@ class Session:
         issues = self.warnings() + [
             i for i in self.report.approvals_required if i.issue_id in approved_ids
         ]
-        titles = [self.catalog.entries[d].title for d in self._datasets_used()]
+        used = [self.catalog.entries[d] for d in self._datasets_used()]
+        titles = [entry.title for entry in used]
+        # How an exchange rate is quoted, so the narrative reads its returns the right
+        # way round (e.g. a fall in USD/CHF means the franc strengthened).
+        quotes = {e.dataset_id: e.quote_convention for e in used if e.quote_convention}
         narrative = narrate(
             self.request,
             self.plan,
@@ -496,6 +500,7 @@ class Session:
             self.mode,
             self.settings,
             extra_texts=titles,
+            dataset_notes=quotes,
             client=self.client,
         )
         self.narrative = narrative

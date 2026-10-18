@@ -13,10 +13,10 @@ from quantlab.monitoring import activity, read_events
 from quantlab.planner import PROMPT_VERSION
 from quantlab.types import TokenUsage
 
-from conftest import SCENARIO_1_APPROVALS, raw_plan
+from conftest import SCENARIO_6_APPROVALS, raw_plan
 from fakes import FakeAnthropicClient, text_response, tool_response
 
-SUCCESS = SCENARIOS_BY_ID["volatility_flag_success"]  # scenario 1
+SUCCESS = SCENARIOS_BY_ID["nasdaq_volatility_success"]  # scenario 6
 
 
 def start(settings: Settings, scenario_id: str = SUCCESS.id) -> Session:
@@ -27,15 +27,15 @@ def start(settings: Settings, scenario_id: str = SUCCESS.id) -> Session:
     return session
 
 
-def test_end_to_end_scenario_1_with_manifest_and_replay(settings: Settings) -> None:
+def test_end_to_end_scenario_6_with_manifest_and_replay(settings: Settings) -> None:
     session = start(settings)
     assert session.status == "ready"
-    assert [i.issue_id for i in session.unresolved_approvals()] == SCENARIO_1_APPROVALS
+    assert [i.issue_id for i in session.unresolved_approvals()] == SCENARIO_6_APPROVALS
 
     with pytest.raises(ExecutionRefusedError, match="Approval required"):
         session.execute()
 
-    session.approve(SCENARIO_1_APPROVALS)
+    session.approve(SCENARIO_6_APPROVALS)
     assert session.execute().status == "completed"
     narrative = session.narrate()
     assert narrative.grounding.grounded
@@ -48,7 +48,7 @@ def test_end_to_end_scenario_1_with_manifest_and_replay(settings: Settings) -> N
     saved = json.loads(manifest.read_text(encoding="utf-8"))["validation"]["issues"]
     assert {(i["code"], i["enforced_by"], i["type"]) for i in saved} == {
         ("V10", "Validator", "Deterministic")}  # fmt: skip
-    assert [a.issue_id for a in record.approvals] == SCENARIO_1_APPROVALS
+    assert [a.issue_id for a in record.approvals] == SCENARIO_6_APPROVALS
     assert record.llm.provider == "mock" and record.registry_version
     assert record.plan_original["steps"][4]["params"]["quantile"] == 0.9  # as proposed
     assert record.plan_final["steps"] == record.plan_original["steps"]  # no hidden defaults
@@ -60,7 +60,7 @@ def test_end_to_end_scenario_1_with_manifest_and_replay(settings: Settings) -> N
 
 def test_ungrounded_llm_narrative_is_withheld_and_recorded_as_n01(settings: Settings) -> None:
     session = start(settings)
-    session.approve(SCENARIO_1_APPROVALS)
+    session.approve(SCENARIO_6_APPROVALS)
     session.execute()
     # Only the narrative comes from a (fake) LLM, and it invents a number.
     invented = "Volatility peaked at 123.456 during the flagged weeks."
@@ -84,7 +84,7 @@ def test_ungrounded_llm_narrative_is_withheld_and_recorded_as_n01(settings: Sett
 
 def test_param_edit_revalidates_and_clears_approvals(settings: Settings) -> None:
     session = start(settings)
-    session.approve(SCENARIO_1_APPROVALS)
+    session.approve(SCENARIO_6_APPROVALS)
     report = session.apply_param_edits({"s3": {"method": "simple"}, "s4": {"window": 26}})
     assert not report.is_blocked
     assert session.approvals == []  # the approved plan changed: approve again
@@ -93,7 +93,7 @@ def test_param_edit_revalidates_and_clears_approvals(settings: Settings) -> None
         ("s3", "method", "log", "simple"),
         ("s4", "window", 12, 26),
     ]
-    session.approve(SCENARIO_1_APPROVALS)
+    session.approve(SCENARIO_6_APPROVALS)
     session.execute()
     assert session.execution.artifacts["s3"].meta.return_method == "simple"
 
@@ -113,7 +113,7 @@ def test_invalid_edit_blocks_execution(settings: Settings) -> None:
 def test_only_open_approval_issues_can_be_approved(settings: Settings) -> None:
     session = start(settings)
     with pytest.raises(ValueError):
-        session.approve(["V09:s5"])  # not an issue of scenario 1's plan
+        session.approve(["V09:s5"])  # not an issue of scenario 6's plan
     # An edit to a step that does not exist is rejected (see test_editing.py).
     assert session.apply_param_edits({"s99": {"window": 3}}).is_blocked
 
@@ -200,7 +200,7 @@ def test_a_plan_shown_is_saved_while_it_awaits_a_decision(settings: Settings) ->
 
 def test_executing_is_the_approval_decision(settings: Settings) -> None:
     session = start(settings)
-    session.approve(SCENARIO_1_APPROVALS)
+    session.approve(SCENARIO_6_APPROVALS)
     session.execute()
     session.narrate()
     session.save_record()

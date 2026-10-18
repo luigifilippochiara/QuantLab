@@ -1,20 +1,22 @@
-"""Example workflows 1-5: requests, datasets, hand-written plans and expected outcomes.
+"""Example workflows 1-6: requests, datasets, hand-written plans and expected outcomes.
 
-The five examples follow one realistic task, a market-risk analyst identifying
+The six examples follow one realistic task, a market-risk analyst identifying
 periods of unusual market behaviour, and the protections QuantLab applies along
 the way. They are the only examples: the sidebar, `cli demo`, the golden set and
-the MockPlanner know these five and nothing else.
+the MockPlanner know these six and nothing else.
 
-1. High-volatility weeks and what follows (`volatility_flag_success`): the core
-   analysis. Weekly NASDAQ volatility, flags above an expanding threshold, then a
-   comparison and a significance test of the following week's returns. It runs to
+1. Is the Swiss franc a safe haven? (`chf_safe_haven_success`), the flagship: does
+   the Swiss franc strengthen after high-volatility weeks in US tech equities?
+   Weekly NASDAQ volatility, flags above an expanding threshold, then a comparison
+   and a significance test of the following week's USD/CHF return (quoted in francs
+   per US dollar, so a negative return means the franc strengthened). It runs to
    completion after the analyst approves the two return methods (V10
-   MATERIAL_ASSUMPTION, on s3 and s6). Its result carries the audit trail (the trace).
+   MATERIAL_ASSUMPTION, on s5 and s8). Its result carries the audit trail (the trace).
 2. Frequency-alignment protection (`spread_frequency_mismatch_block`): the spread
    of a weekly and a daily yield, planned exactly as requested. The validator, not
    the planner, catches the mismatch (V08 FREQUENCY_MISMATCH) before anything runs.
 3. Out-of-scope forecast request (`arima_forecast_block`): an ARIMA forecast of
-   USD/CHF has no registered capability, so the planner declines (P01
+   the S&P 500 has no registered capability, so the planner declines (P01
    PLANNER_REFUSED) and lists what the registry can do instead.
 4. Prompt injection, simulated planner (`prompt_injection_unknown_capability`): a
    simulated misbehaving planner follows the injection and proposes an unregistered
@@ -27,11 +29,14 @@ the MockPlanner know these five and nothing else.
    full-sample threshold is acceptable for descriptively labelling past stress days
    but invalid as a signal or in a backtest. The system cannot know the intent, so
    the human decides.
+6. NASDAQ after volatile weeks (`nasdaq_volatility_success`): the earlier
+   flagship, on the NASDAQ alone. The same flags, compared with the following week's
+   NASDAQ return; it runs after the two return-method approvals (V10, on s3 and s6).
 
 Role in the architecture: data, shared by
 - the MockPlanner (returns these plans instead of calling an LLM, so the whole
   system works offline and whenever the LLM API is unavailable),
-- the CLI `demo` command (runs all five and checks the expected outcomes),
+- the CLI `demo` command (runs all six and checks the expected outcomes),
 - the Streamlit sidebar (buttons that prefill the request),
 - the tests and the evaluation golden set.
 
@@ -51,9 +56,9 @@ class Scenario:
     """One example workflow.
 
     Fields:
-        id: stable identifier, e.g. "volatility_flag_success".
-        number: position in the list of examples, 1-5.
-        label: short button label, e.g. "1 · High-volatility weeks".
+        id: stable identifier, e.g. "chf_safe_haven_success".
+        number: position in the list of examples, 1-6.
+        label: short button label, e.g. "1 · Is the Swiss franc a safe haven?".
         request: the natural-language request.
         dataset_ids: datasets selected for the request.
         expected_status: "completed" or "blocked".
@@ -124,23 +129,92 @@ def _registry_menu() -> str:
     return ", ".join(names[:-1]) + " and " + names[-1]
 
 
-# The flagship request (example 1). It states the choices that have no default (the
-# dataset, weekly data, log returns for the volatility, simple next-week returns for
-# the outcome, a test of the difference in means); the registry defaults supply the
-# rest (annualised volatility, an expanding 90th-percentile threshold after 52
-# weeks), and forward returns are always one period ahead with Newey-West lags set by
-# their rule, so a live planner can still reach exactly the canned plan below (the
-# golden set checks it item by item). Defined once: the app, the CLI, the
-# notebooks, the golden set and the tests read it from here; docs/GUIDE.md quotes it,
-# and a test checks the quote.
+# The flagship request (example 1): is the Swiss franc a safe haven? It states the
+# choices that have no default (the two series, weekly data, log returns for the
+# volatility, a top-10% threshold from past data only, simple next-week returns for
+# the outcome, a HAC test); the registry defaults supply the rest (annualised
+# volatility, a threshold after 52 weeks), and forward returns are always one period
+# ahead with Newey-West lags set by their rule, so a live planner can still reach
+# exactly the canned plan below (the golden set checks it item by item). Defined
+# once: the app, the CLI, the notebooks, the golden set and the tests read it from
+# here; docs/GUIDE.md quotes it, and a test checks the quote.
 FLAGSHIP_REQUEST = (
+    "Is the Swiss franc a safe haven? Using weekly data, compute NASDAQ log returns and their "
+    "12-week rolling volatility, flag the weeks in the top 10% of volatility using only past "
+    "data, then compare next week's USD/CHF simple return in high-volatility weeks against "
+    "the other weeks, with a HAC test for the difference."
+)
+
+# Example 1's plan. Every parameter is written out (no hidden defaults).
+FLAGSHIP_STEPS = [
+    # The two series named in the request: the stress signal and the currency.
+    _step("s1", "load_series", params={"dataset_id": "NASDAQCOM"},
+          rationale="Load the NASDAQ Composite daily closes, the stress signal."),
+    # DEXSZUS is quoted in Swiss francs per US dollar (USD/CHF): a fall means the
+    # franc strengthened against the dollar.
+    _step("s2", "load_series", params={"dataset_id": "DEXSZUS"},
+          rationale="Load the USD/CHF rate, in Swiss francs per US dollar."),
+    # Both to weekly Friday closes by the same rule, so a flag and the next-week
+    # return of the same week carry the same date when s9 and s10 align them.
+    _step("s3", "resample", {"series": "s1"}, {"freq": "W", "how": "last"},
+          rationale="Weekly Friday NASDAQ closes."),
+    _step("s4", "resample", {"series": "s2"}, {"freq": "W", "how": "last"},
+          rationale="Weekly Friday USD/CHF rates, on the same weeks as the NASDAQ."),
+    # LOG returns for the volatility: they add up over time, which is what the
+    # square-root-of-time annualisation assumes.
+    _step("s5", "compute_returns", {"series": "s3"}, {"method": "log", "periods": 1},
+          rationale="Weekly NASDAQ log returns, the input of the volatility."),
+    # 12 weeks, as requested; annualised by sqrt(52) (the default).
+    _step("s6", "rolling_volatility", {"series": "s5"}, {"window": 12, "annualize": True},
+          rationale="12-week rolling annualised NASDAQ volatility."),
+    # "The top 10% using only past data": above the 90th percentile of past
+    # volatility only (expanding), after 52 weeks of history, so every flag could
+    # have been set at the time (no look-ahead).
+    _step("s7", "flag_regime", {"series": "s6"},
+          {"method": "expanding", "quantile": 0.90, "min_periods": 52},
+          rationale="Flag weeks above the 90th percentile of past NASDAQ volatility only."),
+    # The outcome: next week's SIMPLE USD/CHF return, as requested, computed from the
+    # weekly rates (s4), so it starts at the close of the flagged week. forward_return
+    # turns the levels into the return itself: no compute_returns step is needed.
+    _step("s8", "forward_return", {"series": "s4"}, {"method": "simple"},
+          rationale="Next week's simple USD/CHF return: negative when the franc strengthened."),
+    # A flag on one series grouping the returns of another: both are weekly, and the
+    # two steps below keep only the weeks they share. Describe first...
+    _step("s9", "compare_groups", {"values": "s8", "flags": "s7"},
+          rationale="Describe next-week USD/CHF returns after volatile and after normal weeks."),
+    # ...then test that same difference (the registry's one significance test), with
+    # standard errors that allow for unequal variances and for clustered volatility
+    # (lags set by the Newey-West rule).
+    _step("s10", "hac_mean_difference", {"outcome": "s8", "flags": "s7"},
+          rationale="Test the difference in means with Newey-West standard errors."),
+]  # fmt: skip
+
+# The plan's declared assumptions, shown to the analyst as the planner's notes.
+FLAGSHIP_NOTES = (
+    "Assumptions: NASDAQ log returns for the volatility (time-additive, consistent with "
+    "square-root-of-time annualisation); simple returns for the USD/CHF outcome, as "
+    "requested; the expanding threshold uses past volatility only (at least 52 weeks), so "
+    "every flag was known at the time. Both series are weekly Friday closes, so each flag "
+    "meets the USD/CHF return of the following week. USD/CHF is quoted in Swiss francs per "
+    "US dollar: a negative return means the franc strengthened. compare_groups describes "
+    "the two groups first; hac_mean_difference then tests the difference (default lags)."
+)
+
+# Example 6's request, the earlier flagship (the NASDAQ alone). It states the choices
+# that have no default (the dataset, weekly data, log returns for the volatility,
+# simple next-week returns for the outcome, a test of the difference in means); the
+# registry defaults supply the rest (annualised volatility, an expanding
+# 90th-percentile threshold after 52 weeks), and forward returns are always one
+# period ahead with Newey-West lags set by their rule, so a live planner can still
+# reach exactly the canned plan below (the golden set checks it item by item).
+VOLATILITY_REQUEST = (
     "Using NASDAQ, calculate weekly log returns, 12-week volatility, and flag unusually "
     "volatile weeks. Compare next-week simple returns after volatile weeks with those after "
     "normal weeks, then test whether the difference in means is statistically significant."
 )
 
-# Example 1's plan. Every parameter is written out (no hidden defaults).
-FLAGSHIP_STEPS = [
+# Example 6's plan. Every parameter is written out (no hidden defaults).
+VOLATILITY_STEPS = [
     # The dataset named in the request.
     _step("s1", "load_series", params={"dataset_id": "NASDAQCOM"},
           rationale="Load the NASDAQ Composite daily closes."),
@@ -177,7 +251,7 @@ FLAGSHIP_STEPS = [
 ]  # fmt: skip
 
 # The plan's declared assumptions, shown to the analyst as the planner's notes.
-FLAGSHIP_NOTES = (
+VOLATILITY_NOTES = (
     "Assumptions: log returns for the volatility (time-additive, consistent with "
     "square-root-of-time annualisation); simple returns for the outcome (a mean of log "
     "returns is lower by about half the variance, which would bias the comparison against "
@@ -190,16 +264,16 @@ FLAGSHIP_NOTES = (
 
 SCENARIOS: list[Scenario] = [
     Scenario(
-        id="volatility_flag_success",
+        id="chf_safe_haven_success",
         number=1,
-        label="1 · High-volatility weeks and what follows",
+        label="1 · Is the Swiss franc a safe haven?",
         request=FLAGSHIP_REQUEST,
-        dataset_ids=("NASDAQCOM",),
+        dataset_ids=("NASDAQCOM", "DEXSZUS"),
         expected_status="completed",
-        expected_codes=("V10",),  # the two return-method approvals (s3 and s6), nothing else
+        expected_codes=("V10",),  # the two return-method approvals (s5 and s8), nothing else
         auto_approve=True,
-        keywords=(("nasdaq",), ("volatil",)),
-        plan=_plan(["NASDAQCOM"], FLAGSHIP_STEPS, FLAGSHIP_NOTES),
+        keywords=(("franc", "chf"), ("nasdaq",)),
+        plan=_plan(["NASDAQCOM", "DEXSZUS"], FLAGSHIP_STEPS, FLAGSHIP_NOTES),
     ),
     Scenario(
         id="spread_frequency_mismatch_block",
@@ -255,15 +329,15 @@ SCENARIOS: list[Scenario] = [
         id="arima_forecast_block",
         number=3,
         label="3 · Out-of-scope forecast request",
-        request="Fit an ARIMA model to forecast the USD/CHF exchange rate for next week.",
-        dataset_ids=("DEXSZUS",),
+        request="Fit an ARIMA model to the S&P 500 and forecast the next 12 weeks.",
+        dataset_ids=("SP500",),
         expected_status="blocked",
         expected_codes=("P01",),
         auto_approve=False,
         keywords=(("arima", "forecast", "predict"),),
         plan=_refusal(
             "No registered capability fits a model or makes a forecast (such as an ARIMA "
-            "forecast of the USD/CHF exchange rate). The registry can instead run: "
+            "forecast of the S&P 500). The registry can instead run: "
             f"{_registry_menu()}."
         ),
     ),
@@ -345,6 +419,20 @@ SCENARIOS: list[Scenario] = [
             "flags use a full-sample threshold (future data included).",
         ),
     ),
+    Scenario(
+        id="nasdaq_volatility_success",
+        number=6,
+        label="6 · NASDAQ after volatile weeks",
+        request=VOLATILITY_REQUEST,
+        dataset_ids=("NASDAQCOM",),
+        expected_status="completed",
+        expected_codes=("V10",),  # the two return-method approvals (s3 and s6), nothing else
+        auto_approve=True,
+        # "weekly log returns" tells it from example 1, which also names the NASDAQ
+        # and its volatility.
+        keywords=(("nasdaq",), ("volatil",), ("weekly log returns",)),
+        plan=_plan(["NASDAQCOM"], VOLATILITY_STEPS, VOLATILITY_NOTES),
+    ),
 ]
 
 SCENARIOS_BY_ID: dict[str, Scenario] = {s.id: s for s in SCENARIOS}
@@ -356,14 +444,15 @@ MATCH_ORDER = (
     "arima_forecast_block",
     "spread_frequency_mismatch_block",
     "vix_full_sample_lookahead",
-    "volatility_flag_success",
+    "chf_safe_haven_success",
+    "nasdaq_volatility_success",
 )
 
 
 def match_scenario(request: str) -> Scenario | None:
     """Find the demo scenario a request corresponds to.
 
-    Matches the exact request text, the scenario id or number ("1".."5"), or keywords.
+    Matches the exact request text, the scenario id or number ("1".."6"), or keywords.
 
     Args:
         request: the user's request.

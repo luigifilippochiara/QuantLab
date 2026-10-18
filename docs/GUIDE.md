@@ -24,11 +24,11 @@ uv sync                                           # environment from uv.lock
 uv run streamlit run app/streamlit_app.py         # the app (works in mock mode)
 
 uv run python -m quantlab.cli demo                # run the example workflows, then trace example 1
-uv run python -m quantlab.cli run 1 --datasets NASDAQCOM --mode mock --approve-all   # example 1 by number
+uv run python -m quantlab.cli run 1 --datasets NASDAQCOM DEXSZUS --mode mock --approve-all   # example 1 by number
 uv run python -m quantlab.cli replay <run_id>     # re-run without the model, compare hashes
 uv run python -m quantlab.cli trace <run_id> s5   # where does this number come from?
 uv run python -m quantlab.cli eval --mode mock    # planner evaluation -> eval/reports/
-uv run python -m quantlab.cli eval --mode live --case s1_volatility_flag_success   # one case, item by item
+uv run python -m quantlab.cli eval --mode live --case s1_chf_safe_haven   # one case, item by item
 
 uv run pytest                                     # test suite: no network, no API key
 uv run ruff check . && uv run ruff format --check .
@@ -88,12 +88,15 @@ from the last validated plan (a value changed back counts as no change); it runs
 the same validator again, so issues appear and clear as the plan changes: in
 example 1, switching
 `flag_regime.method` to `full_sample` raises V09, which then also says the
-significance test is invalidated, and changing `load_series.dataset_id` from
-NASDAQCOM to DGS10 is a legal edit that the validator then blocks (V07: returns
-of a yield are meaningless). Windows are counted in periods of the
-series' frequency, as their fields and the step summaries say: switching
-`resample.freq` from W to D keeps `window` at 12, which then means 12 trading
-days instead of 12 weeks. Any edit resets the
+significance test is invalidated, and changing the first `load_series.dataset_id`
+from NASDAQCOM to DGS10 is a legal edit that the validator then blocks (V07:
+returns of a yield are meaningless); a quantile outside the registry's range
+would be blocked too (V03), and its field does not accept one. Windows are counted
+in periods of the series' frequency, as their fields and the step summaries say:
+in example 6, switching `resample.freq` from W to D keeps `window` at 12, which
+then means 12 trading days instead of 12 weeks (in example 1, changing only one of
+its two `resample` steps raises V08: the flags and the returns would no longer
+share a frequency). Any edit resets the
 approvals, which are recorded with the hash of the plan version they were given
 for. Execute stays disabled, with a one-line reason, while changes are unapplied,
 a BLOCK remains or an approval is unticked. Edited values are marked ("edited
@@ -103,34 +106,34 @@ the edited plan with identical hashes.
 
 ## Example workflows
 
-In mock mode the sidebar offers five ready-made requests; in live and cached
+In mock mode the sidebar offers six ready-made requests; in live and cached
 mode the sidebar hides them and you type the request. Together they cover one
 realistic task, a market-risk analyst identifying periods of unusual market
 behaviour, and the protections QuantLab applies along the way. They run with
 canned plans in mock mode (`mock_scenarios.py`) or with the live planner, from the
 app or with `cli demo`.
 
-1. **High-volatility weeks and what follows** (`volatility_flag_success`). The
-   request states the choices that have no default; the registry defaults supply
-   the rest (annualised volatility, an expanding 90th-percentile threshold after
-   52 weeks), and forward returns always cover the next week with the test's lags
-   set by the Newey-West rule, so the live planner can reach the same plan as the
-   canned one:
+1. **Is the Swiss franc a safe haven?** (`chf_safe_haven_success`), the flagship:
+   does the Swiss franc strengthen after high-volatility weeks in US tech
+   equities? The request states the choices that have no default; the registry
+   defaults supply the rest (annualised volatility, a threshold after 52 weeks),
+   and forward returns always cover the next week with the test's lags set by the
+   Newey-West rule, so the live planner can reach the same plan as the canned one:
 
-   > Using NASDAQ, calculate weekly log returns, 12-week volatility, and flag unusually volatile weeks. Compare next-week simple returns after volatile weeks with those after normal weeks, then test whether the difference in means is statistically significant.
+   > Is the Swiss franc a safe haven? Using weekly data, compute NASDAQ log returns and their 12-week rolling volatility, flag the weeks in the top 10% of volatility using only past data, then compare next week's USD/CHF simple return in high-volatility weeks against the other weeks, with a HAC test for the difference.
 
-   Weekly Friday closes; weekly log returns for the volatility (they add up over
-   time, as square-root-of-time annualisation assumes); 12-week annualised
-   rolling volatility; flags above the 90th percentile of past volatility only
-   (expanding, after 52 weeks); the following week's simple return stamped on
-   each week (`forward_return`: a mean of log returns would be lower by about
-   half the variance and bias the comparison against volatile weeks); a
-   descriptive comparison first (`compare_groups`), then the significance test
-   (`hac_mean_difference`). The analyst confirms the two return-method choices
-   (V10); there is no warning and no block. The result shows the volatility with
-   the high-volatility weeks shaded, both groups' means and standard deviations,
-   the number of distinct episodes, and the test's difference, p-value and 95%
-   confidence interval.
+   Both series as weekly Friday closes by the same rule, so each flag meets the
+   USD/CHF return of the following week on the same date; weekly NASDAQ log
+   returns for the volatility (they add up over time, as square-root-of-time
+   annualisation assumes); 12-week annualised rolling volatility; flags above the
+   90th percentile of past volatility only (expanding, after 52 weeks); the
+   following week's simple USD/CHF return (`forward_return`, from the weekly
+   rates); a descriptive comparison (`compare_groups`), then the significance test
+   (`hac_mean_difference`), both on the weeks the two series share. The analyst
+   confirms the two return-method choices (V10); there is no warning and no block.
+   DEXSZUS is quoted in Swiss francs per US dollar (USD/CHF), so a negative return
+   means the franc strengthened: the narrative states this convention, read from
+   the dataset catalog, and so does every USD/CHF result.
 2. **Frequency-alignment protection** (`spread_frequency_mismatch_block`):
    "Compute the spread between the weekly 10-year Treasury yield and the daily
    2-year Treasury yield." Planned exactly as asked, the spread of a weekly and a
@@ -138,7 +141,7 @@ app or with `cli demo`.
    validator, not the planner, blocks it (V08) before anything runs and states the
    fix: resample the 2-year yield to weekly first.
 3. **Out-of-scope forecast request** (`arima_forecast_block`): "Fit an ARIMA
-   model to forecast the USD/CHF exchange rate for next week." The registry has no
+   model to the S&P 500 and forecast the next 12 weeks." The registry has no
    capability that fits a model or makes a forecast, so the planner declines
    (P01) and lists the registered capabilities instead. If a planner ever
    proposed such a step anyway, the validator would block it independently (V02).
@@ -162,22 +165,48 @@ app or with `cli demo`.
    the future, and recommends the expanding method. It is an approval, not a
    block: a full-sample threshold is fine for labelling past stress days but
    invalid as a signal or in a backtest, and only the analyst knows which is meant.
+6. **NASDAQ after volatile weeks** (`nasdaq_volatility_success`), the earlier
+   flagship on the NASDAQ alone: the same flags, compared with the following week's
+   NASDAQ return.
 
-**Example output.** For example workflow 1 on the 1971-2026 NASDAQ snapshot,
-QuantLab reports that 446 of 2,842 weeks (15.7%) had a 12-week annualised
-volatility above the 90th percentile of their own past, in 40 distinct episodes.
-The following week's simple return averaged 0.209% after a flagged week and
-0.230% after a normal week: a difference of -0.021 percentage points, with a
-Newey-West standard error of 0.223 (8 lags) and a p-value of 0.93, so there is no
-statistically significant difference. The share of flagged weeks exceeds 10%
-because each week is compared only with the history available at the time, so
-the more volatile decades after the 1970s cross the earlier thresholds more often.
+   > Using NASDAQ, calculate weekly log returns, 12-week volatility, and flag unusually volatile weeks. Compare next-week simple returns after volatile weeks with those after normal weeks, then test whether the difference in means is statistically significant.
+
+   Weekly Friday closes; weekly log returns for the volatility (they add up over
+   time, as square-root-of-time annualisation assumes); 12-week annualised
+   rolling volatility; flags above the 90th percentile of past volatility only
+   (expanding, after 52 weeks); the following week's simple return stamped on
+   each week (`forward_return`: a mean of log returns would be lower by about
+   half the variance and bias the comparison against volatile weeks); a
+   descriptive comparison first (`compare_groups`), then the significance test
+   (`hac_mean_difference`). The analyst confirms the two return-method choices
+   (V10); there is no warning and no block. The result shows the volatility with
+   the high-volatility weeks shaded, both groups' means and standard deviations,
+   the number of distinct episodes, and the test's difference, p-value and 95%
+   confidence interval.
+
+**Example output.** For example workflow 1 on the committed snapshots (1971 to
+2026), QuantLab flags 446 of 2,842 weeks (15.7%) whose 12-week annualised NASDAQ
+volatility was above the 90th percentile of its own past, in 40 distinct
+episodes. Over the 2,841 weeks both series share, the following week's simple
+USD/CHF return averaged -0.038% after a flagged week and -0.043% after a normal
+week: the franc strengthened on average after both, very slightly less after a
+volatile week. The difference, +0.0041 percentage points, has a Newey-West
+standard error of 0.091 percentage points (8 lags) and a p-value of 0.96, so
+there is no statistically significant difference: in this sample the franc does
+not strengthen more in the week after US tech stress. The test looks at the
+following week, not at the stress week itself. The share of flagged weeks exceeds
+10% because each week is compared only with the history available at the time,
+so the more volatile decades after the 1970s cross the earlier thresholds more
+often. Example 6, on the same flags, finds the following week's NASDAQ return
+averaging 0.209% after a flagged week and 0.230% after a normal week (p-value
+0.93).
 
 **Audit trail.** For any executed result, such as example 1's p-value, **Trace a
-result** shows the full chain `hac_mean_difference` -> `forward_return` and
-`flag_regime` -> `rolling_volatility` -> `compute_returns` -> `resample` ->
-`load_series` -> the NASDAQ snapshot file, with each step's library call,
-parameters (user edits marked) and output hash. `cli demo` prints the same chain.
+result** shows the full chain: `hac_mean_difference` -> `forward_return` ->
+`resample` -> `load_series` -> the USD/CHF snapshot file, and `flag_regime` ->
+`rolling_volatility` -> `compute_returns` -> `resample` -> `load_series` -> the
+NASDAQ snapshot file, with each step's library call, parameters (user edits
+marked) and output hash. `cli demo` prints the same chain.
 
 ## Live mode
 
@@ -260,22 +289,22 @@ to **mock**: everything keeps working offline with the canned plans.
 Two separate questions, measured separately:
 
 * **Does the planner choose the right plan?** Measured by `quantlab.cli eval` (or
-  `eval/run_eval.py`) on `eval/golden_requests.yaml`: the five example workflows,
+  `eval/run_eval.py`) on `eval/golden_requests.yaml`: the six example workflows,
   simple variations, and adversarial requests (such as a forecast) that must end
   in a refusal or a BLOCK. Metrics: valid-plan rate, exact capability-sequence
   match, capability-set Jaccard, key-parameter accuracy, guardrail-outcome match
   and correct refusal/block rate. Each case is also reported item by item (every
   step in order, every key parameter, the issues of each action), so a live
   mismatch shows exactly what the planner chose differently; `--case <id>` runs
-  one case, such as the fully specified flagship (`s1_volatility_flag_success`).
+  one case, such as the fully specified flagship (`s1_chf_safe_haven`).
   Reports go to `eval/reports/`. In mock mode this checks the harness only
-  (the mock knows just the five examples); `--mode live` measures the real model.
+  (the mock knows just the six examples); `--mode live` measures the real model.
 * **Are the computations right?** Measured by the unit tests, independently of
   any model: returns, differences, spread alignment, rolling volatility and
   annualisation, the no-look-ahead property of expanding flags, forward returns,
   group comparisons and episode counts, the Newey-West test against a direct
   statsmodels fit, every guardrail, plan editing, replay, grounding, a source
-  safety scan, and a golden record of the five example workflows' results.
+  safety scan, and a golden record of the six example workflows' results.
 
 ## Project layout
 

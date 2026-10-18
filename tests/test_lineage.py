@@ -24,10 +24,10 @@ from quantlab.lineage import (
 from quantlab.monitoring import read_events
 from quantlab.registry import REGISTRY, registry_version
 
-from conftest import SCENARIO_1_APPROVALS, SPREAD_PLAN, as_plan, raw_plan
+from conftest import SCENARIO_6_APPROVALS, SPREAD_PLAN, as_plan, raw_plan
 
-APPROVALS = set(SCENARIO_1_APPROVALS)
-SCENARIO_1 = raw_plan("volatility_flag_success")
+APPROVALS = set(SCENARIO_6_APPROVALS)
+SCENARIO_6 = raw_plan("nasdaq_volatility_success")
 
 
 def run_and_save(raw: dict, settings: Settings, catalog: Catalog) -> RunRecord:
@@ -55,7 +55,7 @@ def run_and_save(raw: dict, settings: Settings, catalog: Catalog) -> RunRecord:
 
 
 def test_saved_outputs_hash_to_the_manifest_hashes(settings: Settings, catalog: Catalog) -> None:
-    record = run_and_save(SCENARIO_1, settings, catalog)
+    record = run_and_save(SCENARIO_6, settings, catalog)
     loaded = load_run(record.run_id, settings.runs_dir)
     assert loaded.status == "completed"
     outputs = settings.runs_dir / record.run_id / "outputs"
@@ -68,10 +68,10 @@ def test_saved_outputs_hash_to_the_manifest_hashes(settings: Settings, catalog: 
 
 
 def test_replay_reproduces_every_hash(settings: Settings, catalog: Catalog) -> None:
-    record = run_and_save(SCENARIO_1, settings, catalog)
+    record = run_and_save(SCENARIO_6, settings, catalog)
     report = replay(record.run_id, settings)
     assert report.all_match, report.message
-    assert len(report.steps) == len(SCENARIO_1["steps"])
+    assert len(report.steps) == len(SCENARIO_6["steps"])
     assert all(step.match for step in report.steps)
     assert read_events(settings.events_path)[-1]["event_type"] == "replay_completed"
 
@@ -99,7 +99,7 @@ def test_trace_walks_back_to_the_source_file(settings: Settings, catalog: Catalo
 
 def test_list_runs_newest_first(settings: Settings, catalog: Catalog) -> None:
     first = run_and_save(SPREAD_PLAN, settings, catalog)
-    second = run_and_save(SCENARIO_1, settings, catalog)
+    second = run_and_save(SCENARIO_6, settings, catalog)
     rows = list_runs(settings.runs_dir)
     assert {row["run_id"] for row in rows} == {first.run_id, second.run_id}
     assert rows[0]["run_id"] >= rows[1]["run_id"]
@@ -113,7 +113,7 @@ def test_manifests_from_before_the_monitoring_fields_still_load(
     settings: Settings, catalog: Catalog
 ) -> None:
     """Older records lack the review and token fields: they load as missing (None)."""
-    record = run_and_save(SCENARIO_1, settings, catalog)
+    record = run_and_save(SCENARIO_6, settings, catalog)
     path = settings.runs_dir / record.run_id / "manifest.json"
     manifest = json.loads(path.read_text())
     for name in ("stage_tokens", "interactive", "plan_shown_at", "decision", "decided_at"):
@@ -128,7 +128,7 @@ def test_manifests_from_before_the_monitoring_fields_still_load(
 def test_scenario_6_trace_from_the_test_back_to_the_nasdaq_file(
     settings: Settings, catalog: Catalog
 ) -> None:
-    record = run_and_save(SCENARIO_1, settings, catalog)
+    record = run_and_save(SCENARIO_6, settings, catalog)
     result = trace(record, "s8")  # the final step: the significance test and its p-value
     # Both inputs are traced: the forward returns (s6) and the flags (s5) behind them,
     # down to the one weekly price series (s2) they share. compare_groups (s7) is not
@@ -154,7 +154,7 @@ def test_scenario_6_trace_from_the_test_back_to_the_nasdaq_file(
 
 
 def test_manifest_records_each_steps_capability_code(settings: Settings, catalog: Catalog) -> None:
-    record = run_and_save(SCENARIO_1, settings, catalog)
+    record = run_and_save(SCENARIO_6, settings, catalog)
     manifest = json.loads((settings.runs_dir / record.run_id / "manifest.json").read_text())
     for step in manifest["steps"]:
         assert step["capability_code"] == REGISTRY[step["capability"]].code
@@ -164,7 +164,7 @@ def test_manifest_records_each_steps_capability_code(settings: Settings, catalog
 def test_manifest_records_the_forward_horizon_and_method(
     settings: Settings, catalog: Catalog
 ) -> None:
-    record = run_and_save(SCENARIO_1, settings, catalog)
+    record = run_and_save(SCENARIO_6, settings, catalog)
     manifest = json.loads((settings.runs_dir / record.run_id / "manifest.json").read_text())
     forward = manifest["steps"][5]
     assert forward["capability"] == "forward_return"
@@ -183,7 +183,7 @@ def test_manifests_from_before_codes_still_replay_and_trace(
     settings: Settings, catalog: Catalog
 ) -> None:
     """A run record without codes: replay still matches, and codes come from the names."""
-    record = run_and_save(SCENARIO_1, settings, catalog)
+    record = run_and_save(SCENARIO_6, settings, catalog)
     path = settings.runs_dir / record.run_id / "manifest.json"
     manifest = json.loads(path.read_text())
     for step in manifest["steps"]:

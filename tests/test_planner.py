@@ -31,7 +31,7 @@ from fakes import (
     tool_response,
 )
 
-PLAN_A = SCENARIOS_BY_ID["volatility_flag_success"].plan  # scenario 1
+PLAN_A = SCENARIOS_BY_ID["nasdaq_volatility_success"].plan  # scenario 6
 
 
 @pytest.mark.parametrize("scenario", SCENARIOS, ids=lambda s: s.id)
@@ -42,7 +42,7 @@ def test_mock_planner_returns_each_canned_plan(scenario) -> None:
     assert [s.capability for s in result.plan.steps] == [
         s["capability"] for s in scenario.plan["steps"]
     ]
-    # Also matched by id and by number, e.g. "volatility_flag_success" or "1".
+    # Also matched by id and by number, e.g. "chf_safe_haven_success" or "1".
     for alias in (scenario.id, str(scenario.number)):
         assert MockPlanner().generate_plan(alias, []).plan.steps == result.plan.steps
 

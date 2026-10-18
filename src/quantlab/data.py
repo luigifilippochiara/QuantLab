@@ -44,6 +44,9 @@ class DatasetEntry(BaseModel):
         n_missing: rows whose value is missing ("" or ".").
         start_date: first date in the file.
         end_date: last date in the file.
+        quote_convention: for an exchange rate, how it is quoted and so which way
+            a rise or a fall goes, e.g. "USD/CHF, in Swiss francs per US dollar: ...";
+            the narrator states it ("DEXSZUS is quoted as ..."). None otherwise.
     """
 
     # extra="forbid" so a typo in catalog.json is an error rather than silently ignored.
@@ -65,6 +68,7 @@ class DatasetEntry(BaseModel):
     n_missing: int
     start_date: str
     end_date: str
+    quote_convention: str | None = None
 
 
 @dataclass

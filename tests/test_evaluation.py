@@ -17,8 +17,9 @@ from fakes import FakeAnthropicClient, tool_response
 def test_golden_file_resolves_scenarios() -> None:
     cases = {case.id: case for case in load_golden()}
     assert len(cases) >= 10
-    scenario_1 = SCENARIOS_BY_ID["volatility_flag_success"]
-    assert cases["s1_volatility_flag_success"].request == scenario_1.request
+    flagship = SCENARIOS_BY_ID["chf_safe_haven_success"]
+    assert cases["s1_chf_safe_haven"].request == flagship.request
+    assert cases["s1_chf_safe_haven"].datasets == ["NASDAQCOM", "DEXSZUS"]
     adversarial = [c for c in cases.values() if c.expect == "refuse_or_block"]
     assert len(adversarial) >= 4
 
@@ -33,19 +34,19 @@ def test_golden_file_starts_with_the_example_workflows_in_order() -> None:
 def test_mock_evaluation_scores_and_report(settings: Settings, tmp_path: Path) -> None:
     report = run_evaluation("mock", settings)
     scores = {s.case_id: s for s in report.scores}
-    for case_id in ["s1_volatility_flag_success", "s5_vix_full_sample_lookahead"]:
+    for case_id in ["s1_chf_safe_haven", "s5_vix_full_sample_lookahead", "s6_nasdaq_volatility"]:
         assert (
             scores[case_id].correct and scores[case_id].params_hit == scores[case_id].params_total
         )
     assert report.metrics["correct_refusal_block_rate"] == 1.0
     # Free-form requests fail in mock mode: by design.
     assert not scores["vix_high_periods"].valid
-    # A scenario-1-like variation gets scenario 1's canned plan: every expected step
+    # A scenario-6-like variation gets scenario 6's canned plan: every expected step
     # and as many more (Jaccard 0.5), but not the requested window.
     variation = scores["nasdaq_weekly_log_vol"]
     assert variation.jaccard == 0.5 and variation.params_hit < variation.params_total
 
-    assert report.metrics["guardrail_outcome_match"] == 1.0  # the flagship's two approvals
+    assert report.metrics["guardrail_outcome_match"] == 1.0  # every example as canned
 
     path = write_report(report, tmp_path)
     text = path.read_text()
@@ -75,21 +76,34 @@ def test_a_different_block_reason_is_reported_but_still_correct(
 
 
 def test_one_case_can_be_evaluated_on_its_own(settings: Settings) -> None:
-    report = run_evaluation("mock", settings, case_ids=["s1_volatility_flag_success"])
-    assert [s.case_id for s in report.scores] == ["s1_volatility_flag_success"]
+    report = run_evaluation("mock", settings, case_ids=["s1_chf_safe_haven"])
+    assert [s.case_id for s in report.scores] == ["s1_chf_safe_haven"]
     with pytest.raises(ValueError, match="no_such_case"):
         run_evaluation("mock", settings, case_ids=["no_such_case"])
 
 
-def flagship_case() -> GoldenCase:
-    """The golden flagship case: every step, the parameters it states, the guardrail outcome."""
-    return next(c for c in load_golden() if c.id == "s1_volatility_flag_success")
+def golden_case(case_id: str) -> GoldenCase:
+    """A golden case by id, e.g. the flagship's: every step, its parameters, its outcome."""
+    return next(c for c in load_golden() if c.id == case_id)
+
+
+def test_live_scoring_of_the_flagship_with_a_perfect_fake_planner(
+    settings: Settings, catalog: Catalog
+) -> None:
+    plan = copy.deepcopy(SCENARIOS_BY_ID["chf_safe_haven_success"].plan)
+    client = FakeAnthropicClient(tool_response(plan))
+    score = score_case(golden_case("s1_chf_safe_haven"), settings, catalog, "live", client)
+    assert score.correct and score.sequence_match and score.jaccard == 1.0
+    assert score.params_hit == score.params_total == 5
+    assert score.guardrails_match and all(check.match for check in score.checks)
+    items = [check.item for check in score.checks]
+    assert items[:10] == [f"step {i}" for i in range(1, 11)]
 
 
 def test_live_scoring_with_a_perfect_fake_planner(settings: Settings, catalog: Catalog) -> None:
-    plan = copy.deepcopy(SCENARIOS_BY_ID["volatility_flag_success"].plan)
+    plan = copy.deepcopy(SCENARIOS_BY_ID["nasdaq_volatility_success"].plan)
     client = FakeAnthropicClient(tool_response(plan))
-    score = score_case(flagship_case(), settings, catalog, "live", client)
+    score = score_case(golden_case("s6_nasdaq_volatility"), settings, catalog, "live", client)
     assert score.correct and score.sequence_match and score.jaccard == 1.0
     assert score.params_hit == score.params_total == 5
     assert score.guardrails_match and all(check.match for check in score.checks)
@@ -116,12 +130,12 @@ def test_a_live_mismatch_shows_what_the_planner_chose_differently(
 ) -> None:
     # A planner that skips compare_groups, picks log forward returns and a full-sample
     # threshold.
-    plan = copy.deepcopy(SCENARIOS_BY_ID["volatility_flag_success"].plan)
+    plan = copy.deepcopy(SCENARIOS_BY_ID["nasdaq_volatility_success"].plan)
     del plan["steps"][6]
     plan["steps"][5]["params"] = {"method": "log"}
     plan["steps"][4]["params"]["method"] = "full_sample"
     client = FakeAnthropicClient(tool_response(plan))
-    score = score_case(flagship_case(), settings, catalog, "live", client)
+    score = score_case(golden_case("s6_nasdaq_volatility"), settings, catalog, "live", client)
     assert not score.correct and score.valid  # valid, but not the specified plan
     wrong = {c.item: (c.expected, c.actual) for c in score.checks if not c.match}
     assert wrong == {

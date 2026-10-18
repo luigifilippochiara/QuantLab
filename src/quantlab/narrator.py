@@ -43,7 +43,7 @@ from quantlab.planner import (
 )
 from quantlab.types import ANNUALISATION_FACTORS, Artifact, DataType, TokenUsage
 
-NARRATOR_PROMPT_VERSION = "narrator-v4"
+NARRATOR_PROMPT_VERSION = "narrator-v5"
 
 # The note shown directly under the narrative (app and CLI) and kept in the run
 # record: who wrote it and, only when the grounding check passed, that its numbers
@@ -74,7 +74,9 @@ compare_groups is descriptive. For a test, state the difference in means and its
 always the number of distinct flagged episodes. If the p-value is 0.05 or more, write "no \
 statistically significant difference" (never "no difference"); below 0.05, write "a \
 statistically significant difference at the 5% level".
-8. Write 3 to 6 sentences as one paragraph. No headings, no bullet points.
+8. If DATASET NOTES say how a series is quoted, every direction you state (for example which \
+currency strengthened) must follow them.
+9. Write 3 to 6 sentences as one paragraph. No headings, no bullet points.
 """
 
 # A number in text: digits with optional thousands separators and decimals.
@@ -377,7 +379,11 @@ def check_grounding(
 
 
 def template_narrative(
-    plan: Plan, artifacts: dict[str, Artifact], facts: list[Fact], issues: list[Issue]
+    plan: Plan,
+    artifacts: dict[str, Artifact],
+    facts: list[Fact],
+    issues: list[Issue],
+    dataset_notes: dict[str, str] | None = None,
 ) -> str:
     """Write a deterministic summary from the facts sheet (used in mock mode and as fallback).
 
@@ -386,6 +392,8 @@ def template_narrative(
         artifacts: step id -> output artifact.
         facts: the facts sheet (all numbers are taken from its display strings).
         issues: warnings and approved assumptions to mention.
+        dataset_notes: dataset id -> its quote convention, for the datasets used that
+            have one (see describe_quotes).
 
     Returns:
         The narrative text.
@@ -400,6 +408,9 @@ def template_narrative(
             for s in loads
         )
         sentences.append(f"The analysis used {described}.")
+    # Which way an exchange rate moves when a currency strengthens, so its signed
+    # returns below can be read the right way round.
+    sentences += describe_quotes(dataset_notes)
 
     for step in plan.steps:
         if step.id not in artifacts:
@@ -480,8 +491,27 @@ def template_narrative(
 # ---------------------------------------------------------------------------
 
 
-def build_user_prompt(request: str, plan: Plan, facts: list[Fact], issues: list[Issue]) -> str:
-    """Assemble the narrator's input: request, plan summary, facts sheet, warnings, approvals."""
+def describe_quotes(dataset_notes: dict[str, str] | None) -> list[str]:
+    """One sentence per quote convention, e.g. "DEXSZUS is quoted as USD/CHF, in ...".
+
+    Args:
+        dataset_notes: dataset id -> its quote convention (data/catalog.json), or None.
+
+    Returns:
+        The sentences, in the order given; none without notes.
+    """
+    notes = dataset_notes or {}
+    return [f"{dataset_id} is quoted as {note}" for dataset_id, note in notes.items()]
+
+
+def build_user_prompt(
+    request: str,
+    plan: Plan,
+    facts: list[Fact],
+    issues: list[Issue],
+    dataset_notes: dict[str, str] | None = None,
+) -> str:
+    """Assemble the narrator's input: request, plan, dataset notes, facts, warnings, approvals."""
     fact_lines = "\n".join(f"- [{f.fact_id}] {f.label}: {f.display}" for f in facts)
     warning_lines = "\n".join(
         f"- {i.code} {i.name}: {i.message}" for i in issues if i.action == Action.WARN
@@ -489,9 +519,11 @@ def build_user_prompt(request: str, plan: Plan, facts: list[Fact], issues: list[
     approval_lines = "\n".join(
         f"- {i.code} {i.name}: {i.message}" for i in issues if i.action == Action.APPROVE
     )
+    note_lines = "\n".join(f"- {sentence}" for sentence in describe_quotes(dataset_notes))
     return (
         f"<user_request>\n{request}\n</user_request>\n\n"
         f"PLAN:\n{describe_plan(plan)}\n\n"
+        f"DATASET NOTES:\n{note_lines or '- none'}\n\n"
         f"FACTS SHEET:\n{fact_lines}\n\n"
         f"WARNINGS:\n{warning_lines or '- none'}\n\n"
         f"APPROVED ASSUMPTIONS:\n{approval_lines or '- none'}"
@@ -506,6 +538,7 @@ def narrate(
     mode: str,
     settings: Settings,
     extra_texts: list[str] | None = None,
+    dataset_notes: dict[str, str] | None = None,
     client: Any = None,
 ) -> NarrativeResult:
     """Write the narrative (LLM, or template in mock mode / on failure) and check its numbers.
@@ -518,6 +551,8 @@ def narrate(
         mode: "live" or "cached" use the LLM; "mock" uses the template.
         settings: settings (narrator model, effort, tokens, timeout).
         extra_texts: other trusted texts whose numbers are allowed (e.g. dataset titles).
+        dataset_notes: dataset id -> quote convention, for the datasets used that have
+            one: the template states it, and the LLM is told to follow it.
         client: optional OpenAI or Anthropic client (tests inject a fake one).
 
     Returns:
@@ -528,7 +563,7 @@ def narrate(
     facts = build_facts_sheet(plan, artifacts)
     trusted_texts = [request, *(i.message for i in issues), *(extra_texts or [])]
     template = NarrativeResult(
-        text=template_narrative(plan, artifacts, facts, issues),
+        text=template_narrative(plan, artifacts, facts, issues, dataset_notes),
         source="template",
         prompt_version="template-v1",
         facts=facts,
@@ -537,7 +572,9 @@ def narrate(
     result = template
     usage = TokenUsage()  # mock mode calls no LLM
     if mode != "mock":
-        llm_result, error, usage = _llm_narrative(request, plan, facts, issues, settings, client)
+        llm_result, error, usage = _llm_narrative(
+            request, plan, facts, issues, dataset_notes, settings, client
+        )
         if llm_result is None:
             template.error = error  # keep the template, record why the LLM was not used
         else:
@@ -687,6 +724,7 @@ def _llm_narrative(
     plan: Plan,
     facts: list[Fact],
     issues: list[Issue],
+    dataset_notes: dict[str, str] | None,
     settings: Settings,
     client: Any,
 ) -> tuple[NarrativeResult | None, str | None, TokenUsage]:
@@ -698,7 +736,7 @@ def _llm_narrative(
         reported, even for an unusable answer (it was billed); None counts if the
         call failed before answering.
     """
-    prompt = build_user_prompt(request, plan, facts, issues)
+    prompt = build_user_prompt(request, plan, facts, issues, dataset_notes)
     started = time.perf_counter()
     try:
         if settings.llm_provider == "openai":

@@ -3,7 +3,7 @@
 #
 # Each case:
 #   id:           short name
-#   scenario:     an example-workflow id, e.g. volatility_flag_success (request and datasets
+#   scenario:     an example-workflow id, e.g. chf_safe_haven_success (request and datasets
 #                 are taken from mock_scenarios.py), OR
 #   request + datasets
 #   expect:       plan            -> a valid plan (no BLOCK) is expected
@@ -22,19 +22,21 @@
 # workflows among them also give their canned plan and outcome, which are reported
 # item by item for information (a live planner may block for another reason).
 #
-# The five example workflows come first, one entry each, with the plan and the
+# The six example workflows come first, one entry each, with the plan and the
 # codes of their canned plans.
 
 # The flagship request states the choices without a default and leaves the rest to
 # the registry defaults, so a live planner should still reproduce the canned plan
-# exactly: all eight steps in order, the key parameters, and the outcome of two
-# return-method approvals with no warning and no block. (Forward returns are always
-# one period ahead, so there is no horizon to check.)
-- id: s1_volatility_flag_success
-  scenario: volatility_flag_success
+# exactly: all ten steps in order (both series loaded, then both made weekly), the
+# key parameters, and the outcome of two return-method approvals with no warning and
+# no block. The two load_series steps load different datasets, so dataset_id is not
+# a key parameter (it is checked on every step of a capability).
+- id: s1_chf_safe_haven
+  scenario: chf_safe_haven_success
   expect: plan
-  capabilities: [load_series, resample, compute_returns, rolling_volatility, flag_regime,
-                 forward_return, compare_groups, hac_mean_difference]
+  capabilities: [load_series, load_series, resample, resample, compute_returns,
+                 rolling_volatility, flag_regime, forward_return, compare_groups,
+                 hac_mean_difference]
   key_params:
     compute_returns: {method: log}
     rolling_volatility: {window: 12}
@@ -75,6 +77,24 @@
     load_series: {dataset_id: VIXCLS}
     flag_regime: {method: full_sample, quantile: 0.95}
   guardrails: {approve: [V09], warn: [], block: []}
+
+# The earlier flagship, on the NASDAQ alone. Its request states the choices without
+# a default and leaves the rest to the registry defaults, so a live planner should
+# still reproduce the canned plan exactly: all eight steps in order, the key
+# parameters, and the outcome of two return-method approvals with no warning and no
+# block. (Forward returns are always one period ahead, so there is no horizon to
+# check.)
+- id: s6_nasdaq_volatility
+  scenario: nasdaq_volatility_success
+  expect: plan
+  capabilities: [load_series, resample, compute_returns, rolling_volatility, flag_regime,
+                 forward_return, compare_groups, hac_mean_difference]
+  key_params:
+    compute_returns: {method: log}
+    rolling_volatility: {window: 12}
+    flag_regime: {method: expanding, quantile: 0.90}
+    forward_return: {method: simple}
+  guardrails: {approve: [V10, V10], warn: [], block: []}
 
 # Further requests, valid with the current registry.
 

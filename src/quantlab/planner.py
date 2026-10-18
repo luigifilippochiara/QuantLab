@@ -44,7 +44,7 @@ from quantlab.types import TokenUsage
 # Bump whenever SYSTEM_PROMPT changes: it is part of the plan-cache key and of
 # every run record, so old cached plans are not reused with a new prompt.
 PROMPT_VERSION = "planner-v6"
-MOCK_PROMPT_VERSION = "canned-scenarios-v10"
+MOCK_PROMPT_VERSION = "canned-scenarios-v11"
 TOOL_NAME = "submit_plan"
 
 # Server-side refusal fallback (Anthropic API beta): if the model declines a
@@ -189,7 +189,7 @@ class MockPlanner:
                 "steps": [],
                 "cannot_fulfill": True,
                 "refusal_reason": (
-                    "Mock mode only knows the five example workflows (1-5). Switch the "
+                    "Mock mode only knows the six example workflows (1-6). Switch the "
                     "LLM mode to live or cached to plan free-form requests."
                 ),
                 "planner_notes": None,

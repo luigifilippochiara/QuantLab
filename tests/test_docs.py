@@ -100,8 +100,8 @@ def test_no_hardcoded_counts_or_code_ranges() -> None:
 def test_flagship_request_is_one_constant_used_everywhere() -> None:
     # The app, the CLI and the notebooks read the scenario's request; the golden set
     # resolves its `scenario:` reference to it; the user guide quotes it verbatim.
-    assert SCENARIOS_BY_ID["volatility_flag_success"].request is FLAGSHIP_REQUEST
-    golden = next(c for c in load_golden() if c.id == "s1_volatility_flag_success")
+    assert SCENARIOS_BY_ID["chf_safe_haven_success"].request is FLAGSHIP_REQUEST
+    golden = next(c for c in load_golden() if c.id == "s1_chf_safe_haven")
     assert golden.request == FLAGSHIP_REQUEST
     assert FLAGSHIP_REQUEST in GUIDE  # on one line, character for character
     # The text is written only where it is defined, and quoted in the guide.

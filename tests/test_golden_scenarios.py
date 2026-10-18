@@ -1,6 +1,6 @@
 """The example workflows and the mock eval set give exactly the results of their golden records.
 
-tests/fixtures/golden_scenarios.json holds five records. For each example
+tests/fixtures/golden_scenarios.json holds six records. For each example
 workflow, run in mock mode and auto-approved as `cli demo` does, each holds: the
 status, every static and runtime issue, the plan, every step's input and output
 hashes and metadata, the numbers of every output table and the facts sheet, on
@@ -22,6 +22,10 @@ snapshots.
 - "simulated_injection": example 4 and its eval case, which replaced the earlier
   ones after commit a0dc779: a simulated planner follows the prompt injection and
   proposes an unregistered capability, which the validator blocks (V02).
+- "safe_haven_flagship": all six examples and the mock eval set, recorded after
+  commit fc52c98, when the Swiss franc safe-haven analysis became example 1, the
+  earlier flagship moved to example 6 and example 3's forecast request moved to
+  the S&P 500.
 
 Every result must be the same as recorded. The only allowed differences are the
 changes made on purpose since a record was made (MIGRATIONS), applied in order:
@@ -30,8 +34,11 @@ the plans; the restructure translated two more codes and renamed an issue's
 "severity" to "action" (APPROVAL to APPROVE); the stage naming translated every
 code but N01; the simulated injection replaced example 4 and its eval case, which
 the older records then no longer vouch for; the renumbering swapped examples 2 and
-5, so their eval cases' ids (which start with the example number) were renamed. No
-narrative raises N01, and no example or eval request raises R01.
+5, so their eval cases' ids (which start with the example number) were renamed; the
+new flagship moved the earlier one, unchanged, to example 6 under a new id (and its
+eval case with it). Example 3's new request leaves its recorded result as it was (a
+refusal records no dataset). No narrative raises N01, and no example or eval request
+raises R01.
 
 The fixture is a frozen reference: a record is never regenerated.
 """
@@ -90,7 +97,7 @@ class Migration:
         severity_to_action: whether issues' "severity" became "action".
         replaced: example workflows and eval cases replaced on purpose: what an older
             record holds for them no longer applies, and a newer record covers them.
-        renamed: eval cases renamed on purpose: old case id -> new case id.
+        renamed: example workflows and eval cases renamed on purpose: old id -> new id.
     """
 
     codes: dict[str, str]
@@ -128,16 +135,39 @@ INJECTION = Migration(
 )
 RENUMBERING = Migration({code: code for code in GUARDRAILS}, {}, False, renamed=SWAPPED_CASE_IDS)
 
+# New flagship: the earlier flagship moved, unchanged, to example 6 under a new id,
+# and its eval case with it; the Swiss franc analysis took its place as example 1.
+MOVED_FLAGSHIP_IDS = {
+    "volatility_flag_success": "nasdaq_volatility_success",
+    "s1_volatility_flag_success": "s6_nasdaq_volatility",
+}
+FLAGSHIP_MOVE = Migration(
+    {code: code for code in GUARDRAILS}, {}, False, renamed=MOVED_FLAGSHIP_IDS
+)
+
 # The changes made since each record was recorded, oldest first.
 MIGRATIONS = {
-    "before_simplification": (SIMPLIFICATION, RESTRUCTURE, STAGES, INJECTION, RENUMBERING),
-    "final_examples": (RESTRUCTURE, STAGES, INJECTION, RENUMBERING),
-    "before_restructure": (RESTRUCTURE, STAGES, INJECTION, RENUMBERING),
-    "before_stage_codes": (STAGES, INJECTION, RENUMBERING),
-    "simulated_injection": (RENUMBERING,),
+    "before_simplification": (
+        SIMPLIFICATION,
+        RESTRUCTURE,
+        STAGES,
+        INJECTION,
+        RENUMBERING,
+        FLAGSHIP_MOVE,
+    ),
+    "final_examples": (RESTRUCTURE, STAGES, INJECTION, RENUMBERING, FLAGSHIP_MOVE),
+    "before_restructure": (RESTRUCTURE, STAGES, INJECTION, RENUMBERING, FLAGSHIP_MOVE),
+    "before_stage_codes": (STAGES, INJECTION, RENUMBERING, FLAGSHIP_MOVE),
+    "simulated_injection": (RENUMBERING, FLAGSHIP_MOVE),
+    "safe_haven_flagship": (),
 }
 # The records that hold (part of) the mock eval set.
-EVAL_RECORDS = ("before_restructure", "before_stage_codes", "simulated_injection")
+EVAL_RECORDS = (
+    "before_restructure",
+    "before_stage_codes",
+    "simulated_injection",
+    "safe_haven_flagship",
+)
 
 # Output metadata compared step by step (the notes are free text and are not).
 META_FIELDS = ("kind", "frequency", "return_method", "periods", "horizon", "source_dataset_ids")
@@ -217,7 +247,7 @@ def describe_session(session: Session) -> dict[str, Any]:
 
 
 def run_scenarios(settings: Settings) -> dict[str, dict[str, Any]]:
-    """Run the five example workflows in mock mode, auto-approving as `cli demo` does.
+    """Run the six example workflows in mock mode, auto-approving as `cli demo` does.
 
     Args:
         settings: settings naming the data folder and an isolated runs folder.
@@ -363,6 +393,7 @@ def expected_results(golden: dict[str, Any], data: str) -> dict[str, list[dict[s
                 continue  # a newer record covers what replaced it
             for migration in migrations:
                 result = migrate_result(result, migration)
+                scenario_id = migration.renamed.get(scenario_id, scenario_id)
             # N01 did not exist when the older records were made; it must never fire
             # on the example workflows (their template narratives are fully grounded).
             expected.setdefault(scenario_id, []).append({**result, "narrative_issues": []})

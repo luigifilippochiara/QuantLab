@@ -32,11 +32,11 @@ from quantlab.plan import Step
 from quantlab.registry import REGISTRY
 from quantlab.types import TokenUsage
 
-from conftest import SCENARIO_1_APPROVALS, as_plan, raw_plan
+from conftest import SCENARIO_6_APPROVALS, as_plan, raw_plan
 from fakes import FakeAnthropicClient, text_response
 
 PAGES = PROJECT_ROOT / "app" / "pages"
-SCENARIO_1_REQUEST = SCENARIOS_BY_ID["volatility_flag_success"].request
+SCENARIO_6_REQUEST = SCENARIOS_BY_ID["nasdaq_volatility_success"].request
 
 
 @pytest.fixture
@@ -65,7 +65,7 @@ def button(app: AppTest, label: str):
 
 
 def approve_all(app: AppTest) -> None:
-    """Tick every approval checkbox (scenario 1 has two: the return method of s3 and s6)."""
+    """Tick every approval checkbox (scenarios 1 and 6 have two: their return methods)."""
     for key in [c.key for c in app.checkbox if c.key.startswith("approve-")]:
         app.checkbox(key=key).check()
     app.run()
@@ -74,8 +74,8 @@ def approve_all(app: AppTest) -> None:
 def test_scenario_1_full_flow(app_env: Settings) -> None:
     app = open_page("analysis.py")
     labels = [b.label for b in app.sidebar.button]
-    assert labels[0] == "1 · High-volatility weeks and what follows" and len(labels) == 5
-    app.sidebar.button(key="scenario-volatility_flag_success").click().run()
+    assert labels[0] == "1 · Is the Swiss franc a safe haven?" and len(labels) == 6
+    app.sidebar.button(key="scenario-chf_safe_haven_success").click().run()
     button(app, "Generate plan").click().run()
     assert not app.exception, app.exception
     # The plan is reviewed in the readable view only: no raw JSON of it on this page.
@@ -93,8 +93,12 @@ def test_scenario_1_full_flow(app_env: Settings) -> None:
     assert NUMBERS_CHECKED_NOTE in captions
     # Results and trace name each capability by code and name.
     results = [e.label for e in app.expander if e.label.startswith("s")]
-    assert results[3].startswith("s4 · C06 · rolling_volatility · completed")
-    assert results[7].startswith("s8 · C10 · hac_mean_difference · completed")
+    assert results[5].startswith("s6 · C06 · rolling_volatility · completed")
+    assert results[9].startswith("s10 · C10 · hac_mean_difference · completed")
+    # Under each USD/CHF result, and in the narrative: which way the rate reads.
+    quote = "DEXSZUS is quoted as USD/CHF, in Swiss francs per US dollar"
+    assert sum(c.value.startswith(quote) for c in app.caption) == 5  # s2, s4, s8, s9, s10
+    assert any(quote in m.value for m in app.markdown)
     # The significance test's table, every number formatted as in the facts sheet.
     test = next(
         d.value for d in app.dataframe
@@ -104,12 +108,12 @@ def test_scenario_1_full_flow(app_env: Settings) -> None:
         assert statistic in test["statistic"].tolist()
     # The trace starts at the final result, the test with its p-value.
     picker = next(b for b in app.selectbox if b.label == "Step to trace")
-    assert picker.value == "s8" and picker.options[-1] == "s8 · C10 · hac_mean_difference"
+    assert picker.value == "s10" and picker.options[-1] == "s10 · C10 · hac_mean_difference"
     trace = next(d.value for d in app.dataframe if "library call" in d.value.columns)
     assert trace[["step", "code", "capability"]].values.tolist()[:3] == [
-        ["s8", "C10", "hac_mean_difference"],
-        ["s6", "C08", "forward_return"],
-        ["s5", "C07", "flag_regime"],
+        ["s10", "C10", "hac_mean_difference"],
+        ["s8", "C08", "forward_return"],
+        ["s7", "C07", "flag_regime"],
     ]
     subheaders = [h.value for h in app.subheader]
     # The narrative (with its note) comes right after the results, then the trace.
@@ -119,12 +123,12 @@ def test_scenario_1_full_flow(app_env: Settings) -> None:
     assert len(app.get("plotly_chart")) >= 5  # daily, weekly, returns, volatility, forward
 
     button(app, "Replay this run").click().run()
-    assert any("8 of 8 step outputs match" in s.value for s in app.success)
+    assert any("10 of 10 step outputs match" in s.value for s in app.success)
 
 
 def test_example_1_button_fills_in_the_flagship_request(app_env: Settings) -> None:
     app = open_page("analysis.py")
-    app.sidebar.button(key="scenario-volatility_flag_success").click().run()
+    app.sidebar.button(key="scenario-chf_safe_haven_success").click().run()
     assert app.text_area(key="request_text").value == FLAGSHIP_REQUEST
 
 
@@ -139,7 +143,7 @@ def test_header_describes_the_product(app_env: Settings) -> None:
 
 @pytest.mark.parametrize("mode", ["live", "cached"])
 def test_example_workflows_only_in_mock_mode(mode: str, app_env: Settings) -> None:
-    assert len(open_page("analysis.py").sidebar.button) == 5  # mock: the five examples
+    assert len(open_page("analysis.py").sidebar.button) == 6  # mock: the six examples
     app = open_page("analysis.py", llm_mode=mode)
     assert len(app.sidebar.button) == 0
     assert not any(h.value == "Example workflows" for h in app.sidebar.header)
@@ -150,8 +154,9 @@ def test_no_dataset_is_selected_when_the_app_opens(app_env: Settings) -> None:
     app = open_page("analysis.py")
     assert app.sidebar.multiselect[0].value == []
     assert not any("title=" in c.value for c in app.sidebar.caption)  # no dataset lines
-    app.sidebar.button(key="scenario-volatility_flag_success").click().run()
-    assert app.sidebar.multiselect[0].value == ["NASDAQCOM"]  # an example fills in its own
+    app.sidebar.button(key="scenario-chf_safe_haven_success").click().run()
+    # An example fills in its own.
+    assert app.sidebar.multiselect[0].value == ["NASDAQCOM", "DEXSZUS"]
 
 
 def test_datasets_are_labelled_id_first_with_full_names_on_hover(app_env: Settings) -> None:
@@ -165,7 +170,7 @@ def test_datasets_are_labelled_id_first_with_full_names_on_hover(app_env: Settin
     assert 'title="NASDAQCOM — Synthetic equity index, full name"' in line
     assert "<b>NASDAQCOM — Synthetic equity index</b>" in line
 
-    app.text_area(key="request_text").input(SCENARIO_1_REQUEST).run()
+    app.text_area(key="request_text").input(SCENARIO_6_REQUEST).run()
     button(app, "Generate plan").click().run()
     load = next(s for s in app.selectbox if s.key.endswith("-s1-dataset_id"))
     assert load.value == "NASDAQCOM"  # the plan still holds the id
@@ -229,7 +234,7 @@ def test_scenario_4_shows_a_simulated_planner_blocked_by_v02(app_env: Settings) 
 
 def test_execute_is_green_and_reject_red(app_env: Settings) -> None:
     app = open_page("analysis.py")
-    app.sidebar.button(key="scenario-volatility_flag_success").click().run()
+    app.sidebar.button(key="scenario-nasdaq_volatility_success").click().run()
     button(app, "Generate plan").click().run()
     # Each decision button has a key, whose CSS class the page's style block colours.
     assert (app.button(key="execute").label, app.button(key="reject-plan").label) == (
@@ -241,7 +246,7 @@ def test_execute_is_green_and_reject_red(app_env: Settings) -> None:
 
 def test_the_reviewer_can_reject_a_plan(app_env: Settings) -> None:
     app = open_page("analysis.py")
-    app.sidebar.button(key="scenario-volatility_flag_success").click().run()
+    app.sidebar.button(key="scenario-nasdaq_volatility_success").click().run()
     button(app, "Generate plan").click().run()
     button(app, "Reject plan").click().run()
     assert not app.exception, app.exception
@@ -254,7 +259,7 @@ def test_the_reviewer_can_reject_a_plan(app_env: Settings) -> None:
 @pytest.mark.parametrize(
     ("scenario_id", "enforcer", "category"),
     [
-        ("volatility_flag_success", "Validator · Type: Deterministic", "Methodology"),
+        ("nasdaq_volatility_success", "Validator · Type: Deterministic", "Methodology"),
         ("arima_forecast_block", "Planner · Type: LLM", "Approved scope"),
         ("spread_frequency_mismatch_block", "Validator · Type: Deterministic", "Methodology"),
     ],
@@ -275,10 +280,10 @@ def test_every_issue_shows_who_enforces_it(
 def test_ungrounded_llm_narrative_is_withheld_with_an_n01_issue(app_env: Settings) -> None:
     # Planned and executed in mock mode; only the narrative comes from a (fake) LLM,
     # which invents a number.
-    scenario = SCENARIOS_BY_ID["volatility_flag_success"]
+    scenario = SCENARIOS_BY_ID["nasdaq_volatility_success"]
     session = Session.start(scenario.request, list(scenario.dataset_ids), "mock", app_env)
     session.create_plan()
-    session.approve(SCENARIO_1_APPROVALS)
+    session.approve(SCENARIO_6_APPROVALS)
     session.execute()
     invented = "Volatility peaked at 123.456 during the flagged weeks."
     session.mode, session.client = "live", FakeAnthropicClient(text_response(invented))
@@ -461,16 +466,16 @@ def issue_codes(app: AppTest) -> set[str]:
             and "**" in m.value}  # fmt: skip
 
 
-def plan_scenario_1(app_env: Settings) -> AppTest:
-    """The analysis page with scenario 1's plan generated."""
+def plan_scenario_6(app_env: Settings) -> AppTest:
+    """The analysis page with scenario 6's plan generated (the NASDAQ-only analysis)."""
     app = open_page("analysis.py")
-    app.sidebar.button(key="scenario-volatility_flag_success").click().run()
+    app.sidebar.button(key="scenario-nasdaq_volatility_success").click().run()
     button(app, "Generate plan").click().run()
     return app
 
 
 def test_weekly_to_daily_edit_re_validates_and_runs_after_re_approval(app_env: Settings) -> None:
-    app = plan_scenario_1(app_env)
+    app = plan_scenario_6(app_env)
     assert any("adjust parameters below" in i.value for i in app.info)
     window = next(n for n in app.number_input if n.key.endswith("-s4-window"))
     assert window.label == "window (in periods of the series frequency)" and window.value == 12
@@ -494,7 +499,7 @@ def test_weekly_to_daily_edit_re_validates_and_runs_after_re_approval(app_env: S
 
 
 def test_one_click_applies_a_typed_value(app_env: Settings) -> None:
-    app = plan_scenario_1(app_env)
+    app = plan_scenario_6(app_env)
     # Apply is enabled before any change is seen: a number field sends a typed value only
     # with the next interaction, so a disabled button would swallow the first click.
     assert not button(app, "Apply changes").disabled
@@ -510,7 +515,7 @@ def test_one_click_applies_a_typed_value(app_env: Settings) -> None:
 
 
 def test_apply_is_highlighted_only_while_there_are_unapplied_edits(app_env: Settings) -> None:
-    app = plan_scenario_1(app_env)
+    app = plan_scenario_6(app_env)
 
     def apply_style() -> str:
         return app.button(key="apply-edits").proto.type
@@ -532,7 +537,7 @@ def test_apply_is_highlighted_only_while_there_are_unapplied_edits(app_env: Sett
 
 
 def test_execute_ignores_a_click_while_a_change_is_not_applied(app_env: Settings) -> None:
-    app = plan_scenario_1(app_env)
+    app = plan_scenario_6(app_env)
     approve_all(app)
     # A value typed, then Execute clicked straight away: both reach the same run, where
     # the unapplied change disables Execute, so Streamlit does not count the click.
@@ -544,7 +549,7 @@ def test_execute_ignores_a_click_while_a_change_is_not_applied(app_env: Settings
 
 
 def test_full_sample_edit_raises_v09_and_reset_clears_it(app_env: Settings) -> None:
-    app = plan_scenario_1(app_env)
+    app = plan_scenario_6(app_env)
     next(s for s in app.selectbox if s.key.endswith("-s5-method")).select("full_sample").run()
     button(app, "Apply changes").click().run()
     assert issue_codes(app) == {"V09", "V10"}
@@ -558,7 +563,7 @@ def step_headers(app: AppTest) -> list[tuple[str, bool]]:
 
 
 def test_plan_steps_are_collapsed_and_approvals_stay_in_validation(app_env: Settings) -> None:
-    app = plan_scenario_1(app_env)
+    app = plan_scenario_6(app_env)
     headers = step_headers(app)
     assert [is_open for _, is_open in headers] == [False] * 8  # the V10 steps too
     assert headers[0][0] == "Step 1 · C01 · Load series · NASDAQCOM — Synthetic equity index"
@@ -577,7 +582,7 @@ def test_plan_steps_are_collapsed_and_approvals_stay_in_validation(app_env: Sett
 
 
 def test_edits_are_marked_and_window_units_follow_the_frequency(app_env: Settings) -> None:
-    app = plan_scenario_1(app_env)
+    app = plan_scenario_6(app_env)
     next(s for s in app.selectbox if s.key.endswith("-s2-freq")).select("D").run()
     button(app, "Apply changes").click().run()
     headers = step_headers(app)
@@ -614,7 +619,7 @@ def test_unapplied_edits_compares_the_fields_with_the_last_validated_plan(
 ) -> None:
     import ui  # importable once app_env has put app/ on the path
 
-    plan = as_plan(raw_plan("volatility_flag_success"))
+    plan = as_plan(raw_plan("nasdaq_volatility_success"))
     fields = {step.id: dict(step.params) for step in plan.steps}  # every field as planned
     assert ui.unapplied_edits(plan, fields) == {}  # no change
     fields["s5"]["quantile"] = 0.95
@@ -624,7 +629,7 @@ def test_unapplied_edits_compares_the_fields_with_the_last_validated_plan(
 
     # Types count, as for the validator: a planner's 12.0 for the int window (V03)
     # differs from the field's 12, so applying the field's value fixes it.
-    raw = raw_plan("volatility_flag_success")
+    raw = raw_plan("nasdaq_volatility_success")
     next(s for s in raw["steps"] if s["id"] == "s4")["params"]["window"] = 12.0
     assert ui.unapplied_edits(as_plan(raw), fields) == {"s4": {"window": 12}}
     assert not ui.same_value(True, 1)
@@ -667,7 +672,7 @@ def app_session(scenario_id: str, settings: Settings) -> Session:
 
 def headless_replayed_run(settings: Settings) -> str:
     """A headless run (as the CLI makes), replayed once; returns its run id."""
-    scenario = SCENARIOS_BY_ID["volatility_flag_success"]
+    scenario = SCENARIOS_BY_ID["nasdaq_volatility_success"]
     session = run_request(scenario.request, list(scenario.dataset_ids), "mock", approve=True,
                           settings=settings)  # fmt: skip
     assert replay(session.run_id, settings).all_match
@@ -676,15 +681,15 @@ def headless_replayed_run(settings: Settings) -> str:
 
 def test_monitoring_page_sections_cards_and_charts(app_env: Settings) -> None:
     # Counted: approved and executed, rejected, blocked (V08), failed, and a live run.
-    approved = app_session("volatility_flag_success", app_env)
+    approved = app_session("nasdaq_volatility_success", app_env)
     approved.approve([i.issue_id for i in approved.unresolved_approvals()])
     approved.execute()
     approved.narrate()
     approved.save_record()
-    app_session("volatility_flag_success", app_env).reject()
+    app_session("nasdaq_volatility_success", app_env).reject()
     app_session("spread_frequency_mismatch_block", app_env)
     # Left out: a plan still awaiting a decision, and a headless run (whose replay counts).
-    app_session("volatility_flag_success", app_env)
+    app_session("nasdaq_volatility_success", app_env)
     headless_replayed_run(app_env)
     now = utc_now()
     save_run(RunRecord(run_id=new_run_id(), created_at=now, status="failed", request="x",
@@ -772,7 +777,7 @@ def test_monitoring_page_sections_cards_and_charts(app_env: Settings) -> None:
 
 def test_monitoring_page_with_no_counted_run_still_shows_replays(app_env: Settings) -> None:
     headless_replayed_run(app_env)
-    app_session("volatility_flag_success", app_env)  # awaiting a decision
+    app_session("nasdaq_volatility_success", app_env)  # awaiting a decision
     app = open_page("monitoring.py")
     assert app.info[0].value.startswith("No decided runs from the Analysis page yet")
     cards = {m.proto.label: m.proto for m in app.metric}

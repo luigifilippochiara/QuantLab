@@ -85,7 +85,7 @@ flowchart LR
 | `registry.py` | Capability specs, the `REGISTRY` whitelist, generated LLM summary and registry version |
 | `plan.py` | Pydantic `Plan` / `Step` (extra fields forbidden), plan version hash, the LLM tool schema |
 | `guardrails.py` | The guardrail table (action, enforcer, category), request check (R01), validator guardrails (V codes), P01 refusal block, edit lock, metadata dry run, `ValidationReport` |
-| `mock_scenarios.py` | Example workflows 1-5 with their canned plans (mock mode, CLI, app, tests) |
+| `mock_scenarios.py` | Example workflows 1-6 with their canned plans (mock mode, CLI, app, tests) |
 | `executor.py` | Registry dispatch, approval gate, runtime guardrails (E codes), step records |
 | `planner.py` | OpenAI and Anthropic planners, mock planner, plan cache |
 | `narrator.py` | Facts sheet, LLM narrator, template fallback, numeric grounding check (N01) |
@@ -267,7 +267,7 @@ rather than `temperature=0`.
 
 **Modes:** `live` (call the API), `cached` (reuse the cached plan for an
 identical request, datasets, model, prompt version and registry version), and
-`mock` (canned plans for the five example workflows; anything else is politely
+`mock` (canned plans for the six example workflows; anything else is politely
 declined). Mock mode is also the fallback whenever the network or the API is
 unavailable.
 

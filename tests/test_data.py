@@ -113,3 +113,14 @@ def test_committed_catalog_display_names() -> None:
     )  # as written by scripts/fetch_data.py
     # The UI labels datasets by FRED id, and plans refer to dataset ids: they agree.
     assert all(e.dataset_id == e.fred_id for e in catalog.entries.values())
+
+
+def test_only_the_exchange_rate_states_a_quote_convention() -> None:
+    catalog = load_catalog(PROJECT_ROOT / "data" / "catalog.json")
+    quotes = {d: e.quote_convention for d, e in catalog.entries.items() if e.quote_convention}
+    assert list(quotes) == ["DEXSZUS"]
+    # Francs per dollar, as the units say: a fall in the rate is a stronger franc.
+    assert catalog.entries["DEXSZUS"].units == "Swiss Francs to One U.S. Dollar"
+    assert quotes["DEXSZUS"].startswith(
+        "USD/CHF, in Swiss francs per US dollar: a negative return means the franc strengthened"
+    )

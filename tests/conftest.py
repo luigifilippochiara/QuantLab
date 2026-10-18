@@ -82,6 +82,11 @@ SYNTHETIC_SERIES = [
     ("DGS2", "rate_level", "Synthetic 2-Year yield", lambda: synthetic_rate(N_DAYS, 4, 3.5)),
     ("DEXSZUS", "price_level", "Synthetic CHF per USD", lambda: synthetic_price(N_DAYS, 5, 1.5)),
 ]
+# Quote conventions, as in data/catalog.json (the narrator states them).
+QUOTE_CONVENTIONS = {
+    "DEXSZUS": "USD/CHF, in Swiss francs per US dollar: a negative return means the franc "
+    "strengthened against the dollar, a positive one that it weakened.",
+}
 
 
 def build_synthetic_data_dir(data_dir: Path, missing_every: int = 50) -> Path:
@@ -119,8 +124,10 @@ def build_synthetic_data_dir(data_dir: Path, missing_every: int = 50) -> Path:
                 "n_missing": n_missing,
                 "start_date": f"{series.index[0]:%Y-%m-%d}",
                 "end_date": f"{series.index[-1]:%Y-%m-%d}",
+                **({"quote_convention": QUOTE_CONVENTIONS[series_id]}
+                   if series_id in QUOTE_CONVENTIONS else {}),
             }
-        )
+        )  # fmt: skip
     catalog_path = data_dir / "catalog.json"
     catalog_path.write_text(json.dumps({"datasets": entries}, indent=2), encoding="utf-8")
     return catalog_path
@@ -199,11 +206,15 @@ ARIMA_PLAN: dict[str, Any] = {
     "cannot_fulfill": False,
 }
 
-# The approvals scenario 1 needs: the return-method assumption of compute_returns
-# (s3) and of forward_return (s6).
+# The approvals the flagship (scenario 1) needs: the return-method assumption of
+# compute_returns (s5, NASDAQ log returns) and of forward_return (s8, USD/CHF simple).
+SCENARIO_1_APPROVALS = ["V10:s5:return_method", "V10:s8:return_method"]
+
+# The approvals scenario 6 (the NASDAQ-only analysis) needs: the return-method
+# assumption of compute_returns (s3) and of forward_return (s6).
 RETURN_METHOD_APPROVAL = "V10:s3:return_method"
 FORWARD_METHOD_APPROVAL = "V10:s6:return_method"
-SCENARIO_1_APPROVALS = [RETURN_METHOD_APPROVAL, FORWARD_METHOD_APPROVAL]
+SCENARIO_6_APPROVALS = [RETURN_METHOD_APPROVAL, FORWARD_METHOD_APPROVAL]
 
 
 def raw_plan(scenario_id: str) -> dict[str, Any]:

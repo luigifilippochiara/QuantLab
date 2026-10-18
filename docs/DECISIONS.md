@@ -1660,3 +1660,63 @@ Streamlit's widget id includes the button type, so a click on the white button t
 commits a typed value (and turns the button red in that run) would be lost, the
 two-click bug again. Alternative: treating 12 and 12.0 as equal, rejected because a
 planner's 12.0 for an int parameter (V03) would then show as nothing to apply.
+
+## New flagship: is the Swiss franc a safe haven?
+
+**Example 1 is now `chf_safe_haven_success`**: does the Swiss franc strengthen after
+high-volatility weeks in US tech equities? It loads NASDAQCOM and DEXSZUS, resamples
+both to weekly Friday closes by the same rule, flags NASDAQ volatility as the earlier
+flagship did (log returns, 12-week annualised volatility, above the expanding 90th
+percentile after 52 weeks) and compares the following week's simple USD/CHF return
+after flagged and normal weeks (`compare_groups`, then `hac_mean_difference`). It
+raises the two return-method approvals (V10 on s5 and s8) and nothing else. **No
+registry, capability, guardrail, validator or executor change was needed**: both
+comparison capabilities already take any series and any flags of the same
+frequency and align them on the dates they share (an inner join). On the committed
+snapshots the join keeps 2,841 weeks and no runtime warning fires (E03, E04 and E05
+stay quiet). **There is no `compute_returns` step on USD/CHF**, unlike the brief's
+sketch: `forward_return` computes the simple next-week return from the weekly levels
+itself, so a separate step would be unused and add a third V10 approval. The answer
+in this sample: no statistically significant difference (p-value 0.96); the franc
+strengthened on average after both kinds of week. The test looks at the following
+week, not the stress week itself.
+
+**The narrator states which way USD/CHF reads.** DEXSZUS is quoted in Swiss francs
+per US dollar (its catalog units), so a negative return means the franc
+strengthened, and nothing in a run said so. An optional `quote_convention` field in
+the catalog (DEXSZUS only; `scripts/fetch_data.py` writes it too) reaches the
+narrator through the engine. The template states it right after naming the datasets
+("DEXSZUS is quoted as USD/CHF, in Swiss francs per US dollar: ..."). The LLM narrator
+gets it as DATASET NOTES, with a rule that every direction it states must follow them
+(`narrator-v5`). The app shows it under every USD/CHF result. It has no digits, so
+the grounding check is unaffected, and it is not part of the planner prompt or the
+plan cache key. Alternative: state it only in the canned plan's rationales and
+notes, rejected because a live narrator could still get the direction wrong.
+
+**The earlier flagship is example 6, unchanged**, renamed `nasdaq_volatility_success`
+and labelled "NASDAQ after volatile weeks". Its keywords gain "weekly log returns"
+because the new request also names the NASDAQ and its volatility. With that, each
+example's request still matches only its own scenario, the NASDAQ variation in the
+golden set still gets this plan, and "Weekly log returns of the Swiss franc ..."
+still matches nothing. The flagship matches on a franc word plus the NASDAQ.
+**Example 3 now asks for an ARIMA forecast of the S&P 500**, refused as before (P01).
+
+**Records and versions.**
+- A sixth golden record, `safe_haven_flagship`, holds all six examples and the mock
+  eval set.
+- A `FLAGSHIP_MOVE` migration renames the earlier flagship's ids in the older records,
+  which still vouch for it as example 6. Example 3's recorded refusal is unchanged,
+  since a refusal records no request text and no dataset.
+- The eval set gains `s1_chf_safe_haven`, and the earlier case becomes
+  `s6_nasdaq_volatility`.
+- The canned plans' version is now `canned-scenarios-v11`. The live planner prompt is
+  unchanged, so cached live plans stay valid, and the new requests get their own cache
+  entries (the request is part of the key).
+- `cli demo` titles its audit trail "Audit trail (traceability)", no longer
+  "Scenario 6", now an example's number. It traces the flagship's test to both
+  snapshot files.
+
+**Live edits on the flagship.** Switching the first dataset to DGS10 is blocked by
+V07 on s5, and a quantile of 1.5 by V03 on s7. The app's quantile field does not
+accept values outside the registry's range (0.5 to 0.99), so in the app the V03
+block only appears for an edit made through the engine.

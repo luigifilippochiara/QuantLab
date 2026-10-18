@@ -11,10 +11,12 @@ from quantlab.guardrails import validate_plan
 from quantlab.narrator import (
     AI_WRITTEN_NOTE,
     NUMBERS_CHECKED_NOTE,
+    SYSTEM_PROMPT,
     Fact,
     GroundingResult,
     NarrativeResult,
     build_facts_sheet,
+    build_user_prompt,
     check_grounding,
     check_narrative_grounding,
     format_number,
@@ -25,11 +27,11 @@ from quantlab.narrator import (
 from quantlab.plan import Plan
 from quantlab.types import Artifact, ArtifactMeta, DataType, Frequency, TokenUsage
 
-from conftest import SPREAD_PLAN, as_plan, raw_plan
+from conftest import QUOTE_CONVENTIONS, SPREAD_PLAN, as_plan, raw_plan
 from fakes import FakeAnthropicClient, FakeOpenAIClient, openai_text_response, text_response
 
 PLANS = {
-    "scenario_1": raw_plan("volatility_flag_success"),
+    "scenario_6": raw_plan("nasdaq_volatility_success"),
     "lookahead": raw_plan("vix_full_sample_lookahead"),
     "spread": SPREAD_PLAN,
 }
@@ -68,7 +70,7 @@ def test_facts_sheet_covers_tables_flags_and_series(catalog: Catalog) -> None:
         assert fact_id in facts
     assert facts["s3.last_value"].value == result.artifacts["s3"].value.iloc[-1]
 
-    plan, result, _ = run_scenario("scenario_1", catalog)
+    plan, result, _ = run_scenario("scenario_6", catalog)
     facts = {f.fact_id: f for f in build_facts_sheet(plan, result.artifacts)}
     for fact_id in ["s4.last_value", "s5.n_flagged", "s5.share_flagged", "s5.n_episodes",
                     "s7.mean_flagged", "s7.diff_means", "s7.n_episodes_flagged"]:  # fmt: skip
@@ -239,7 +241,7 @@ def test_n01_also_guards_the_template_narrative() -> None:
 def test_llm_narrative_with_a_wrong_date_fails_grounding(
     settings: Settings, catalog: Catalog
 ) -> None:
-    plan, result, issues = run_scenario("scenario_1", catalog)
+    plan, result, issues = run_scenario("scenario_6", catalog)
     facts = {f.fact_id: f.display for f in build_facts_sheet(plan, result.artifacts)}
     value, latest = facts["s4.last_value"], facts["s4.end"]
     # A week inside the data that is no date of the facts sheet.
@@ -260,7 +262,7 @@ def test_llm_narrative_with_a_wrong_date_fails_grounding(
 def test_llm_narrative_with_a_wrong_p_value_fails_grounding(
     settings: Settings, catalog: Catalog
 ) -> None:
-    plan, result, issues = run_scenario("scenario_1", catalog)
+    plan, result, issues = run_scenario("scenario_6", catalog)
     facts = {f.fact_id: f for f in build_facts_sheet(plan, result.artifacts)}
     p_value = facts["s8.p_value"]
     wrong = f"{p_value.value + 0.11:.4f}"  # four decimals, like the displayed value
@@ -322,6 +324,20 @@ def test_llm_failure_falls_back_to_the_template(settings: Settings, catalog: Cat
     assert narrative.grounding.grounded
     # No answer, so no token count: unknown, never estimated.
     assert narrative.usage == TokenUsage(model="test-model", input_tokens=None, output_tokens=None)
+
+
+def test_the_llm_is_told_how_an_exchange_rate_is_quoted(catalog: Catalog) -> None:
+    plan, result, issues = run_scenario("spread", catalog)
+    facts = build_facts_sheet(plan, result.artifacts)
+    notes = {"DEXSZUS": QUOTE_CONVENTIONS["DEXSZUS"]}
+    prompt = build_user_prompt(plan.request, plan, facts, issues, notes)
+    assert (
+        "DATASET NOTES:\n- DEXSZUS is quoted as USD/CHF, in Swiss francs per US dollar: a "
+        "negative return means the franc strengthened" in prompt
+    )
+    assert "DATASET NOTES:\n- none" in build_user_prompt(plan.request, plan, facts, issues)
+    # The rule that makes the narrative follow it.
+    assert "every direction you state" in SYSTEM_PROMPT and "must follow them" in SYSTEM_PROMPT
 
 
 def test_openai_narrative_path(settings: Settings, catalog: Catalog) -> None:

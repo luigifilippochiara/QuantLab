@@ -77,6 +77,12 @@ SERIES_TO_FETCH: list[dict[str, str]] = [
         "description": "CHF per USD spot exchange rate, daily noon buying rate in New York.",
         "units": "Swiss Francs to One U.S. Dollar",
         "kind": "price_level",
+        # How the rate is quoted, so which way it moves when the franc strengthens; the
+        # narrator states it ("DEXSZUS is quoted as ...").
+        "quote_convention": (
+            "USD/CHF, in Swiss francs per US dollar: a negative return means the franc "
+            "strengthened against the dollar, a positive one that it weakened."
+        ),
     },
 ]
 
@@ -130,6 +136,8 @@ def fetch_series(item: dict[str, str], snapshots_dir: Path) -> dict[str, object]
         "start_date": series.index[0].strftime("%Y-%m-%d"),
         "end_date": series.index[-1].strftime("%Y-%m-%d"),
     }
+    if "quote_convention" in item:
+        entry["quote_convention"] = item["quote_convention"]
     print(f"  {n_rows_raw} rows, {n_missing} missing, {entry['start_date']} to {entry['end_date']}")
     return entry
 

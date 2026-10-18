@@ -1,8 +1,9 @@
-"""The five example workflows end to end (mock mode), plus workflow-specific checks.
+"""The six example workflows end to end (mock mode), plus workflow-specific checks.
 
-One task, a market-risk analyst flagging unusual market behaviour: the core
-analysis (1) and the protections QuantLab applies (2-5). The audit trail of
-example 1 (the trace) is tested in test_lineage.py and test_cli.py.
+One task, a market-risk analyst flagging unusual market behaviour: the flagship
+analysis (1), the protections QuantLab applies (2-5) and the NASDAQ-only analysis
+(6). The audit trail of example 1 (the trace) is tested in test_cli.py and
+test_app.py, the lineage of example 6 in test_lineage.py.
 """
 
 import os
@@ -19,13 +20,14 @@ from quantlab.mock_scenarios import (
     FLAGSHIP_REQUEST,
     SCENARIOS,
     SCENARIOS_BY_ID,
+    VOLATILITY_REQUEST,
     Scenario,
     match_scenario,
 )
 from quantlab.plan import Plan
 from quantlab.registry import REGISTRY
 
-from conftest import ARIMA_PLAN, SCENARIO_1_APPROVALS
+from conftest import ARIMA_PLAN, SCENARIO_1_APPROVALS, SCENARIO_6_APPROVALS
 from fakes import FakeAnthropicClient, tool_response
 
 
@@ -38,14 +40,15 @@ def start(scenario_id: str, settings: Settings) -> Session:
 
 
 def test_examples_are_numbered_in_list_order() -> None:
-    # The order of the sidebar buttons and of `cli demo`: the core analysis, then
-    # the blocks, and the look-ahead approval last.
+    # The order of the sidebar buttons and of `cli demo`: the flagship analysis, the
+    # three blocks, the look-ahead approval, then the NASDAQ-only analysis.
     assert [(s.number, s.id) for s in SCENARIOS] == [
-        (1, "volatility_flag_success"),
+        (1, "chf_safe_haven_success"),
         (2, "spread_frequency_mismatch_block"),
         (3, "arima_forecast_block"),
         (4, "prompt_injection_unknown_capability"),
         (5, "vix_full_sample_lookahead"),
+        (6, "nasdaq_volatility_success"),
     ]
     assert all(s.label.startswith(f"{s.number} · ") for s in SCENARIOS)
 
@@ -85,31 +88,35 @@ def test_every_request_matches_only_its_own_scenario(scenario: Scenario) -> None
 # (step id, capability, inputs, params): the plan the flagship request specifies.
 FLAGSHIP_PLAN = [
     ("s1", "load_series", {}, {"dataset_id": "NASDAQCOM"}),
-    ("s2", "resample", {"series": "s1"}, {"freq": "W", "how": "last"}),
-    ("s3", "compute_returns", {"series": "s2"}, {"method": "log", "periods": 1}),
-    ("s4", "rolling_volatility", {"series": "s3"}, {"window": 12, "annualize": True}),
-    ("s5", "flag_regime", {"series": "s4"},
+    ("s2", "load_series", {}, {"dataset_id": "DEXSZUS"}),
+    ("s3", "resample", {"series": "s1"}, {"freq": "W", "how": "last"}),
+    ("s4", "resample", {"series": "s2"}, {"freq": "W", "how": "last"}),
+    ("s5", "compute_returns", {"series": "s3"}, {"method": "log", "periods": 1}),
+    ("s6", "rolling_volatility", {"series": "s5"}, {"window": 12, "annualize": True}),
+    ("s7", "flag_regime", {"series": "s6"},
      {"method": "expanding", "quantile": 0.90, "min_periods": 52}),
-    ("s6", "forward_return", {"series": "s2"}, {"method": "simple"}),
-    ("s7", "compare_groups", {"values": "s6", "flags": "s5"}, {}),
-    ("s8", "hac_mean_difference", {"outcome": "s6", "flags": "s5"}, {}),
+    ("s8", "forward_return", {"series": "s4"}, {"method": "simple"}),
+    ("s9", "compare_groups", {"values": "s8", "flags": "s7"}, {}),
+    ("s10", "hac_mean_difference", {"outcome": "s8", "flags": "s7"}, {}),
 ]  # fmt: skip
 
 
 def test_flagship_plan_is_exactly_the_specified_plan() -> None:
-    plan = SCENARIOS_BY_ID["volatility_flag_success"].plan
+    plan = SCENARIOS_BY_ID["chf_safe_haven_success"].plan
     steps = [(s["id"], s["capability"], s["inputs"], s["params"]) for s in plan["steps"]]
     assert steps == FLAGSHIP_PLAN
-    assert plan["dataset_ids"] == ["NASDAQCOM"] and not plan["cannot_fulfill"]
-    # The assumptions the plan declares to the analyst.
+    assert plan["dataset_ids"] == ["NASDAQCOM", "DEXSZUS"] and not plan["cannot_fulfill"]
+    # The assumptions the plan declares to the analyst, including which way USD/CHF reads.
     notes = plan["planner_notes"]
     assert "log returns for the volatility" in notes and "square-root-of-time" in notes
-    assert "simple returns for the outcome" in notes and "half the variance" in notes
+    assert "simple returns for the USD/CHF outcome" in notes
     assert "past volatility only" in notes
+    assert "a negative return means the franc strengthened" in notes
 
 
 def test_flagship_request_relies_on_these_registry_defaults() -> None:
-    # The request does not state them, so a planner that omits them gets the canned plan.
+    # Neither request (examples 1 and 6) states them, so a planner that omits them
+    # gets the canned plan.
     defaults = {
         ("rolling_volatility", "annualize"): True,
         ("flag_regime", "method"): "expanding",
@@ -126,8 +133,104 @@ def test_flagship_request_relies_on_these_registry_defaults() -> None:
 
 
 def test_flagship_validates_with_exactly_two_v10_approvals(catalog: Catalog) -> None:
-    raw = SCENARIOS_BY_ID["volatility_flag_success"].plan
+    raw = SCENARIOS_BY_ID["chf_safe_haven_success"].plan
     plan = fill_defaults(Plan(plan_id="p", request=FLAGSHIP_REQUEST, **raw))
+    report = validate_plan(plan, catalog)
+    assert [(i.issue_id, i.action) for i in report.issues] == [
+        ("V10:s5:return_method", "APPROVE"),  # log returns for the NASDAQ volatility
+        ("V10:s8:return_method", "APPROVE"),  # simple returns for the USD/CHF outcome
+    ]  # nothing else: no WARN, no BLOCK (both series weekly, an expanding threshold)
+    assert "method='log'" in report.issues[0].message
+    assert "method='simple'" in report.issues[1].message
+
+
+def test_flagship_runs_end_to_end_and_replays_identically(settings: Settings) -> None:
+    session = run_request(FLAGSHIP_REQUEST, ["NASDAQCOM", "DEXSZUS"], "mock", approve=True,
+                          settings=settings)  # fmt: skip
+    assert session.status == "completed" and not session.execution.issues
+    assert [a.issue_id for a in session.approvals] == SCENARIO_1_APPROVALS
+    assert session.narrative.grounding.grounded
+    report = replay(session.run_id, settings)
+    assert report.all_match, report.message
+    original = [r.output_hash for r in session.execution.step_records]
+    assert [s.replay_hash for s in report.steps] == original and len(original) == 10
+
+
+def test_flagship_groups_usd_chf_returns_by_nasdaq_flags(settings: Settings) -> None:
+    session = start("chf_safe_haven_success", settings)
+    session.approve(SCENARIO_1_APPROVALS)
+    artifacts = session.execute().artifacts
+    # The flags come from the NASDAQ, the outcome from USD/CHF: both weekly.
+    assert artifacts["s7"].meta.source_dataset_ids == ["NASDAQCOM"]
+    assert artifacts["s8"].meta.source_dataset_ids == ["DEXSZUS"]
+    assert artifacts["s7"].meta.frequency == artifacts["s8"].meta.frequency == "W"
+    test = artifacts["s10"].value
+    assert test["horizon"] == 1 and test["n_flagged"] == int(artifacts["s7"].value.sum())
+    assert artifacts["s10"].meta.source_dataset_ids == ["DEXSZUS", "NASDAQCOM"]
+    # The narrative states which way USD/CHF reads, and quotes only computed numbers.
+    narrative = session.narrate()
+    assert (
+        "DEXSZUS is quoted as USD/CHF, in Swiss francs per US dollar: a negative return "
+        "means the franc strengthened against the dollar" in narrative.text
+    )
+    assert narrative.grounding.grounded and narrative.issues == []
+
+
+def test_flagship_demo_edit_dataset_to_a_yield_blocks_returns_on_rates(
+    settings: Settings,
+) -> None:
+    session = start("chf_safe_haven_success", settings)
+    report = session.apply_param_edits({"s1": {"dataset_id": "DGS10"}})
+    # A legal edit (a parameter value), which the re-validation blocks: "returns" of a
+    # yield are meaningless. The USD/CHF branch is untouched.
+    assert session.plan.steps[0].params["dataset_id"] == "DGS10"
+    assert [i.issue_id for i in report.blocks] == ["V07:s5"]
+    assert report.blocks[0].name == "RETURNS_ON_RATES"
+    with pytest.raises(ExecutionRefusedError):
+        session.execute()
+
+
+def test_flagship_demo_edit_quantile_out_of_range_is_blocked(settings: Settings) -> None:
+    session = start("chf_safe_haven_success", settings)
+    report = session.apply_param_edits({"s7": {"quantile": 1.5}})
+    (v03,) = report.blocks
+    assert (v03.code, v03.name, v03.step_id) == ("V03", "INVALID_PARAM", "s7")
+    assert "'quantile'=1.5 is outside [0.5, 0.99]" in v03.message
+    with pytest.raises(ExecutionRefusedError):
+        session.execute()
+
+
+# --- example 6, the NASDAQ-only analysis: also fully specified -------------------
+
+# (step id, capability, inputs, params): the plan example 6's request specifies.
+VOLATILITY_PLAN = [
+    ("s1", "load_series", {}, {"dataset_id": "NASDAQCOM"}),
+    ("s2", "resample", {"series": "s1"}, {"freq": "W", "how": "last"}),
+    ("s3", "compute_returns", {"series": "s2"}, {"method": "log", "periods": 1}),
+    ("s4", "rolling_volatility", {"series": "s3"}, {"window": 12, "annualize": True}),
+    ("s5", "flag_regime", {"series": "s4"},
+     {"method": "expanding", "quantile": 0.90, "min_periods": 52}),
+    ("s6", "forward_return", {"series": "s2"}, {"method": "simple"}),
+    ("s7", "compare_groups", {"values": "s6", "flags": "s5"}, {}),
+    ("s8", "hac_mean_difference", {"outcome": "s6", "flags": "s5"}, {}),
+]  # fmt: skip
+
+
+def test_scenario_6_plan_is_exactly_the_specified_plan() -> None:
+    plan = SCENARIOS_BY_ID["nasdaq_volatility_success"].plan
+    steps = [(s["id"], s["capability"], s["inputs"], s["params"]) for s in plan["steps"]]
+    assert steps == VOLATILITY_PLAN
+    assert plan["dataset_ids"] == ["NASDAQCOM"] and not plan["cannot_fulfill"]
+    # The assumptions the plan declares to the analyst.
+    notes = plan["planner_notes"]
+    assert "log returns for the volatility" in notes and "square-root-of-time" in notes
+    assert "simple returns for the outcome" in notes and "half the variance" in notes
+    assert "past volatility only" in notes
+
+
+def test_scenario_6_validates_with_exactly_two_v10_approvals(catalog: Catalog) -> None:
+    raw = SCENARIOS_BY_ID["nasdaq_volatility_success"].plan
+    plan = fill_defaults(Plan(plan_id="p", request=VOLATILITY_REQUEST, **raw))
     report = validate_plan(plan, catalog)
     assert [(i.issue_id, i.action) for i in report.issues] == [
         ("V10:s3:return_method", "APPROVE"),  # log returns for the volatility
@@ -137,11 +240,11 @@ def test_flagship_validates_with_exactly_two_v10_approvals(catalog: Catalog) -> 
     assert "method='simple'" in report.issues[1].message
 
 
-def test_flagship_runs_end_to_end_and_replays_identically(settings: Settings) -> None:
-    session = run_request(FLAGSHIP_REQUEST, ["NASDAQCOM"], "mock", approve=True,
+def test_scenario_6_runs_end_to_end_and_replays_identically(settings: Settings) -> None:
+    session = run_request(VOLATILITY_REQUEST, ["NASDAQCOM"], "mock", approve=True,
                           settings=settings)  # fmt: skip
     assert session.status == "completed" and not session.execution.issues
-    assert [a.issue_id for a in session.approvals] == SCENARIO_1_APPROVALS
+    assert [a.issue_id for a in session.approvals] == SCENARIO_6_APPROVALS
     assert session.narrative.grounding.grounded
     report = replay(session.run_id, settings)
     assert report.all_match, report.message
@@ -149,11 +252,11 @@ def test_flagship_runs_end_to_end_and_replays_identically(settings: Settings) ->
     assert [s.replay_hash for s in report.steps] == original and len(original) == 8
 
 
-def test_scenario_1_needs_the_return_method_approvals_then_tests(settings: Settings) -> None:
-    session = start("volatility_flag_success", settings)
+def test_scenario_6_needs_the_return_method_approvals_then_tests(settings: Settings) -> None:
+    session = start("nasdaq_volatility_success", settings)
     assert not session.report.is_blocked and session.report.warnings == []
-    assert [i.issue_id for i in session.report.approvals_required] == SCENARIO_1_APPROVALS
-    session.approve(SCENARIO_1_APPROVALS)
+    assert [i.issue_id for i in session.report.approvals_required] == SCENARIO_6_APPROVALS
+    session.approve(SCENARIO_6_APPROVALS)
     session.execute()
     flags = session.execution.artifacts["s5"]
     assert flags.meta.frequency == "W" and flags.value.any()  # flagged weeks to shade
@@ -166,22 +269,22 @@ def test_scenario_1_needs_the_return_method_approvals_then_tests(settings: Setti
     assert narrative.grounding.grounded
 
 
-def test_scenario_1_demo_edit_full_sample_raises_v09_for_the_test(settings: Settings) -> None:
-    session = start("volatility_flag_success", settings)
+def test_scenario_6_demo_edit_full_sample_raises_v09_for_the_test(settings: Settings) -> None:
+    session = start("nasdaq_volatility_success", settings)
     report = session.apply_param_edits({"s5": {"method": "full_sample"}})
     v09 = next(i for i in report.approvals_required if i.code == "V09")
     assert "invalidates the significance test in s8" in v09.message
-    session.approve(SCENARIO_1_APPROVALS)
+    session.approve(SCENARIO_6_APPROVALS)
     with pytest.raises(ExecutionRefusedError, match="V09:s5"):
         session.execute()
     session.approve(["V09:s5"])
     assert session.execute().status == "completed"
 
 
-def test_scenario_1_demo_edit_dataset_to_a_yield_blocks_returns_on_rates(
+def test_scenario_6_demo_edit_dataset_to_a_yield_blocks_returns_on_rates(
     settings: Settings,
 ) -> None:
-    session = start("volatility_flag_success", settings)
+    session = start("nasdaq_volatility_success", settings)
     report = session.apply_param_edits({"s1": {"dataset_id": "DGS10"}})
     # A legal edit: a parameter value, applied to the plan...
     assert not any(i.message.startswith("Edit rejected") for i in report.issues)
@@ -196,7 +299,7 @@ def test_scenario_1_demo_edit_dataset_to_a_yield_blocks_returns_on_rates(
         session.execute()
 
 
-def test_scenario_2_full_sample_threshold_needs_approval_then_runs(settings: Settings) -> None:
+def test_scenario_5_full_sample_threshold_needs_approval_then_runs(settings: Settings) -> None:
     session = start("vix_full_sample_lookahead", settings)
     (v09,) = session.report.issues  # the look-ahead approval, and nothing else
     assert (v09.issue_id, v09.action) == ("V09:s2", "APPROVE")
@@ -216,7 +319,7 @@ def test_scenario_3_refusal_lists_what_the_registry_can_do(settings: Settings) -
     session = start("arima_forecast_block", settings)
     reason = session.plan.refusal_reason
     assert reason.startswith("No registered capability fits a model or makes a forecast")
-    assert "ARIMA forecast of the USD/CHF exchange rate" in reason
+    assert "ARIMA forecast of the S&P 500" in reason
     assert all(name in reason for name in REGISTRY)  # the list comes from the registry
     assert session.status == "blocked" and session.execution is None
 
@@ -264,7 +367,7 @@ def test_scenario_4_injected_plan_is_blocked_and_never_runs(
     assert not any("ls" in args or "os.system" in " ".join(args) for args in processes)
 
 
-def test_scenario_5_frequency_mismatch_blocks_before_anything_runs(settings: Settings) -> None:
+def test_scenario_2_frequency_mismatch_blocks_before_anything_runs(settings: Settings) -> None:
     session = start("spread_frequency_mismatch_block", settings)
     (v08,) = session.report.issues  # the frequency mismatch, and nothing else
     assert (v08.issue_id, v08.action) == ("V08:s4", "BLOCK")

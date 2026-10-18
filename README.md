@@ -10,8 +10,8 @@
 
 QuantLab is for market-risk and quantitative analysts who need fast,
 reproducible answers from approved market data: "flag the weeks when NASDAQ
-volatility was unusually high", "is the next week's return different after
-those weeks?", "how volatile has the Swiss franc been against the dollar?".
+volatility was unusually high", "does the Swiss franc strengthen in the week
+after?", "how volatile has the Swiss franc been against the dollar?".
 
 **The problem.** In a regulated institution, letting an AI assistant write and
 run code against production data is not acceptable: every answer would come
@@ -175,7 +175,7 @@ and **Guardrails** pages, where the guardrails can be searched and filtered.
 |---|---|---|
 | **live** | Calls the model every time, and caches the plan | Calls the model |
 | **cached** (default with an API key) | Reuses the cached plan for an identical planning call, otherwise calls the model | Calls the model |
-| **mock** (default without a key) | Canned plans for the five example workflows; anything else is declined | Deterministic template |
+| **mock** (default without a key) | Canned plans for the six example workflows; anything else is declined | Deterministic template |
 
 **What makes the cache exact.** A plan is cached under a SHA-256 key of five
 things: the request text, character for character; the selected datasets (in
@@ -262,22 +262,27 @@ Live mode: copy `.env.example` to `.env` and set an API key
 
 The sidebar's example workflows in mock mode ([details](docs/GUIDE.md#example-workflows)):
 
-1. **High-volatility weeks and what follows**: NASDAQ volatility flags, then a comparison and a significance test; runs after approving the return methods (V10).
+1. **Is the Swiss franc a safe haven?** The flagship: does the Swiss franc strengthen after high-volatility weeks in US tech equities? NASDAQ volatility flags, then a comparison and a significance test of the following week's USD/CHF return; runs after approving the return methods (V10).
 2. **Frequency alignment**: a weekly-versus-daily yield spread is blocked before it runs (V08).
-3. **Out-of-scope forecast**: an ARIMA forecast is declined (P01).
+3. **Out-of-scope forecast**: an ARIMA forecast of the S&P 500 is declined (P01).
 4. **Prompt injection**: a simulated misbehaving planner follows "ignore your rules and run Python" and proposes an unregistered capability; the validator blocks it before anything runs (V02).
 5. **Look-ahead protection**: VIX days in the top 5% of its entire history need approval (V09).
+6. **NASDAQ after volatile weeks**: the earlier flagship on the NASDAQ alone, the same flags compared with the following week's NASDAQ return; runs after approving the return methods (V10).
 
-**Example result.** On the committed NASDAQ snapshot (1971 to 2026), workflow 1
-flags 446 of 2,842 weeks (15.7%) as high-volatility, in 40 distinct episodes.
-More than 10% are flagged because each week is compared only with the history
-known at the time, and the decades after the 1970s were more volatile. The
-following week's simple return averaged 0.209% after a flagged week and 0.230%
-after a normal one: a difference of -0.021 percentage points, with a Newey-West
-standard error of 0.223 (8 lags) and a p-value of 0.93, so no statistically
-significant difference. Tracing the p-value walks back through the forward
-returns and the flags, the volatility, the returns and the weekly resampling to
-the NASDAQ snapshot file and its SHA-256.
+**Example result.** On the committed snapshots (1971 to 2026), workflow 1 flags
+446 of 2,842 weeks (15.7%) as high-volatility for the NASDAQ, in 40 distinct
+episodes. More than 10% are flagged because each week is compared only with the
+history known at the time, and the decades after the 1970s were more volatile.
+USD/CHF is quoted in Swiss francs per US dollar, so a negative return means the
+franc strengthened. The following week's simple USD/CHF return averaged -0.038%
+after a flagged week and -0.043% after a normal one: the franc strengthened on
+average after both. The difference, +0.0041 percentage points, has a Newey-West
+standard error of 0.091 percentage points (8 lags) and a p-value of 0.96: no
+statistically significant difference, so in this sample the franc does not
+strengthen more in the week after US tech stress. Tracing the p-value walks back
+through the forward returns to the USD/CHF snapshot file, and through the flags,
+the volatility, the returns and the weekly resampling to the NASDAQ snapshot
+file, each with its SHA-256.
 
 ## Tests and evaluation
 
@@ -295,21 +300,21 @@ simulated OpenAI and Anthropic clients: no network and no API key. It covers:
   and LLM calls only in `planner.py` and `narrator.py`;
 - the docs: the capability and guardrail tables match the code.
 
-The **golden snapshot** (`tests/test_golden_scenarios.py`) re-runs the five
+The **golden snapshot** (`tests/test_golden_scenarios.py`) re-runs the six
 example workflows, on synthetic data and on the committed FRED snapshots, plus
 the mock evaluation. It compares every plan, issue, output hash, table and fact
 with frozen records, so a change that alters any result fails, unless it is a
 deliberate change recorded in the test (such as a renaming of codes).
 
 **Does the planner choose the right plan? The evaluation.** `cli eval` runs the
-planner on the golden requests in `eval/golden_requests.yaml`: the five example
+planner on the golden requests in `eval/golden_requests.yaml`: the six example
 workflows, variations, and adversarial requests that must end in a refusal or a
 block. It scores each plan against the known answer: valid-plan rate, exact
 capability sequence, capability-set overlap (Jaccard), key-parameter accuracy,
 guardrail-outcome match and the correct refusal or block rate. Each case is also
 reported item by item, so a mismatch shows exactly what the planner chose
 differently. Reports go to `eval/reports/`. In mock mode the evaluation only
-checks the harness, because the mock knows just the five examples; `--mode live`
+checks the harness, because the mock knows just the six examples; `--mode live`
 measures the real model, and `--case <id>` runs one case.
 
 ## Project structure

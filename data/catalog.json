@@ -107,7 +107,8 @@
       "n_rows": 14550,
       "n_missing": 564,
       "start_date": "1971-01-04",
-      "end_date": "2026-10-09"
+      "end_date": "2026-10-09",
+      "quote_convention": "USD/CHF, in Swiss francs per US dollar: a negative return means the franc strengthened against the dollar, a positive one that it weakened."
     }
   ]
 }
