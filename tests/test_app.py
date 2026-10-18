@@ -100,9 +100,10 @@ def test_scenario_1_full_flow(app_env: Settings) -> None:
         ["s5", "C07", "flag_regime"],
     ]
     subheaders = [h.value for h in app.subheader]
-    # The trace panel sits directly under the results.
-    assert subheaders[subheaders.index("Results") + 1] == "Trace a result"
-    assert subheaders[-1] == "Run record"
+    # The narrative (with its note) comes right after the results, then the trace.
+    assert subheaders[-4:] == ["Results", "Narrative", "Trace a result", "Run record"]
+    trace_intro = next(i for i, c in enumerate(captions) if c.startswith("Pick a step to see"))
+    assert captions.index(NUMBERS_CHECKED_NOTE) < trace_intro
     assert len(app.get("plotly_chart")) >= 5  # daily, weekly, returns, volatility, forward
 
     button(app, "Replay this run").click().run()

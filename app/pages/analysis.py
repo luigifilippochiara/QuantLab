@@ -311,25 +311,6 @@ for step in plan.steps:
         if artifact is not None:
             ui.render_artifact(step.id, step.capability, artifact, shading.get(step.id), catalog)
 
-# ---------------------------------------------------------------- trace
-
-executed = [step.id for step in plan.steps if step.id in artifacts]
-if executed:
-    st.subheader("Trace a result")
-    st.caption(
-        "Pick a step to see every step it depends on, down to the source file: "
-        "capability, library call, parameters and output hash."
-    )
-    chosen_step = st.selectbox(
-        "Step to trace",
-        executed,
-        index=len(executed) - 1,  # the final result by default (e.g. the test)
-        format_func=lambda s: (
-            f"{s} · {ui.capability_label(records[s].capability, records[s].capability_code)}"
-        ),
-    )
-    ui.render_trace(session.trace(chosen_step), catalog)
-
 # ---------------------------------------------------------------- narrative
 
 narrative = session.narrative
@@ -368,6 +349,25 @@ if narrative is not None:
             hide_index=True,
             alt="Facts sheet",
         )
+
+# ---------------------------------------------------------------- trace
+
+executed = [step.id for step in plan.steps if step.id in artifacts]
+if executed:
+    st.subheader("Trace a result")
+    st.caption(
+        "Pick a step to see every step it depends on, down to the source file: "
+        "capability, library call, parameters and output hash."
+    )
+    chosen_step = st.selectbox(
+        "Step to trace",
+        executed,
+        index=len(executed) - 1,  # the final result by default (e.g. the test)
+        format_func=lambda s: (
+            f"{s} · {ui.capability_label(records[s].capability, records[s].capability_code)}"
+        ),
+    )
+    ui.render_trace(session.trace(chosen_step), catalog)
 
 # ---------------------------------------------------------------- run record
 
