@@ -12,11 +12,11 @@ BLOCK exists or any APPROVE issue has not been approved, so calling it
 directly (from a notebook, a test or replay) cannot skip the checks.
 
 While running it applies the runtime guardrails that need data (action in brackets):
-    R01 DATASET_HASH_MISMATCH (BLOCK)   before load_series
-    R02 INSUFFICIENT_DATA     (BLOCK)   before any step with inputs
-    R03 MISSING_DATA          (WARN)    after load_series
-    R04 ALIGNMENT_LOSS        (WARN)    before two-input steps
-    R05 LOW_EFFECTIVE_SAMPLE  (WARN)    before compare_groups / hac_mean_difference
+    E01 DATASET_HASH_MISMATCH (BLOCK)   before load_series
+    E02 INSUFFICIENT_DATA     (BLOCK)   before any step with inputs
+    E03 MISSING_DATA          (WARN)    after load_series
+    E04 ALIGNMENT_LOSS        (WARN)    before two-input steps
+    E05 LOW_EFFECTIVE_SAMPLE  (WARN)    before compare_groups / hac_mean_difference
 A BLOCK stops the run cleanly; the step records and issues so far are kept.
 Their descriptions (guardrails.GUARDRAILS) quote the thresholds below; a test
 checks they agree.
@@ -46,9 +46,9 @@ from quantlab.registry import REGISTRY, CapabilitySpec
 from quantlab.types import Artifact, artifact_hash
 
 # Runtime guardrail thresholds.
-MISSING_DATA_THRESHOLD = 0.05  # R03: warn if more than 5% of a raw series is missing
-ALIGNMENT_LOSS_THRESHOLD = 0.10  # R04: warn if a join drops more than 10% of an input
-MIN_FLAGGED_EPISODES = 5  # R05: warn if the flagged group has fewer distinct episodes
+MISSING_DATA_THRESHOLD = 0.05  # E03: warn if more than 5% of a raw series is missing
+ALIGNMENT_LOSS_THRESHOLD = 0.10  # E04: warn if a join drops more than 10% of an input
+MIN_FLAGGED_EPISODES = 5  # E05: warn if the flagged group has fewer distinct episodes
 
 
 class CapabilityRefusedError(Exception):
@@ -108,7 +108,7 @@ class ExecutionResult:
             stopped it) or "failed" (a capability raised an error).
         artifacts: step id -> output Artifact, for every step that completed.
         step_records: one StepRecord per step that was attempted.
-        issues: runtime issues (R codes), or the static blocks that prevented starting.
+        issues: runtime issues (E codes), or the static blocks that prevented starting.
         error: human-readable reason when status is not "completed".
         duration_ms: total wall-clock time.
     """
@@ -157,7 +157,7 @@ def dispatch(step: Step, inputs: dict[str, Artifact], catalog: Catalog) -> Artif
 
 
 def check_dataset_hash(step: Step, catalog: Catalog) -> list[Issue]:
-    """R01 DATASET_HASH_MISMATCH: the snapshot file must match the catalog's hash.
+    """E01 DATASET_HASH_MISMATCH: the snapshot file must match the catalog's hash.
 
     Without it, a modified or replaced data file would silently produce results
     from data other than the recorded version, breaking reproducibility and audit.
@@ -169,7 +169,7 @@ def check_dataset_hash(step: Step, catalog: Catalog) -> list[Issue]:
     expected = catalog.entries[dataset_id].sha256
     return [
         make_issue(
-            "R01",
+            "E01",
             step.id,
             f"{dataset_id}: snapshot hash {actual[:12]}... differs from the catalog's "
             f"{expected[:12]}...; the file was changed.",
@@ -190,7 +190,7 @@ def _observations(spec: CapabilitySpec, inputs: dict[str, Artifact]) -> int:
 def check_insufficient_data(
     step: Step, spec: CapabilitySpec, params: dict[str, Any], inputs: dict[str, Artifact]
 ) -> list[Issue]:
-    """R02 INSUFFICIENT_DATA: enough observations for the capability's min_obs rule.
+    """E02 INSUFFICIENT_DATA: enough observations for the capability's min_obs rule.
 
     Without it, statistics computed on a handful of points (a 52-week volatility
     from 60 weeks, an average of 3 returns) would be shown as findings when they
@@ -208,7 +208,7 @@ def check_insufficient_data(
         return []
     return [
         make_issue(
-            "R02",
+            "E02",
             step.id,
             f"{spec.name} has {n_obs} usable observations; it needs {required} "
             f"({rule.description}).",
@@ -218,7 +218,7 @@ def check_insufficient_data(
 
 
 def check_missing_data(step: Step, output: Artifact) -> list[Issue]:
-    """R03 MISSING_DATA: warn when more than 5% of a raw series was missing.
+    """E03 MISSING_DATA: warn when more than 5% of a raw series was missing.
 
     Without it, a gappy series (e.g. a discontinued or illiquid series) could
     distort resampled values and returns, and nobody would know the data was thin.
@@ -229,7 +229,7 @@ def check_missing_data(step: Step, output: Artifact) -> list[Issue]:
         return []
     return [
         make_issue(
-            "R03",
+            "E03",
             step.id,
             f"{dropped} of {total} raw values ({dropped / total:.1%}) were missing and "
             "have been dropped.",
@@ -241,7 +241,7 @@ def check_missing_data(step: Step, output: Artifact) -> list[Issue]:
 def check_alignment_loss(
     step: Step, spec: CapabilitySpec, inputs: dict[str, Artifact]
 ) -> list[Issue]:
-    """R04 ALIGNMENT_LOSS: warn when aligning two inputs drops more than 10% of either.
+    """E04 ALIGNMENT_LOSS: warn when aligning two inputs drops more than 10% of either.
 
     Without it, an inner join of series with different histories (e.g. a yield
     starting in 1962 and one starting in 1976) silently discards a big part of
@@ -257,7 +257,7 @@ def check_alignment_loss(
         if lost > ALIGNMENT_LOSS_THRESHOLD:
             issues.append(
                 make_issue(
-                    "R04",
+                    "E04",
                     step.id,
                     f"Aligning the inputs kept {n_joined} of {len(series)} rows of "
                     f"'{name}' ({lost:.0%} dropped).",
@@ -272,7 +272,7 @@ def check_alignment_loss(
 def check_low_effective_sample(
     step: Step, spec: CapabilitySpec, inputs: dict[str, Artifact]
 ) -> list[Issue]:
-    """R05 LOW_EFFECTIVE_SAMPLE: warn when the flagged group has fewer than 5 distinct episodes.
+    """E05 LOW_EFFECTIVE_SAMPLE: warn when the flagged group has fewer than 5 distinct episodes.
 
     Episodes, not flagged periods, are counted: an episode is a run of consecutive
     flags. Without it, 60 flagged weeks that are really 3 long episodes would look
@@ -293,7 +293,7 @@ def check_low_effective_sample(
     n_flagged = int(is_flagged.sum())
     return [
         make_issue(
-            "R05",
+            "E05",
             step.id,
             f"{n_flagged} flagged {period}s, but only {episodes} distinct episode(s): flagged "
             f"{period}s within one episode are not independent, so the comparison rests on "

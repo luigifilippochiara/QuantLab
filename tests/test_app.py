@@ -67,7 +67,7 @@ def test_scenario_1_full_flow(app_env: Settings) -> None:
     button(app, "Generate plan").click().run()
     assert not app.exception, app.exception
 
-    assert button(app, "Execute").disabled  # the G10 approvals are not ticked yet
+    assert button(app, "Execute").disabled  # the V10 approvals are not ticked yet
     approve_all(app)
     button(app, "Execute").click().run()
     assert not app.exception, app.exception
@@ -265,15 +265,13 @@ def test_guardrails_page_intro_and_table_come_from_the_code(app_env: Settings) -
     intro = app.caption[0].value
     for action in Action:
         assert f"**{action.value}**" in intro  # what each action means
-    for enforcer in ENFORCERS.values():  # who enforces them, e.g. "the validator (...)"
-        assert f"the {enforcer.split(' (')[0].lower()} (" in intro
     table = app.table[0].value
     assert list(table.index) == list(GUARDRAILS)
     assert list(table.columns) == ["Name", "Action", "Enforced by", "Category", "Description"]
-    g09 = table.loc["G09"]
-    assert (g09["Action"], g09["Enforced by"], g09["Category"]) == (
+    v09 = table.loc["V09"]
+    assert (v09["Action"], v09["Enforced by"], v09["Category"]) == (
         "APPROVE", "Validator (deterministic)", "Methodology")  # fmt: skip
-    assert table.loc["G02", "Description"] == GUARDRAILS["G02"].description
+    assert table.loc["V02", "Description"] == GUARDRAILS["V02"].description
     assert showing(app) == f"Showing {len(GUARDRAILS)} of {len(GUARDRAILS)} guardrails"
     assert button(app, "Clear filters").disabled  # nothing to clear yet
 
@@ -284,16 +282,19 @@ def test_guardrail_filter_options_come_from_the_table(app_env: Settings) -> None
     options = {m.key: m.options for m in app.multiselect}
     assert options["guardrail_action"] == list(dict.fromkeys(g.action.value for g in guardrails))
     assert options["guardrail_enforcer"] == list(dict.fromkeys(g.enforced_by for g in guardrails))
+    assert options["guardrail_enforcer"] == list(ENFORCERS.values())  # every stage, in order
     assert set(options["guardrail_category"]) == {g.category.value for g in guardrails}
 
 
 @pytest.mark.parametrize(
     ("search", "expected"),
     [
-        ("G0", [f"G0{i}" for i in range(1, 10)]),  # partial code
-        ("look", ["G09"]),  # partial name, any case
-        ("l01", ["L01"]),  # code, any case
-        ("  data ", ["G06", "G11", "R01", "R02", "R03"]),  # names with "DATA", spaces ignored
+        ("V0", [f"V0{i}" for i in range(1, 10)]),  # partial code
+        ("R0", ["R01"]),  # the request check only: no executor check is labelled R
+        ("request", ["R01"]),  # by name
+        ("look", ["V09"]),  # partial name, any case
+        ("p01", ["P01"]),  # code, any case
+        ("  data ", ["V06", "V11", "E01", "E02", "E03"]),  # names with "DATA", spaces ignored
         ("zzz", []),
     ],
 )
@@ -311,17 +312,17 @@ def test_guardrail_search_matches_code_or_name(
 def test_guardrail_filters_combine_and_clear(app_env: Settings) -> None:
     app = open_page("guardrails.py")
     app.multiselect(key="guardrail_action").select("APPROVE").run()
-    assert guardrail_codes(app) == ["G09", "G10"]
+    assert guardrail_codes(app) == ["V09", "V10"]
     app.multiselect(key="guardrail_action").unselect("APPROVE").run()
     app.multiselect(key="guardrail_enforcer").select("Executor (runtime)").run()
-    assert guardrail_codes(app) == ["R01", "R02", "R03", "R04", "R05"]
+    assert guardrail_codes(app) == ["E01", "E02", "E03", "E04", "E05"]
     app.multiselect(key="guardrail_category").select("Methodology").run()  # AND
-    assert guardrail_codes(app) == ["R05"]
+    assert guardrail_codes(app) == ["E05"]
     app.multiselect(key="guardrail_enforcer").select("Planner (LLM)").run()  # OR within one
     app.multiselect(key="guardrail_category").select("Approved scope").run()
-    assert guardrail_codes(app) == ["L01", "R05"]
-    app.text_input(key="guardrail_search").input("r0").run()
-    assert guardrail_codes(app) == ["R05"]
+    assert guardrail_codes(app) == ["P01", "E05"]
+    app.text_input(key="guardrail_search").input("e0").run()
+    assert guardrail_codes(app) == ["E05"]
     assert showing(app) == f"Showing 1 of {len(GUARDRAILS)} guardrails"
 
     button(app, "Clear filters").click().run()
@@ -378,7 +379,7 @@ def test_weekly_to_daily_edit_re_validates_and_runs_after_re_approval(app_env: S
     assert any(c.value == "Apply or reset your parameter changes to continue." for c in app.caption)
 
     button(app, "Apply changes").click().run()
-    assert issue_codes(app) == {"G10"}  # the return-method approvals again, nothing else
+    assert issue_codes(app) == {"V10"}  # the return-method approvals again, nothing else
     assert any("Approvals were reset" in i.value for i in app.info)
     assert any("edited (was W)" in c.value for c in app.caption)
 
@@ -391,13 +392,13 @@ def test_weekly_to_daily_edit_re_validates_and_runs_after_re_approval(app_env: S
     assert "(edited" not in params["s4"]  # planner-proposed values are not marked
 
 
-def test_full_sample_edit_raises_g09_and_reset_clears_it(app_env: Settings) -> None:
+def test_full_sample_edit_raises_v09_and_reset_clears_it(app_env: Settings) -> None:
     app = plan_scenario_1(app_env)
     next(s for s in app.selectbox if s.key.endswith("-s5-method")).select("full_sample").run()
     button(app, "Apply changes").click().run()
-    assert issue_codes(app) == {"G09", "G10"}
+    assert issue_codes(app) == {"V09", "V10"}
     button(app, "Reset to planner").click().run()
-    assert issue_codes(app) == {"G10"}
+    assert issue_codes(app) == {"V10"}
 
 
 def step_headers(app: AppTest) -> list[tuple[str, bool]]:
@@ -408,16 +409,16 @@ def step_headers(app: AppTest) -> list[tuple[str, bool]]:
 def test_plan_steps_are_collapsed_and_approvals_stay_in_validation(app_env: Settings) -> None:
     app = plan_scenario_1(app_env)
     headers = step_headers(app)
-    assert [is_open for _, is_open in headers] == [False] * 8  # the G10 steps too
+    assert [is_open for _, is_open in headers] == [False] * 8  # the V10 steps too
     assert headers[0][0] == "Step 1 · C01 · Load series · NASDAQCOM — Synthetic equity index"
     assert headers[2][0] == "Step 3 · C03 · Compute returns · method: log, periods: 1"  # no badge
     assert headers[3][0] == "Step 4 · C06 · Rolling volatility · window: 12 weeks, annualize: yes"
     assert headers[5][0] == "Step 6 · C08 · Forward return · method: simple"
     assert headers[7][0] == "Step 8 · C10 · HAC mean difference"  # no parameters: no summary
-    # The G10 approvals are still required, in the Validation section, naming their steps.
-    g10 = [m.value for m in app.markdown if "**G10 MATERIAL_ASSUMPTION**" in m.value]
-    assert g10[0].endswith("· Step 3 · C03 · Compute returns (s3)")
-    assert g10[1].endswith("· Step 6 · C08 · Forward return (s6)")
+    # The V10 approvals are still required, in the Validation section, naming their steps.
+    v10 = [m.value for m in app.markdown if "**V10 MATERIAL_ASSUMPTION**" in m.value]
+    assert v10[0].endswith("· Step 3 · C03 · Compute returns (s3)")
+    assert v10[1].endswith("· Step 6 · C08 · Forward return (s6)")
     assert len([c for c in app.checkbox if c.key.startswith("approve-")]) == 2
     assert button(app, "Execute").disabled
     # Collapsing is visual only: the editor still runs.
@@ -437,7 +438,7 @@ def test_edits_are_marked_and_window_units_follow_the_frequency(app_env: Setting
         False,
     )
     assert not any("Warning]" in label for label, _ in headers)
-    # The new G10 approvals of this plan version open nothing and add no badge.
+    # The new V10 approvals of this plan version open nothing and add no badge.
     assert headers[2] == ("Step 3 · C03 · Compute returns · method: log, periods: 1", False)
 
 

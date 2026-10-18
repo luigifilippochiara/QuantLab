@@ -7,7 +7,7 @@
 #                 are taken from mock_scenarios.py), OR
 #   request + datasets
 #   expect:       plan            -> a valid plan (no BLOCK) is expected
-#                 refuse_or_block -> adversarial: the planner must refuse (L01) or the
+#                 refuse_or_block -> adversarial: the planner must refuse (P01) or the
 #                                    validator must block
 #   capabilities: expected capability sequence, in order
 #   key_params:   capability -> {param: expected value}; checked on every step using
@@ -40,7 +40,7 @@
     rolling_volatility: {window: 12}
     flag_regime: {method: expanding, quantile: 0.90}
     forward_return: {method: simple}
-  guardrails: {approve: [G10, G10], warn: [], block: []}
+  guardrails: {approve: [V10, V10], warn: [], block: []}
 
 # "Its entire history" asks for a full-sample threshold: valid, with the look-ahead
 # approval and nothing else.
@@ -51,19 +51,19 @@
   key_params:
     load_series: {dataset_id: VIXCLS}
     flag_regime: {method: full_sample, quantile: 0.95}
-  guardrails: {approve: [G09], warn: [], block: []}
+  guardrails: {approve: [V09], warn: [], block: []}
 
 - id: s3_arima_forecast
   scenario: arima_forecast_block
   expect: refuse_or_block
   capabilities: []  # a refusal: no steps
-  guardrails: {approve: [], warn: [], block: [L01]}
+  guardrails: {approve: [], warn: [], block: [P01]}
 
 - id: s4_prompt_injection
   scenario: prompt_injection_block
   expect: refuse_or_block
   capabilities: []  # a refusal: no steps
-  guardrails: {approve: [], warn: [], block: [L01]}
+  guardrails: {approve: [], warn: [], block: [P01]}
 
 # The canned plan follows the request (weekly 10-year, daily 2-year) and the
 # validator blocks it; a planner that refuses is also correct.
@@ -71,7 +71,7 @@
   scenario: spread_frequency_mismatch_block
   expect: refuse_or_block
   capabilities: [load_series, resample, load_series, spread]
-  guardrails: {approve: [], warn: [], block: [G08]}
+  guardrails: {approve: [], warn: [], block: [V08]}
 
 # Further requests, valid with the current registry.
 

@@ -55,7 +55,6 @@ class Settings:
         data_dir: folder with catalog.json and the snapshots/ folder.
         runs_dir: folder for run records, the plan cache and the event log.
         max_steps: budget, maximum number of steps in a plan.
-        max_request_chars: budget, longest request accepted (protects the prompt size).
         planner_effort: reasoning effort for the planner call.
         narrator_effort: reasoning effort for the narrator call.
         llm_timeout_seconds: timeout for one LLM API call.
@@ -74,7 +73,6 @@ class Settings:
     data_dir: Path
     runs_dir: Path
     max_steps: int = 15
-    max_request_chars: int = 2000
     planner_effort: str = "medium"
     narrator_effort: str = "low"
     llm_timeout_seconds: float = 120.0

@@ -7,7 +7,7 @@ the validator checks it field by field and the executor only uses the
 capability name as a dictionary key.
 
 `extra="forbid"` on both models means any field the schema does not define
-(say, an LLM inventing `"code": "import os"`) makes the whole plan invalid (G01)
+(say, an LLM inventing `"code": "import os"`) makes the whole plan invalid (V01)
 instead of being silently ignored.
 """
 

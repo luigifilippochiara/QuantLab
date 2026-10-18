@@ -79,7 +79,7 @@ statistically significant difference at the 5% level".
 
 # A number in text: digits with optional thousands separators and decimals.
 # The look-behind skips digits glued to letters or dots, such as step ids (s7),
-# guardrail codes (R04), dataset ids (DGS10) and release names (H.15).
+# guardrail codes (E04), dataset ids (DGS10) and release names (H.15).
 NUMBER_PATTERN = re.compile(r"(?<![\w.])(\d{1,3}(?:,\d{3})+|\d+)(\.\d+)?")
 DATE_PATTERN = re.compile(r"\b\d{4}-\d{2}-\d{2}\b")
 

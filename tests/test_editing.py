@@ -44,7 +44,7 @@ def test_structural_edits_are_rejected_with_a_block(edits: Any, settings: Settin
     before = session.plan.model_copy(deep=True)
     report = session.apply_param_edits(edits)
     rejected = [i for i in report.blocks if i.message.startswith("Edit rejected")]
-    assert rejected and all(i.code == "G03" for i in rejected)
+    assert rejected and all(i.code == "V03" for i in rejected)
     assert session.plan == before  # nothing was applied
     assert session.status == "blocked" and not session.can_execute()[0]
     # A valid edit afterwards clears the block again.
@@ -55,7 +55,7 @@ def test_out_of_range_value_is_blocked_by_the_validator(settings: Settings) -> N
     """The bounded widgets should prevent this; the validator is the backstop."""
     session = start(settings)
     report = session.apply_param_edits({"s5": {"quantile": 1.5}})
-    assert report.is_blocked and "G03" in report.codes()
+    assert report.is_blocked and "V03" in report.codes()
     assert session.plan.steps[4].params["quantile"] == 1.5  # applied, then judged
     with pytest.raises(ExecutionRefusedError):
         session.execute()
@@ -64,14 +64,14 @@ def test_out_of_range_value_is_blocked_by_the_validator(settings: Settings) -> N
 # --- re-validation through the same validator ------------------------------------
 
 
-def test_switching_to_full_sample_raises_g09_and_switching_back_clears_it(
+def test_switching_to_full_sample_raises_v09_and_switching_back_clears_it(
     settings: Settings,
 ) -> None:
     session = start(settings)
     report = session.apply_param_edits({"s5": {"method": "full_sample"}})
-    assert "G09" in report.codes()
+    assert "V09" in report.codes()
     report = session.apply_param_edits({"s5": {"method": "expanding"}})
-    assert "G09" not in report.codes()
+    assert "V09" not in report.codes()
 
 
 def test_weekly_to_daily_is_re_validated_and_runs_after_re_approval(settings: Settings) -> None:
@@ -105,7 +105,7 @@ def test_any_edit_resets_approvals_and_approvals_record_the_plan_hash(settings: 
 
 def test_an_approval_for_another_plan_version_does_not_count(settings: Settings) -> None:
     session = start(settings)
-    stale = Approval(issue_id=RETURN_METHOD_APPROVAL, code="G10", step_id="s3",
+    stale = Approval(issue_id=RETURN_METHOD_APPROVAL, code="V10", step_id="s3",
                      message="m", approved_at="t", plan_hash="another-version")  # fmt: skip
     session.approvals.append(stale)
     assert [i.issue_id for i in session.unresolved_approvals()] == SCENARIO_1_APPROVALS
@@ -120,7 +120,7 @@ def test_reset_to_the_planners_proposal(settings: Settings) -> None:
     session.reset_to_proposal()
     assert session.plan.steps == proposal.steps
     assert session.build_record().param_diff == []
-    assert session.report.codes() == ["G10"]  # the return-method approvals again
+    assert session.report.codes() == ["V10"]  # the return-method approvals again
 
 
 # --- lineage of edits ------------------------------------------------------------

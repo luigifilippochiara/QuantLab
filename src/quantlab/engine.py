@@ -4,7 +4,8 @@ Role in the architecture: a `Session` holds the state of one run and moves it
 through the pipeline, in this order:
 
     Session.start(request, datasets, mode)
-      .create_plan()          planner (LLM or mock) -> plan, defaults filled -> validate
+      .create_plan()          request check (R01) -> planner (LLM or mock) -> plan,
+                              defaults filled -> validate
       .apply_param_edits()    user edits VALUES only -> re-validate with the SAME validator
       .reset_to_proposal()    back to the planner's proposal (re-validated)
       .approve(issue_ids)     user approves APPROVE issues (timestamped)
@@ -171,12 +172,14 @@ class Session:
         """Ask the planner for a plan, fill in defaults and validate it.
 
         Returns:
-            The validation report. If the planner failed or refused, the report
-            holds the G01/L01 issues and the run is recorded as blocked.
+            The validation report. If the request is too long, or the planner
+            failed or refused, the report holds the R01, V01 or P01 issues and the
+            run is recorded as blocked.
         """
-        too_long = check_request_length(self.request, self.settings.max_request_chars)
+        # R01 REQUEST_TOO_LONG: the request check, the first stage of the pipeline.
+        too_long = check_request_length(self.request)
         if too_long:
-            # Refuse before spending an LLM call on an over-budget request.
+            # Refuse before spending an LLM call on an oversized request.
             self.plan_result = PlanResult(plan=None, issues=too_long, error=too_long[0].message)
             return self._planning_failed(too_long)
 
@@ -207,7 +210,7 @@ class Session:
         return self.validate()
 
     def _planning_failed(self, issues: list[Issue]) -> ValidationReport:
-        """Record a run that produced no plan at all (planner error or over-budget request)."""
+        """Record a run that produced no plan at all (planner error or a request R01 refused)."""
         self.report = ValidationReport(issues=issues)
         for issue in issues:
             self._log("validation_issue", details=_issue_details(issue))
@@ -229,7 +232,6 @@ class Session:
             self.plan,
             self.catalog,
             max_steps=self.settings.max_steps,
-            max_request_chars=self.settings.max_request_chars,
         )
         latency = round((time.perf_counter() - started) * 1000, 2)
         self.timings_ms["validation"] = latency
@@ -267,7 +269,7 @@ class Session:
         steps, or touches anything but a registered parameter (capability, inputs,
         ids...), is rejected as a BLOCK and nothing is applied. Values are applied
         to a copy of the plan and then judged by the validator, so an out-of-range
-        value is a G03 BLOCK even if the UI widgets should have prevented it. Any
+        value is a V03 BLOCK even if the UI widgets should have prevented it. Any
         change clears all approvals: they belong to the previous plan version.
 
         Args:

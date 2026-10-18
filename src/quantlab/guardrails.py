@@ -1,4 +1,4 @@
-"""Guardrails: the table of every guardrail, and the validator's static checks.
+"""Guardrails: the table of every guardrail, the request check and the validator's checks.
 
 Role in the architecture: the validator is the "system disposes" half of
 "the LLM proposes, the system disposes". It takes a plan (inert data) and,
@@ -22,12 +22,16 @@ user edit, by the executor (defence in depth) and by replay. `check_edits`
 locks the plan's structure: users may change parameter values only.
 
 Every guardrail, whoever enforces it, is described in the single GUARDRAILS
-table below. The first letter of its code says who enforces it (ENFORCERS):
-    L  the planner (LLM): it refuses, and the validator turns the refusal into a BLOCK
-    G  the validator (deterministic): this module
-    R  the executor, at run time on the data: executor.py
-    N  the narrator check (deterministic): narrator.py
-The codes were renumbered twice while the design settled (docs/DECISIONS.md).
+table below. The first letter of its code names the pipeline stage that enforces
+it, in pipeline order (ENFORCERS):
+    R  the request check (deterministic), before the planner: this module, called
+       by the engine
+    P  the planner (LLM): it refuses, and the validator turns the refusal into a BLOCK
+    V  the validator (deterministic), on the plan before anything runs: this module
+    E  the executor, at run time on the data: executor.py
+    N  the narrator check (deterministic), on the written summary: narrator.py
+Human approval is not a guardrail: it is the step where APPROVE issues are resolved.
+The codes were renumbered three times while the design settled (docs/DECISIONS.md).
 From this version on they are permanent: a code is never renumbered or given a
 different meaning, so the issue ids recorded in run records keep their meaning.
 """
@@ -56,7 +60,7 @@ class Action(StrEnum):
 class Category(StrEnum):
     """What a guardrail protects."""
 
-    PLAN_INTEGRITY = "Plan integrity"  # the plan is well-formed and small enough to review
+    PLAN_INTEGRITY = "Plan integrity"  # the request and plan are well-formed, of reviewable size
     APPROVED_SCOPE = "Approved scope"  # only registered capabilities and catalog data
     INPUT_VALIDITY = "Input validity"  # parameters and input kinds make sense
     METHODOLOGY = "Methodology"  # the analysis is statistically and economically sound
@@ -64,14 +68,21 @@ class Category(StrEnum):
     OUTPUT_GROUNDING = "Output grounding"  # the narrative quotes only values of the run
 
 
-# Who enforces a guardrail, by the first letter of its code. This is the only
-# place it is written down, so a code and its label can never disagree.
+# Who enforces a guardrail, by the first letter of its code, in pipeline order. This
+# is the only place it is written down, so a code and its label can never disagree.
 ENFORCERS = {
-    "L": "Planner (LLM)",
-    "G": "Validator (deterministic)",
-    "R": "Executor (runtime)",
+    "R": "Request check (deterministic)",
+    "P": "Planner (LLM)",
+    "V": "Validator (deterministic)",
+    "E": "Executor (runtime)",
     "N": "Narrator check (deterministic)",
 }
+
+# R01 REQUEST_TOO_LONG: the longest request sent to the planner. Words are what a
+# person writes; the character cap (about 1,000 words at 6 characters each, with a
+# margin) stops a text without spaces, which counts as one "word", slipping through.
+MAX_REQUEST_WORDS = 1000
+MAX_REQUEST_CHARS = 8000
 
 
 @dataclass(frozen=True)
@@ -79,7 +90,7 @@ class Guardrail:
     """Description of one guardrail (used for issues, the UI and docs/ARCHITECTURE.md).
 
     Fields:
-        code: e.g. "G07"; its first letter says who enforces it (see ENFORCERS).
+        code: e.g. "V07"; its first letter says who enforces it (see ENFORCERS).
         name: e.g. "RETURNS_ON_RATES".
         action: what happens when it fires: BLOCK, APPROVE or WARN.
         category: what it protects.
@@ -94,7 +105,7 @@ class Guardrail:
 
     @property
     def enforced_by(self) -> str:
-        """Who enforces it, e.g. "Validator (deterministic)" for a G code."""
+        """Who enforces it, e.g. "Validator (deterministic)" for a V code."""
         return ENFORCERS[self.code[0]]
 
 
@@ -105,13 +116,20 @@ FREQUENCY_NAMES = {Frequency.D: "daily", Frequency.W: "weekly", Frequency.M: "mo
 PERIOD_NAMES = {Frequency.D: "day", Frequency.W: "week", Frequency.M: "month"}
 FREQUENCY_RANK = {Frequency.D: 0, Frequency.W: 1, Frequency.M: 2}
 
-# Every guardrail, in pipeline order: planner, validator, executor, narrator check.
+# Every guardrail, in pipeline order: request check, planner, validator, executor,
+# narrator check.
 # The descriptions are shown as they are on the Guardrails page and in docs/ARCHITECTURE.md.
 GUARDRAILS: dict[str, Guardrail] = {
     g.code: g
     for g in [
         Guardrail(
-            "L01", "PLANNER_REFUSED", BLOCK, Category.APPROVED_SCOPE,
+            "R01", "REQUEST_TOO_LONG", BLOCK, Category.PLAN_INTEGRITY,
+            "Blocks a request over 1,000 words, or 8,000 characters (so a text without "
+            "spaces cannot slip through), before it reaches the LLM. Prevents pasted "
+            "documents or stuffed instructions from driving the planner.",
+        ),
+        Guardrail(
+            "P01", "PLANNER_REFUSED", BLOCK, Category.APPROVED_SCOPE,
             "The planner may decline a request it cannot serve with the approved "
             "capabilities, or one that tries to override its rules, giving a reason instead "
             "of a plan (in mock mode, any request without a canned plan); nothing runs. "
@@ -119,7 +137,7 @@ GUARDRAILS: dict[str, Guardrail] = {
             "misleading plan.",
         ),
         Guardrail(
-            "G01", "INVALID_PLAN", BLOCK, Category.PLAN_INTEGRITY,
+            "V01", "INVALID_PLAN", BLOCK, Category.PLAN_INTEGRITY,
             "The plan must match the plan schema exactly (no missing or extra fields), have "
             "at least one step, use unique step ids, and give each step exactly the inputs "
             "its capability defines, each taken from an earlier step. Also raised when the "
@@ -128,12 +146,12 @@ GUARDRAILS: dict[str, Guardrail] = {
             "ambiguous or out-of-order plan from running.",
         ),
         Guardrail(
-            "G02", "UNKNOWN_CAPABILITY", BLOCK, Category.APPROVED_SCOPE,
+            "V02", "UNKNOWN_CAPABILITY", BLOCK, Category.APPROVED_SCOPE,
             "Every step must call a capability in the approved registry, so no unreviewed or "
             "untested code is ever run, whatever the LLM asks for.",
         ),
         Guardrail(
-            "G03", "INVALID_PARAM", BLOCK, Category.INPUT_VALIDITY,
+            "V03", "INVALID_PARAM", BLOCK, Category.INPUT_VALIDITY,
             "Each parameter must be one its capability defines, given if required, of the "
             "right type and within its allowed range or choices (for example a quantile "
             "between 0.5 and 0.99). User edits that change anything other than a parameter "
@@ -141,77 +159,75 @@ GUARDRAILS: dict[str, Guardrail] = {
             "nonsensical settings from producing plausible-looking numbers.",
         ),
         Guardrail(
-            "G04", "TYPE_MISMATCH", BLOCK, Category.INPUT_VALIDITY,
+            "V04", "TYPE_MISMATCH", BLOCK, Category.INPUT_VALIDITY,
             "Each input must be the data type and kind of series its capability accepts: for "
             "example returns, not prices, for a volatility, and returns, not a price or rate "
             "level, for the significance test. Prevents statistically meaningless "
             "calculations.",
         ),
         Guardrail(
-            "G05", "BUDGET_EXCEEDED", BLOCK, Category.PLAN_INTEGRITY,
-            "The request must be at most 2,000 characters, checked before the planner is "
-            "called (so an oversized request costs no LLM call) and again with every plan; "
-            "the plan may have at most 15 steps by default (QUANTLAB_MAX_STEPS). Prevents "
-            "oversized prompts and runaway plans too long for a human to review.",
+            "V05", "BUDGET_EXCEEDED", BLOCK, Category.PLAN_INTEGRITY,
+            "The plan may have at most 15 steps by default (QUANTLAB_MAX_STEPS). Prevents "
+            "runaway plans too long for a human to review.",
         ),
         Guardrail(
-            "G06", "UNKNOWN_DATASET", BLOCK, Category.APPROVED_SCOPE,
+            "V06", "UNKNOWN_DATASET", BLOCK, Category.APPROVED_SCOPE,
             "Every dataset the plan names or loads must be in the approved catalog. Prevents "
             "analysis of invented or unapproved data.",
         ),
         Guardrail(
-            "G07", "RETURNS_ON_RATES", BLOCK, Category.METHODOLOGY,
+            "V07", "RETURNS_ON_RATES", BLOCK, Category.METHODOLOGY,
             "Returns cannot be computed on an interest rate or yield: rates are differenced "
             "instead (changes in percentage points). Prevents meaningless results, such as a "
             "move from 1% to 2% reported as +100%.",
         ),
         Guardrail(
-            "G08", "FREQUENCY_MISMATCH", BLOCK, Category.METHODOLOGY,
+            "V08", "FREQUENCY_MISMATCH", BLOCK, Category.METHODOLOGY,
             "Series combined in one step (a spread, a comparison or the significance test) "
             "must have the same frequency. Prevents silently matching weekly values with "
             "daily ones on the few dates they share.",
         ),
         Guardrail(
-            "G09", "LOOK_AHEAD", APPROVE, Category.METHODOLOGY,
+            "V09", "LOOK_AHEAD", APPROVE, Category.METHODOLOGY,
             "A flag threshold computed from the full sample, which includes data from after "
             "each flagged date, needs explicit approval. Prevents results that look better "
             "than anything achievable in real time from passing unnoticed.",
         ),
         Guardrail(
-            "G10", "MATERIAL_ASSUMPTION", APPROVE, Category.METHODOLOGY,
+            "V10", "MATERIAL_ASSUMPTION", APPROVE, Category.METHODOLOGY,
             "Choices that change the answer need explicit approval: today, the return method "
             "(log or simple) of compute_returns and forward_return. Prevents the LLM from "
             "making material assumptions silently.",
         ),
         Guardrail(
-            "G11", "FORWARD_DATA_AS_SIGNAL", BLOCK, Category.METHODOLOGY,
+            "V11", "FORWARD_DATA_AS_SIGNAL", BLOCK, Category.METHODOLOGY,
             "Forward returns may only be the outcome of a comparison or of the significance "
             "test, never the input to a volatility, a flag or any other step. Prevents future "
             "information from leaking into a signal.",
         ),
         Guardrail(
-            "R01", "DATASET_HASH_MISMATCH", BLOCK, Category.DATA_QUALITY,
+            "E01", "DATASET_HASH_MISMATCH", BLOCK, Category.DATA_QUALITY,
             "Each snapshot file must match the hash recorded in the catalog before it is "
             "loaded. Prevents analysis of altered or different data.",
         ),
         Guardrail(
-            "R02", "INSUFFICIENT_DATA", BLOCK, Category.DATA_QUALITY,
+            "E02", "INSUFFICIENT_DATA", BLOCK, Category.DATA_QUALITY,
             "Each step needs its capability's minimum number of observations, for example "
             "three times the window for a rolling volatility and 30 shared dates for the "
             "significance test. Prevents statistics computed on too little data.",
         ),
         Guardrail(
-            "R03", "MISSING_DATA", WARN, Category.DATA_QUALITY,
+            "E03", "MISSING_DATA", WARN, Category.DATA_QUALITY,
             "Warns when more than 5% of a loaded series' values are missing (they are "
             "dropped). Prevents gaps from silently distorting the results.",
         ),
         Guardrail(
-            "R04", "ALIGNMENT_LOSS", WARN, Category.DATA_QUALITY,
+            "E04", "ALIGNMENT_LOSS", WARN, Category.DATA_QUALITY,
             "Warns when aligning two series on their common dates drops more than 10% of "
             "either. Prevents a silently shrunken sample.",
         ),
         Guardrail(
-            "R05", "LOW_EFFECTIVE_SAMPLE", WARN, Category.METHODOLOGY,
+            "E05", "LOW_EFFECTIVE_SAMPLE", WARN, Category.METHODOLOGY,
             "Warns when the flagged periods of a comparison or of the significance test form "
             "fewer than 5 distinct episodes (runs of consecutive flags). Prevents "
             "overconfidence in a result that rests on a handful of real events.",
@@ -231,7 +247,7 @@ GUARDRAILS: dict[str, Guardrail] = {
 
 # The input that holds the OUTCOME in the capabilities that compare an outcome
 # between flagged and normal periods. It is the only place forward returns may
-# go (G11), and where R05 counts the flagged episodes.
+# go (V11), and where E05 counts the flagged episodes.
 OUTCOME_INPUTS = {"compare_groups": "values", "hac_mean_difference": "outcome"}
 
 
@@ -239,13 +255,13 @@ class Issue(BaseModel):
     """One problem found by a guardrail.
 
     Fields:
-        code: guardrail code, e.g. "G07".
+        code: guardrail code, e.g. "V07".
         name: guardrail name, e.g. "RETURNS_ON_RATES".
         action: BLOCK, APPROVE or WARN.
         step_id: the step concerned (None for plan-level issues).
         message: what is wrong.
         suggestion: how to fix it.
-        issue_id: stable id used to record approvals, e.g. "G10:s2:return_method".
+        issue_id: stable id used to record approvals, e.g. "V10:s2:return_method".
 
     Who enforced it and what it protects are not stored: the enforced_by and
     category properties read them from the GUARDRAILS table by code.
@@ -335,7 +351,7 @@ class ValidationReport(BaseModel):
         return [i for i in self.issues if i.action == Action.WARN]
 
     def codes(self) -> list[str]:
-        """Sorted, de-duplicated issue codes, e.g. ["G02", "G07"]."""
+        """Sorted, de-duplicated issue codes, e.g. ["V02", "V07"]."""
         return sorted({i.code for i in self.issues})
 
 
@@ -374,7 +390,7 @@ def effective_params(step: Step, spec: CapabilitySpec) -> dict[str, Any]:
 
     Returns:
         Parameter dict in registry order, followed by any unknown parameters
-        (kept so G03 can still report them).
+        (kept so V03 can still report them).
     """
     params: dict[str, Any] = {}
     for p in spec.params:
@@ -462,7 +478,7 @@ def _allowed_values(spec_param: ParamSpec) -> str:
 
 
 def check_schema(raw: Any) -> tuple[Plan | None, list[Issue]]:
-    """G01 INVALID_PLAN (schema): parse raw planner output into a Plan.
+    """V01 INVALID_PLAN (schema): parse raw planner output into a Plan.
 
     Without it, malformed or partial LLM output would have to be guessed at, and
     fields the schema does not define (e.g. "code") could slip through unnoticed.
@@ -471,7 +487,7 @@ def check_schema(raw: Any) -> tuple[Plan | None, list[Issue]]:
         raw: the planner's output (normally a dict).
 
     Returns:
-        (plan, []) if it parses, else (None, list of G01 issues, one per error).
+        (plan, []) if it parses, else (None, list of V01 issues, one per error).
     """
     try:
         return Plan.model_validate(raw), []
@@ -481,7 +497,7 @@ def check_schema(raw: Any) -> tuple[Plan | None, list[Issue]]:
             location = ".".join(str(part) for part in error["loc"]) or "(plan)"
             issues.append(
                 make_issue(
-                    "G01",
+                    "V01",
                     None,
                     f"Plan does not match the schema at {location}: {error['msg']}.",
                     "Regenerate the plan; the planner must return the plan schema exactly.",
@@ -492,7 +508,7 @@ def check_schema(raw: Any) -> tuple[Plan | None, list[Issue]]:
 
 
 def planner_failure_issue(error: str) -> Issue:
-    """G01 INVALID_PLAN raised when the planner produced no usable plan at all.
+    """V01 INVALID_PLAN raised when the planner produced no usable plan at all.
 
     Without it, an API error or a missing tool call would crash the app instead
     of being shown and recorded like any other blocked plan.
@@ -501,10 +517,10 @@ def planner_failure_issue(error: str) -> Issue:
         error: the planner's error message.
 
     Returns:
-        A G01 BLOCK issue.
+        A V01 BLOCK issue.
     """
     return make_issue(
-        "G01",
+        "V01",
         None,
         f"The planner did not return a valid plan: {error}",
         "Retry, switch LLM mode (mock works offline), or rephrase the request.",
@@ -513,7 +529,7 @@ def planner_failure_issue(error: str) -> Issue:
 
 
 def check_planner_refused(plan: Plan) -> list[Issue]:
-    """L01 PLANNER_REFUSED: the planner declared it cannot fulfil the request.
+    """P01 PLANNER_REFUSED: the planner declared it cannot fulfil the request.
 
     The decision is the planner's (the LLM, or the mock planner for a request it
     has no canned plan for); this function turns it into a BLOCK, so a refused
@@ -525,7 +541,7 @@ def check_planner_refused(plan: Plan) -> list[Issue]:
         return []
     return [
         make_issue(
-            "L01",
+            "P01",
             None,
             f"The planner declined the request: {plan.refusal_reason or 'no reason given'}",
             "Rephrase using the approved capabilities (see the Capability registry page).",
@@ -533,29 +549,37 @@ def check_planner_refused(plan: Plan) -> list[Issue]:
     ]
 
 
-def check_request_length(request: str, max_request_chars: int) -> list[Issue]:
-    """G05 BUDGET_EXCEEDED (request size): refuse overly long requests.
+def check_request_length(request: str) -> list[Issue]:
+    """R01 REQUEST_TOO_LONG: refuse a request over MAX_REQUEST_WORDS words or MAX_REQUEST_CHARS.
 
-    The engine calls it before planning, so an oversized request costs no LLM
-    call, and validate_plan calls it again on every plan. Without it, a huge
-    pasted request could blow up prompt size and cost, and gives more room for
-    instructions hidden inside it.
+    The engine (and the evaluation) call it before the planner, so an oversized
+    request costs no LLM call. Without it, a pasted document could blow up prompt
+    size and cost, and gives room for instructions stuffed inside it to steer the
+    planner. Words are counted as whitespace-separated pieces of text.
+
+    Args:
+        request: the user's request.
+
+    Returns:
+        One BLOCK issue if either limit is exceeded, else [].
     """
-    if len(request) <= max_request_chars:
+    n_words, n_chars = len(request.split()), len(request)
+    if n_words <= MAX_REQUEST_WORDS and n_chars <= MAX_REQUEST_CHARS:
         return []
     return [
         make_issue(
-            "G05",
+            "R01",
             None,
-            f"The request has {len(request)} characters; the limit is {max_request_chars}.",
-            "Shorten the request.",
+            f"The request has {n_words:,} words and {n_chars:,} characters; the limits are "
+            f"{MAX_REQUEST_WORDS:,} words and {MAX_REQUEST_CHARS:,} characters.",
+            "Shorten the request to the question itself; paste no documents into it.",
             key="request",
         )
     ]
 
 
 def check_budget(plan: Plan, max_steps: int) -> list[Issue]:
-    """G05 BUDGET_EXCEEDED (plan size): too many steps in one plan.
+    """V05 BUDGET_EXCEEDED (plan size): too many steps in one plan.
 
     Without it, a runaway plan could consume unbounded compute and become too
     long for a human to review before approving it. Every dataset is loaded by
@@ -565,7 +589,7 @@ def check_budget(plan: Plan, max_steps: int) -> list[Issue]:
         return []
     return [
         make_issue(
-            "G05",
+            "V05",
             None,
             f"The plan has {len(plan.steps)} steps; the limit is {max_steps}.",
             "Split the analysis into smaller requests.",
@@ -575,14 +599,14 @@ def check_budget(plan: Plan, max_steps: int) -> list[Issue]:
 
 
 def check_unknown_datasets(plan: Plan, catalog: Catalog) -> list[Issue]:
-    """G06 UNKNOWN_DATASET: every dataset id must exist in the catalog.
+    """V06 UNKNOWN_DATASET: every dataset id must exist in the catalog.
 
     Without it, the LLM could invent a dataset id or reach for data outside the
     approved, hash-verified catalog.
     """
     suggestion = f"Available datasets: {', '.join(catalog.ids())}."
     issues = [
-        make_issue("G06", None, f"Dataset '{d}' is not in the catalog.", suggestion, key=d)
+        make_issue("V06", None, f"Dataset '{d}' is not in the catalog.", suggestion, key=d)
         for d in plan.dataset_ids
         if catalog.get(d) is None
     ]
@@ -592,14 +616,14 @@ def check_unknown_datasets(plan: Plan, catalog: Catalog) -> list[Issue]:
         if is_load and catalog.get(dataset_id) is None:
             issues.append(
                 make_issue(
-                    "G06", step.id, f"Dataset '{dataset_id}' is not in the catalog.", suggestion
+                    "V06", step.id, f"Dataset '{dataset_id}' is not in the catalog.", suggestion
                 )
             )
     return issues
 
 
 def check_not_empty(plan: Plan) -> list[Issue]:
-    """G01 INVALID_PLAN (empty plan): a plan that is not a refusal must have steps.
+    """V01 INVALID_PLAN (empty plan): a plan that is not a refusal must have steps.
 
     Without it, an empty plan would "succeed" with no results, which looks like
     an answer but is not one.
@@ -608,7 +632,7 @@ def check_not_empty(plan: Plan) -> list[Issue]:
         return []
     return [
         make_issue(
-            "G01",
+            "V01",
             None,
             "The plan has no steps and is not marked as a refusal.",
             "Regenerate the plan.",
@@ -618,7 +642,7 @@ def check_not_empty(plan: Plan) -> list[Issue]:
 
 
 def check_duplicate_step_ids(plan: Plan) -> list[Issue]:
-    """G01 INVALID_PLAN (duplicate ids): step ids must be unique.
+    """V01 INVALID_PLAN (duplicate ids): step ids must be unique.
 
     Without it, a reference like "s2" would be ambiguous and the wrong output
     could be fed into a later step.
@@ -629,7 +653,7 @@ def check_duplicate_step_ids(plan: Plan) -> list[Issue]:
         if step.id in seen:
             issues.append(
                 make_issue(
-                    "G01",
+                    "V01",
                     step.id,
                     f"Step id '{step.id}' is used more than once.",
                     "Number steps s1, s2, s3, ...",
@@ -646,7 +670,7 @@ def check_duplicate_step_ids(plan: Plan) -> list[Issue]:
 
 
 def check_unknown_capability(step: Step) -> list[Issue]:
-    """G02 UNKNOWN_CAPABILITY: the step names something that is not in the registry.
+    """V02 UNKNOWN_CAPABILITY: the step names something that is not in the registry.
 
     Without it, the LLM could request an analysis nobody wrote or tested. (The
     executor could not run it anyway, since unregistered names have no function;
@@ -656,7 +680,7 @@ def check_unknown_capability(step: Step) -> list[Issue]:
         return []
     return [
         make_issue(
-            "G02",
+            "V02",
             step.id,
             f"'{step.capability}' is not a registered capability.",
             f"Use only: {', '.join(REGISTRY)}. New capabilities are added by developers, "
@@ -666,7 +690,7 @@ def check_unknown_capability(step: Step) -> list[Issue]:
 
 
 def check_params(step: Step, spec: CapabilitySpec) -> list[Issue]:
-    """G03 INVALID_PARAM: unknown, missing, wrongly typed or out-of-range parameters.
+    """V03 INVALID_PARAM: unknown, missing, wrongly typed or out-of-range parameters.
 
     Without it, typos, wrong types or extreme values (window=1, quantile=1.5)
     would crash mid-run or, worse, silently produce nonsense.
@@ -677,7 +701,7 @@ def check_params(step: Step, spec: CapabilitySpec) -> list[Issue]:
             allowed = [p.name for p in spec.params] or "none"
             issues.append(
                 make_issue(
-                    "G03",
+                    "V03",
                     step.id,
                     f"Unknown parameter '{name}' for {spec.name}.",
                     f"Allowed parameters: {allowed}.",
@@ -689,7 +713,7 @@ def check_params(step: Step, spec: CapabilitySpec) -> list[Issue]:
             if spec_param.required:
                 issues.append(
                     make_issue(
-                        "G03",
+                        "V03",
                         step.id,
                         f"Missing required parameter '{spec_param.name}' for {spec.name}.",
                         f"Provide '{spec_param.name}': {_allowed_values(spec_param)}.",
@@ -701,7 +725,7 @@ def check_params(step: Step, spec: CapabilitySpec) -> list[Issue]:
         if problem:
             issues.append(
                 make_issue(
-                    "G03",
+                    "V03",
                     step.id,
                     problem,
                     f"Use {_allowed_values(spec_param)}.",
@@ -714,7 +738,7 @@ def check_params(step: Step, spec: CapabilitySpec) -> list[Issue]:
 def check_references(
     step: Step, spec: CapabilitySpec, earlier_ids: list[str], all_ids: list[str]
 ) -> list[Issue]:
-    """G01 INVALID_PLAN (step references): inputs must point to EARLIER steps, all given.
+    """V01 INVALID_PLAN (step references): inputs must point to EARLIER steps, all given.
 
     Without it, a step could read an output that does not exist yet (or ever),
     leaving the order of computation undefined.
@@ -724,7 +748,7 @@ def check_references(
         if spec_input.name not in step.inputs:
             issues.append(
                 make_issue(
-                    "G01",
+                    "V01",
                     step.id,
                     f"{spec.name} needs input '{spec_input.name}', which is not given.",
                     f"Set inputs['{spec_input.name}'] to the id of an earlier step.",
@@ -743,12 +767,12 @@ def check_references(
         else:
             message = f"Input '{name}' refers to unknown step '{ref}'."
             suggestion = f"Earlier steps: {earlier_ids or 'none'}."
-        issues.append(make_issue("G01", step.id, message, suggestion, key=name))
+        issues.append(make_issue("V01", step.id, message, suggestion, key=name))
     return issues
 
 
 def _type_hint(spec: CapabilitySpec, kind: SeriesKind | None) -> str:
-    """A short, specific suggestion for common type mismatches (used by G04)."""
+    """A short, specific suggestion for common type mismatches (used by V04)."""
     if kind in (SeriesKind.RETURNS, SeriesKind.CHANGES) and spec.name in ("resample", "difference"):
         return "Resample or difference the LEVEL series first, then compute returns or changes."
     if spec.name == "rolling_volatility":
@@ -759,7 +783,7 @@ def _type_hint(spec: CapabilitySpec, kind: SeriesKind | None) -> str:
 def check_input_types(
     step: Step, spec: CapabilitySpec, input_metas: dict[str, StaticMeta | None]
 ) -> list[Issue]:
-    """G04 TYPE_MISMATCH: each input's data type and kind must be allowed by the capability.
+    """V04 TYPE_MISMATCH: each input's data type and kind must be allowed by the capability.
 
     Without it, statistically meaningless chains would run without complaint,
     e.g. the volatility of a price level, or True/False flags used as a series.
@@ -773,15 +797,15 @@ def check_input_types(
     for spec_input in spec.inputs:
         meta = input_metas.get(spec_input.name)
         if meta is None:
-            continue  # missing or broken reference: already reported by G01/G02
+            continue  # missing or broken reference: already reported by V01/V02
         is_outcome = OUTCOME_INPUTS.get(spec.name) == spec_input.name
         if meta.kind == SeriesKind.FORWARD_RETURNS and not is_outcome:
-            continue  # reported by the more specific G11 FORWARD_DATA_AS_SIGNAL
+            continue  # reported by the more specific V11 FORWARD_DATA_AS_SIGNAL
         if meta.data_type not in spec_input.data_types:
             expected = [t.value for t in spec_input.data_types]
             issues.append(
                 make_issue(
-                    "G04",
+                    "V04",
                     step.id,
                     f"Input '{spec_input.name}' of {spec.name} must be {expected}, "
                     f"got {meta.data_type.value}.",
@@ -791,7 +815,7 @@ def check_input_types(
             )
         elif spec_input.kinds is not None and meta.kind not in spec_input.kinds:
             if spec.name == "compute_returns" and meta.kind == SeriesKind.RATE_LEVEL:
-                continue  # reported by the more specific G07 RETURNS_ON_RATES
+                continue  # reported by the more specific V07 RETURNS_ON_RATES
             expected = [k.value for k in spec_input.kinds]
             message = (
                 f"Input '{spec_input.name}' of {spec.name} must be one of {expected}, "
@@ -809,14 +833,14 @@ def check_input_types(
                     "Compute returns (compute_returns) or forward returns (forward_return) "
                     "of the price level, and test those."
                 )
-            issues.append(make_issue("G04", step.id, message, suggestion, key=spec_input.name))
+            issues.append(make_issue("V04", step.id, message, suggestion, key=spec_input.name))
     return issues
 
 
 def check_returns_on_rates(
     step: Step, spec: CapabilitySpec, input_metas: dict[str, StaticMeta | None]
 ) -> list[Issue]:
-    """G07 RETURNS_ON_RATES: compute_returns applied to an interest rate or yield.
+    """V07 RETURNS_ON_RATES: compute_returns applied to an interest rate or yield.
 
     Without it, the system would happily compute "returns" of a yield: a move
     from 1% to 2% would be reported as +100%, which is meaningless. Rates must
@@ -827,7 +851,7 @@ def check_returns_on_rates(
         return []
     return [
         make_issue(
-            "G07",
+            "V07",
             step.id,
             "compute_returns on a rate/yield series: percentage 'returns' of a yield are "
             "meaningless.",
@@ -839,14 +863,14 @@ def check_returns_on_rates(
 def check_frequency_mismatch(
     step: Step, spec: CapabilitySpec, input_metas: dict[str, StaticMeta | None]
 ) -> list[Issue]:
-    """G08 FREQUENCY_MISMATCH: two-input steps whose inputs have different frequencies.
+    """V08 FREQUENCY_MISMATCH: two-input steps whose inputs have different frequencies.
 
     Without it, combining daily with weekly data silently keeps only the dates
     they share (Fridays), mixing two frequencies in one result.
     """
     if len(spec.inputs) < 2:
         return []
-    # Inputs whose frequency is unknown are already reported elsewhere (G01/G03).
+    # Inputs whose frequency is unknown are already reported elsewhere (V01/V03).
     metas = {name: m for name, m in input_metas.items() if m is not None and m.frequency}
     if len({meta.frequency for meta in metas.values()}) <= 1:
         return []
@@ -864,7 +888,7 @@ def check_frequency_mismatch(
         f"{', '.join(repr(name) for name in finer)} input."
     )
     message = f"{spec.name} inputs have different frequencies: {described}."
-    return [make_issue("G08", step.id, message, suggestion)]
+    return [make_issue("V08", step.id, message, suggestion)]
 
 
 def check_look_ahead(
@@ -874,7 +898,7 @@ def check_look_ahead(
     input_metas: dict[str, StaticMeta | None],
     tested_in: list[str],
 ) -> list[Issue]:
-    """G09 LOOK_AHEAD: flag_regime with a full-sample threshold (needs approval).
+    """V09 LOOK_AHEAD: flag_regime with a full-sample threshold (needs approval).
 
     Without it, a threshold computed from the whole sample (including the future)
     would be used silently; flags then use information nobody had at the time,
@@ -902,13 +926,13 @@ def check_look_ahead(
         "Use method='expanding': each threshold then uses only the data before that "
         f"{period}. Keep full_sample only for purely descriptive labelling."
     )
-    return [make_issue("G09", step.id, message, suggestion)]
+    return [make_issue("V09", step.id, message, suggestion)]
 
 
 def check_forward_data_as_signal(
     step: Step, spec: CapabilitySpec, input_metas: dict[str, StaticMeta | None]
 ) -> list[Issue]:
-    """G11 FORWARD_DATA_AS_SIGNAL: forward returns used anywhere but as an outcome.
+    """V11 FORWARD_DATA_AS_SIGNAL: forward returns used anywhere but as an outcome.
 
     Without it, a forward return (the return from t to t+1, stamped at t) could
     feed a volatility, a flag or another transformation. Anything built from it
@@ -924,7 +948,7 @@ def check_forward_data_as_signal(
             continue
         issues.append(
             make_issue(
-                "G11",
+                "V11",
                 step.id,
                 f"Input '{name}' of {spec.name} is a forward return: forward returns contain "
                 "future information and can only be used as an outcome, never to build a "
@@ -941,7 +965,7 @@ def check_forward_data_as_signal(
 def check_material_assumptions(
     step: Step, spec: CapabilitySpec, params: dict[str, Any]
 ) -> list[Issue]:
-    """G10 MATERIAL_ASSUMPTION: a capability assumption that a human must approve.
+    """V10 MATERIAL_ASSUMPTION: a capability assumption that a human must approve.
 
     Without it, material modelling choices (e.g. simple vs log returns) would be
     made by the LLM and could change conclusions without anybody noticing.
@@ -953,7 +977,7 @@ def check_material_assumptions(
         chosen = f" Chosen: {assumption.param}={params.get(assumption.param)!r}."
         issues.append(
             make_issue(
-                "G10",
+                "V10",
                 step.id,
                 assumption.text + (chosen if assumption.param else ""),
                 "Approve if this choice is intended, or edit the parameter.",
@@ -964,18 +988,18 @@ def check_material_assumptions(
 
 
 # ---------------------------------------------------------------------------
-# User edits: structure lock (G03)
+# User edits: structure lock (V03)
 # ---------------------------------------------------------------------------
 
 
 def check_edits(plan: Plan, edits: Any) -> list[Issue]:
-    """G03 INVALID_PARAM (edit rejected): users may change parameter VALUES only.
+    """V03 INVALID_PARAM (edit rejected): users may change parameter VALUES only.
 
     Without it, an edit could add, remove or reorder steps, change a step's
     capability or input references, or smuggle in a field that becomes code,
     and the plan the human approved would no longer be the plan the LLM and the
     validator saw. Values themselves are not judged here: they are applied and
-    then checked by the validator (G03 for out-of-range values, G06 for datasets...).
+    then checked by the validator (V03 for out-of-range values, V06 for datasets...).
 
     Args:
         plan: the current plan.
@@ -987,7 +1011,7 @@ def check_edits(plan: Plan, edits: Any) -> list[Issue]:
 
     def rejected(message: str, key: str) -> Issue:
         suggestion = "Only parameter values can be edited; regenerate the plan to change its steps."
-        return make_issue("G03", None, f"Edit rejected: {message}", suggestion, key=f"edit:{key}")
+        return make_issue("V03", None, f"Edit rejected: {message}", suggestion, key=f"edit:{key}")
 
     if not isinstance(edits, dict):
         return [rejected("edits must be {step_id: {parameter: value}}.", "shape")]
@@ -1082,15 +1106,16 @@ def validate_plan(
     catalog: Catalog,
     *,
     max_steps: int = 15,
-    max_request_chars: int = 2000,
 ) -> ValidationReport:
-    """Run every validator guardrail (G codes, and the L01 refusal block) on a plan.
+    """Run every validator guardrail (V codes, and the P01 refusal block) on a plan.
+
+    The request itself is not checked here: R01 runs before the planner, and a
+    request it refuses never gets a plan.
 
     Args:
         plan: the plan to check (defaults may or may not be filled in).
         catalog: the dataset catalog.
-        max_steps: budget for G05.
-        max_request_chars: budget for G05.
+        max_steps: budget for V05.
 
     Returns:
         A ValidationReport with all issues (not just the first) and the dry-run metadata.
@@ -1100,13 +1125,12 @@ def validate_plan(
         return ValidationReport(issues=issues)
 
     issues += check_not_empty(plan)
-    issues += check_request_length(plan.request, max_request_chars)
     issues += check_budget(plan, max_steps)
     issues += check_unknown_datasets(plan, catalog)
     issues += check_duplicate_step_ids(plan)
 
     all_ids = [step.id for step in plan.steps]
-    # Flag step id -> the significance tests that use its flags (for G09's message).
+    # Flag step id -> the significance tests that use its flags (for V09's message).
     tested_in: dict[str, list[str]] = {}
     for step in plan.steps:
         if step.capability == "hac_mean_difference" and "flags" in step.inputs:

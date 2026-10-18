@@ -8,6 +8,7 @@ import pytest
 from quantlab.config import Settings
 from quantlab.data import Catalog
 from quantlab.evaluation import GoldenCase, load_golden, run_evaluation, score_case, write_report
+from quantlab.guardrails import MAX_REQUEST_WORDS
 from quantlab.mock_scenarios import SCENARIOS_BY_ID
 
 from fakes import FakeAnthropicClient, tool_response
@@ -48,10 +49,10 @@ def test_mock_evaluation_scores_and_report(settings: Settings, tmp_path: Path) -
 def test_example_workflows_report_their_canned_outcome_item_by_item(settings: Settings) -> None:
     report = run_evaluation("mock", settings, case_ids=["s5_spread_frequency_mismatch"])
     (score,) = report.scores
-    assert score.correct and score.guardrails_match  # blocked, by G08, as canned
+    assert score.correct and score.guardrails_match  # blocked, by V08, as canned
     items = {c.item: (c.expected, c.actual, c.match) for c in score.checks}
     assert items["step 4"] == ("spread", "spread", True)
-    assert items["blocks"] == ("G08", "G08", True)
+    assert items["blocks"] == ("V08", "V08", True)
 
 
 def test_a_different_block_reason_is_reported_but_still_correct(
@@ -63,7 +64,7 @@ def test_a_different_block_reason_is_reported_but_still_correct(
     score = score_case(case, settings, catalog, "live", FakeAnthropicClient(tool_response(refusal)))
     assert score.correct and score.guardrails_match is False
     wrong = {c.item: (c.expected, c.actual) for c in score.checks if not c.match}
-    assert wrong["blocks"] == ("G08", "L01")
+    assert wrong["blocks"] == ("V08", "P01")
 
 
 def test_one_case_can_be_evaluated_on_its_own(settings: Settings) -> None:
@@ -92,6 +93,17 @@ def test_live_scoring_with_a_perfect_fake_planner(settings: Settings, catalog: C
     ]  # fmt: skip
 
 
+def test_an_oversized_request_is_scored_as_blocked_without_the_planner(
+    settings: Settings, catalog: Catalog
+) -> None:
+    client = FakeAnthropicClient(error=AssertionError("must not be called"))
+    text = " ".join(["word"] * (MAX_REQUEST_WORDS + 1))
+    case = GoldenCase(id="too_long", request=text, datasets=["VIXCLS"], expect="refuse_or_block")
+    score = score_case(case, settings, catalog, "live", client)
+    assert score.correct and score.refused_or_blocked and score.issue_codes == ["R01"]
+    assert client.calls == []  # R01 runs before the planner, as in the engine
+
+
 def test_a_live_mismatch_shows_what_the_planner_chose_differently(
     settings: Settings, catalog: Catalog
 ) -> None:
@@ -110,6 +122,6 @@ def test_a_live_mismatch_shows_what_the_planner_chose_differently(
         "step 8": ("hac_mean_difference", "(none)"),
         "flag_regime.method": ("expanding", "full_sample"),
         "forward_return.method": ("simple", "log"),
-        "approvals": ("G10, G10", "G09, G10, G10"),  # the look-ahead approval
+        "approvals": ("V10, V10", "V09, V10, V10"),  # the look-ahead approval
     }
     assert score.guardrails_match is False and score.params_hit == 3

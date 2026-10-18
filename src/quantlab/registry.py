@@ -83,7 +83,7 @@ class Assumption:
     Fields:
         id: short identifier, e.g. "return_method".
         text: the assumption in plain words.
-        requires_approval: if True the user must explicitly approve it (guardrail G10).
+        requires_approval: if True the user must explicitly approve it (guardrail V10).
         param: the parameter whose chosen value the assumption is about, if any.
     """
 
@@ -95,7 +95,7 @@ class Assumption:
 
 @dataclass(frozen=True)
 class MinObsRule:
-    """How many observations a capability needs (checked at run time by guardrail R02).
+    """How many observations a capability needs (checked at run time by guardrail E02).
 
     Fields:
         description: the rule in words, shown to users and the LLM.

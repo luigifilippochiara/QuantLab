@@ -15,10 +15,7 @@ from quantlab.guardrails import ENFORCERS, GUARDRAILS, Action, Category
 INTRO = (
     "Guardrails are the checks that keep an analysis safe and meaningful. When one fires, "
     "its action decides what happens: **BLOCK** stops the run, **APPROVE** needs a human "
-    "decision, **WARN** lets the run continue and flags the result. They are enforced by "
-    "the planner (which may refuse a request), the validator (on the plan, before anything "
-    "runs), the executor (on the data, while it runs) and the narrator check (on the "
-    "written summary)."
+    "decision, **WARN** lets the run continue and flags the result."
 )
 
 ROWS = [
@@ -70,7 +67,7 @@ st.caption(INTRO)
 
 search_col, action_col, enforcer_col, category_col = st.columns([2, 1, 1.5, 1.5])
 search = search_col.text_input(
-    "Search code or name", key="guardrail_search", placeholder="e.g. G0, look, L01"
+    "Search code or name", key="guardrail_search", placeholder="e.g. V0, look, P01"
 )
 action_col.multiselect("Action", ACTION_OPTIONS, key="guardrail_action")
 enforcer_col.multiselect("Enforced by", ENFORCER_OPTIONS, key="guardrail_enforcer")

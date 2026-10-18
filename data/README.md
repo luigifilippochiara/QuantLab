@@ -33,7 +33,7 @@ Maturity, Quoted on an Investment Basis". The full name is kept in the catalog's
 
 The snapshot is committed so that a clean clone can run every analysis, test
 and replay without network access. Every load re-hashes the file and refuses to
-run if it no longer matches the catalog (guardrail R01).
+run if it no longer matches the catalog (guardrail E01).
 
 ## Refreshing
 

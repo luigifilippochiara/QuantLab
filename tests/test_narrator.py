@@ -113,7 +113,7 @@ PLAN = Plan(
         "It peaked in November 2021.",  # a month containing a fact date
         "The market 2021 rally and a decline 2020.",  # not dates: years in range
         "Annualised with 52 weeks per year.",  # annualisation factor
-        "Steps s3 and R04 and DGS10 are named, not numbers.",  # ids are skipped
+        "Steps s3 and E04 and DGS10 are named, not numbers.",  # ids are skipped
     ],
 )
 def test_grounding_accepts_correct_numbers(sentence: str) -> None:

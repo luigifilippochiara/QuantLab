@@ -4,6 +4,7 @@ import pytest
 
 from quantlab.config import Settings
 from quantlab.engine import ExecutionRefusedError, Session, run_request
+from quantlab.guardrails import MAX_REQUEST_CHARS, MAX_REQUEST_WORDS
 from quantlab.lineage import load_run, replay
 from quantlab.mock_scenarios import SCENARIOS_BY_ID
 from quantlab.monitoring import kpis, read_events
@@ -92,9 +93,9 @@ def test_param_edit_revalidates_and_clears_approvals(settings: Settings) -> None
 def test_invalid_edit_blocks_execution(settings: Settings) -> None:
     session = start(settings)
     report = session.apply_param_edits({"s4": {"window": 1}})
-    assert report.is_blocked and "G03" in report.codes()
+    assert report.is_blocked and "V03" in report.codes()
     allowed, reason = session.can_execute()
-    assert not allowed and "G03" in reason
+    assert not allowed and "V03" in reason
     with pytest.raises(ExecutionRefusedError):
         session.execute()
     # Fixing the edit unblocks it again.
@@ -104,7 +105,7 @@ def test_invalid_edit_blocks_execution(settings: Settings) -> None:
 def test_only_open_approval_issues_can_be_approved(settings: Settings) -> None:
     session = start(settings)
     with pytest.raises(ValueError):
-        session.approve(["G09:s5"])  # not an issue of scenario 1's plan
+        session.approve(["V09:s5"])  # not an issue of scenario 1's plan
     # An edit to a step that does not exist is rejected (see test_editing.py).
     assert session.apply_param_edits({"s99": {"window": 3}}).is_blocked
 
@@ -113,27 +114,45 @@ def test_blocked_scenario_is_recorded(settings: Settings) -> None:
     session = start(settings, "arima_forecast_block")
     assert session.status == "blocked"
     record = load_run(session.run_id, settings.runs_dir)
-    assert record.status == "blocked" and "L01" in record.error
+    assert record.status == "blocked" and "P01" in record.error
     events = read_events(settings.events_path)
     assert events[-1]["event_type"] == "run_failed"
     assert events[-1]["details"]["status"] == "blocked"
 
 
-def test_planner_failure_is_a_recorded_g01(settings: Settings) -> None:
+def test_planner_failure_is_a_recorded_v01(settings: Settings) -> None:
     client = FakeAnthropicClient(error=RuntimeError("service unavailable"))
     session = Session.start("anything", ["NASDAQCOM"], "live", settings, client)
     report = session.create_plan()
-    assert report.codes() == ["G01"] and session.status == "blocked"
+    assert report.codes() == ["V01"] and session.status == "blocked"
     record = load_run(session.run_id, settings.runs_dir)
     assert "service unavailable" in record.error
     assert record.llm.provider == "anthropic"
 
 
-def test_over_budget_request_never_reaches_the_planner(settings: Settings) -> None:
+@pytest.mark.parametrize(
+    "text", [" ".join(["word"] * (MAX_REQUEST_WORDS + 1)), "x" * (MAX_REQUEST_CHARS + 1)]
+)
+def test_r01_blocks_an_oversized_request_before_the_planner(text: str, settings: Settings) -> None:
     client = FakeAnthropicClient(error=AssertionError("must not be called"))
-    session = Session.start("x" * 5000, ["NASDAQCOM"], "live", settings, client)
-    assert session.create_plan().codes() == ["G05"]
-    assert client.calls == []
+    session = Session.start(text, ["NASDAQCOM"], "live", settings, client)
+    report = session.create_plan()
+    assert report.codes() == ["R01"] and session.status == "blocked"
+    assert client.calls == []  # the planner was never called: no tokens spent
+    record = load_run(session.run_id, settings.runs_dir)
+    assert record.status == "blocked" and "1,000 words" in record.error
+    events = read_events(settings.events_path)
+    assert [e["details"]["code"] for e in events if e["event_type"] == "validation_issue"] == [
+        "R01"
+    ]
+
+
+def test_a_request_at_the_limit_reaches_the_planner(settings: Settings) -> None:
+    client = FakeAnthropicClient(error=RuntimeError("the planner was called"))
+    text = " ".join(["word"] * MAX_REQUEST_WORDS)
+    session = Session.start(text, ["NASDAQCOM"], "live", settings, client)
+    assert session.create_plan().codes() == ["V01"]  # the (failing) planner's issue, not R01
+    assert len(client.calls) == 1
 
 
 def test_run_request_without_approval_executes_nothing(settings: Settings) -> None:

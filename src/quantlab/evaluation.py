@@ -31,10 +31,17 @@ import yaml
 
 from quantlab.config import PROJECT_ROOT, Settings
 from quantlab.data import Catalog, load_catalog
-from quantlab.guardrails import Action, Issue, effective_params, fill_defaults, validate_plan
+from quantlab.guardrails import (
+    Action,
+    Issue,
+    check_request_length,
+    effective_params,
+    fill_defaults,
+    validate_plan,
+)
 from quantlab.mock_scenarios import SCENARIOS_BY_ID
 from quantlab.plan import Plan
-from quantlab.planner import generate_plan
+from quantlab.planner import PlanResult, generate_plan
 from quantlab.registry import REGISTRY
 
 GOLDEN_PATH = PROJECT_ROOT / "eval" / "golden_requests.yaml"
@@ -229,7 +236,12 @@ def score_case(
     Returns:
         The CaseScore.
     """
-    result = generate_plan(case.request, case.datasets, mode, settings, catalog, client)
+    # R01, as in the engine: an oversized request never reaches the planner.
+    too_long = check_request_length(case.request)
+    if too_long:
+        result = PlanResult(plan=None, issues=too_long, error=too_long[0].message)
+    else:
+        result = generate_plan(case.request, case.datasets, mode, settings, catalog, client)
     plan = fill_defaults(result.plan) if result.plan else None
     report = validate_plan(plan, catalog, max_steps=settings.max_steps) if plan else None
 

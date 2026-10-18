@@ -100,7 +100,7 @@ class Approval(BaseModel):
     """A user's approval of one APPROVE issue.
 
     Fields:
-        issue_id: the approved issue's id, e.g. "G10:s2:return_method".
+        issue_id: the approved issue's id, e.g. "V10:s2:return_method".
         code: guardrail code.
         step_id: step concerned.
         message: the exact issue text that was approved.
@@ -176,7 +176,7 @@ class RunRecord(BaseModel):
         registry_version: hash of the capability registry summary.
         steps: one StepRecord per executed step.
         warnings: all WARN issues (validator, executor and narrator check).
-        runtime_issues: issues raised during execution (runtime guardrails, R codes).
+        runtime_issues: issues raised during execution (runtime guardrails, E codes).
         narrative: narrator output and grounding check (see narrator.NarrativeResult).
         stage_timings_ms: latency per stage.
         error: why the run did not complete, if it did not.

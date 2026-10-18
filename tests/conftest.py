@@ -89,7 +89,7 @@ def build_synthetic_data_dir(data_dir: Path, missing_every: int = 50) -> Path:
 
     Args:
         data_dir: folder to create the data in.
-        missing_every: blank every k-th value (50 -> 2% missing, below the R03 threshold).
+        missing_every: blank every k-th value (50 -> 2% missing, below the E03 threshold).
 
     Returns:
         The path of the written catalog.json.
@@ -166,7 +166,7 @@ def catalog(settings: Settings) -> Catalog:
 # ---------------------------------------------------------------------------
 
 # A clean rates analysis (no approvals needed): the 10y-2y spread and its daily
-# changes. Useful for R03/R04, determinism and replay tests.
+# changes. Useful for E03/E04, determinism and replay tests.
 SPREAD_PLAN: dict[str, Any] = {
     "dataset_ids": ["DGS10", "DGS2"],
     "steps": [
@@ -184,7 +184,7 @@ SPREAD_PLAN: dict[str, Any] = {
 }
 
 # Test-only variant of scenario 3: what a MISBEHAVING planner might emit instead
-# of refusing. The validator must block it on its own (G02).
+# of refusing. The validator must block it on its own (V02).
 ARIMA_PLAN: dict[str, Any] = {
     "dataset_ids": ["NASDAQCOM"],
     "steps": [
@@ -201,8 +201,8 @@ ARIMA_PLAN: dict[str, Any] = {
 
 # The approvals scenario 1 needs: the return-method assumption of compute_returns
 # (s3, also scenario 2's) and of forward_return (s6).
-RETURN_METHOD_APPROVAL = "G10:s3:return_method"
-FORWARD_METHOD_APPROVAL = "G10:s6:return_method"
+RETURN_METHOD_APPROVAL = "V10:s3:return_method"
+FORWARD_METHOD_APPROVAL = "V10:s6:return_method"
 SCENARIO_1_APPROVALS = [RETURN_METHOD_APPROVAL, FORWARD_METHOD_APPROVAL]
 
 

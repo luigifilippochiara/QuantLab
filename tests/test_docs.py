@@ -50,7 +50,7 @@ def test_readme_links_and_logo_resolve() -> None:
 
 
 # A number of capabilities or guardrails ("11 capabilities", "thirteen static
-# guardrails") or a range of codes (from one C, G, L, N or R code to another) goes stale
+# guardrails") or a range of codes (from one C, E, N, P, R or V code to another) goes stale
 # when the registry or the guardrail table changes: counts are computed in the app.
 WORDS = "one two three four five six seven eight nine ten eleven twelve twenty"
 NUMBER = r"(?:\d+|\w+teen|" + "|".join(WORDS.split()) + ")"  # "\w+teen": thirteen to nineteen
@@ -58,7 +58,7 @@ HARDCODED_COUNT = re.compile(
     rf"\b{NUMBER}\s+(?:[\w-]+\s+){{0,2}}?(?:capabilities|guardrails|functions)\b",
     re.IGNORECASE,
 )
-CODE_RANGE = re.compile(r"\b[CGLNR]\d{2}\s*(?:-|–|—|to|through)\s*[CGLNR]?\d{2}\b")
+CODE_RANGE = re.compile(r"\b[CEGLNPRV]\d{2}\s*(?:-|–|—|to|through)\s*[CEGLNPRV]?\d{2}\b")
 
 
 def written_text() -> dict[str, str]:

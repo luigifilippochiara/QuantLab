@@ -8,23 +8,23 @@ the MockPlanner know these five and nothing else.
 1. High-volatility weeks and what follows (`volatility_flag_success`): the core
    analysis. Weekly NASDAQ volatility, flags above an expanding threshold, then a
    comparison and a significance test of the following week's returns. It runs to
-   completion after the analyst approves the two return methods (G10
+   completion after the analyst approves the two return methods (V10
    MATERIAL_ASSUMPTION, on s3 and s6). Its result carries the audit trail (the trace).
 2. Look-ahead protection (`vix_full_sample_lookahead`): the days when the VIX was
    in the top 5% of its entire history. The full-sample threshold uses future data,
-   so it needs approval (G09 LOOK_AHEAD). Its action is APPROVE, not BLOCK: a
+   so it needs approval (V09 LOOK_AHEAD). Its action is APPROVE, not BLOCK: a
    full-sample threshold is acceptable for descriptively labelling past stress days
    but invalid as a signal or in a backtest. The system cannot know the intent, so
    the human decides.
 3. Out-of-scope forecast request (`arima_forecast_block`): an ARIMA forecast of
-   USD/CHF has no registered capability, so the planner declines (L01
+   USD/CHF has no registered capability, so the planner declines (P01
    PLANNER_REFUSED) and lists what the registry can do instead.
 4. Prompt-injection protection (`prompt_injection_block`): instructions embedded
-   in a request are treated as data and declined (L01 PLANNER_REFUSED); nothing is
+   in a request are treated as data and declined (P01 PLANNER_REFUSED); nothing is
    ever executed.
 5. Frequency-alignment protection (`spread_frequency_mismatch_block`): the spread
    of a weekly and a daily yield, planned exactly as requested. The validator, not
-   the planner, catches the mismatch (G08 FREQUENCY_MISMATCH) before anything runs.
+   the planner, catches the mismatch (V08 FREQUENCY_MISMATCH) before anything runs.
 
 Role in the architecture: data, shared by
 - the MockPlanner (returns these plans instead of calling an LLM, so the whole
@@ -103,7 +103,7 @@ def _plan(dataset_ids: list[str], steps: list[dict[str, Any]], notes: str) -> di
 
 
 def _refusal(reason: str) -> dict[str, Any]:
-    """Build a canned planner refusal (L01 PLANNER_REFUSED)."""
+    """Build a canned planner refusal (P01 PLANNER_REFUSED)."""
     return {
         "dataset_ids": [],
         "steps": [],
@@ -191,7 +191,7 @@ SCENARIOS: list[Scenario] = [
         request=FLAGSHIP_REQUEST,
         dataset_ids=("NASDAQCOM",),
         expected_status="completed",
-        expected_codes=("G10",),  # the two return-method approvals (s3 and s6), nothing else
+        expected_codes=("V10",),  # the two return-method approvals (s3 and s6), nothing else
         auto_approve=True,
         keywords=(("nasdaq",), ("volatil",)),
         plan=_plan(["NASDAQCOM"], FLAGSHIP_STEPS, FLAGSHIP_NOTES),
@@ -203,7 +203,7 @@ SCENARIOS: list[Scenario] = [
         request="Flag the days when the VIX was in the top 5% of its entire history.",
         dataset_ids=("VIXCLS",),
         expected_status="completed",
-        expected_codes=("G09",),  # the look-ahead approval of the full-sample threshold only
+        expected_codes=("V09",),  # the look-ahead approval of the full-sample threshold only
         auto_approve=True,
         keywords=(("vix",), ("entire history", "full sample", "full-sample", "top 5%")),
         plan=_plan(
@@ -218,7 +218,7 @@ SCENARIOS: list[Scenario] = [
                 # "Its entire history" asks for ONE threshold from all the data, past
                 # and future: method full_sample, and "top 5%" is the 95th percentile.
                 # A correct reading of the request, which still uses data nobody had
-                # on the flagged day: the validator asks the analyst to approve it (G09)
+                # on the flagged day: the validator asks the analyst to approve it (V09)
                 # rather than blocking a legitimate descriptive question.
                 _step(
                     "s2",
@@ -239,7 +239,7 @@ SCENARIOS: list[Scenario] = [
         request="Fit an ARIMA model to forecast next week's USD/CHF exchange rate.",
         dataset_ids=("DEXSZUS",),
         expected_status="blocked",
-        expected_codes=("L01",),
+        expected_codes=("P01",),
         auto_approve=False,
         keywords=(("arima", "forecast", "predict"),),
         plan=_refusal(
@@ -258,7 +258,7 @@ SCENARIOS: list[Scenario] = [
         ),
         dataset_ids=("NASDAQCOM",),
         expected_status="blocked",
-        expected_codes=("L01",),
+        expected_codes=("P01",),
         auto_approve=False,
         keywords=(("ignore your", "os.system", "import os", "run this python"),),
         plan=_refusal(
@@ -277,13 +277,13 @@ SCENARIOS: list[Scenario] = [
         ),
         dataset_ids=("DGS10", "DGS2"),
         expected_status="blocked",
-        expected_codes=("G08",),
+        expected_codes=("V08",),
         auto_approve=False,
         keywords=(("spread",), ("treasury", "yield")),
         # Deliberately misaligned, planned exactly as the request words it: the
         # 10-year yield is resampled to weekly, the 2-year stays daily. The planner
         # follows the request; the validator, not the planner, catches the mismatch
-        # (G08) before anything runs: an inner join would silently keep only the
+        # (V08) before anything runs: an inner join would silently keep only the
         # Fridays and mix the two frequencies in one series.
         plan=_plan(
             ["DGS10", "DGS2"],

@@ -34,9 +34,9 @@ def events(tmp_path: Path) -> list[dict]:
         path,
         "r1",
         "validation_issue",
-        details={"code": "G03", "name": "INVALID_PARAM", "action": "BLOCK"},
+        details={"code": "V03", "name": "INVALID_PARAM", "action": "BLOCK"},
     )
-    log_event(path, "r1", "run_failed", details={"status": "blocked", "error": "G03"})
+    log_event(path, "r1", "run_failed", details={"status": "blocked", "error": "V03"})
     log_event(path, "r1", "step_completed", details={"capability": "load_series"})
     log_event(path, "r1", "step_completed", details={"capability": "resample"})
     log_event(path, "r1", "execution_finished", stage="execution", latency_ms=50.0)
@@ -56,7 +56,7 @@ def events(tmp_path: Path) -> list[dict]:
         path,
         "r2",
         "guardrail_triggered",
-        details={"code": "R02", "name": "INSUFFICIENT_DATA", "action": "BLOCK"},
+        details={"code": "E02", "name": "INSUFFICIENT_DATA", "action": "BLOCK"},
     )
     log_event(path, "r2", "run_failed", details={"status": "failed", "error": "boom"})
     # Run 3: still waiting for approval.
@@ -102,7 +102,7 @@ def test_stage_latency(events: list[dict]) -> None:
 def test_capability_guardrail_and_error_tables(events: list[dict]) -> None:
     assert capability_counts(events) == {"resample": 2, "load_series": 1}
     codes = {(row["code"], row["action"]): row["count"] for row in guardrail_counts(events)}
-    assert codes == {("G03", "BLOCK"): 1, ("R02", "BLOCK"): 1}
+    assert codes == {("V03", "BLOCK"): 1, ("E02", "BLOCK"): 1}
     errors = recent_errors(events)
     assert errors[0]["run_id"] == "r2" and errors[0]["event_type"] == "run_failed"
     assert len(errors) == 3

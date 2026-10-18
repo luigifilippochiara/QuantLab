@@ -6,10 +6,11 @@ rationale for later changes to the product. One short paragraph each: what, why,
 alternatives considered.
 
 Each section uses the guardrail and capability codes, and the guardrail terms,
-in force when it was written. The codes were renumbered twice: in "Simplified
-registry and guardrails, renumbered codes" and in "Guardrails restructured: action,
-enforcer, category" (the last section); each lists every old and new code. Until
-the restructure an issue's action was called its severity, and APPROVE was APPROVAL.
+in force when it was written. The guardrail codes were renumbered three times: in
+"Simplified registry and guardrails, renumbered codes", in "Guardrails restructured:
+action, enforcer, category" and in "Guardrail codes named by pipeline stage" (the
+last renumbering, and the final one); each lists every old and new code. Until the
+restructure an issue's action was called its severity, and APPROVE was APPROVAL.
 
 ## Project setup
 
@@ -1315,3 +1316,62 @@ them. The options are read from the table, in the order of the `Action` and `Cat
 enums and of `ENFORCERS`, so a new guardrail or category appears without a code change.
 The intro says what guardrails are, what each action does and who enforces them; the
 per-enforcer counts were dropped, since the filters and the table show them.
+
+## Guardrail codes named by pipeline stage
+
+**Each prefix names the stage that enforces the guardrail, in pipeline order:** R the
+request check (deterministic, before the planner), P the planner (LLM), V the
+validator (deterministic, before execution), E the executor (deterministic, at run
+time on the data), N the narrator check (deterministic, on the written summary). The
+code alone now says where in the pipeline a guardrail acts, and the table, the
+Guardrails page and its filters list them in that order. `ENFORCERS` stays the one
+place mapping a prefix to its label. Human approval is not a guardrail: it is the
+step where APPROVE issues are resolved, so it has no code.
+
+**R01 REQUEST_TOO_LONG (BLOCK, request check, plan integrity).** The request-length
+check, which was part of the budget guardrail, is its own guardrail, with a word
+limit: more than 1,000 words, or more than 8,000 characters, is refused. Words are
+what a person writes; the character cap (about 1,000 words at 6 characters each,
+with a margin) stops a text without spaces, which counts as one word, slipping
+through. Both limits are constants in `guardrails.py` (`MAX_REQUEST_WORDS`,
+`MAX_REQUEST_CHARS`), not settings; `Settings.max_request_chars` (2,000 characters)
+is gone, so the limit is about four times looser than before, as intended. The check
+runs once, in `Session.create_plan` before the planner, so no tokens are spent on a
+refused request; the evaluation runs it too before calling the planner. It no longer
+runs in `validate_plan`: the request plays no part in execution, and a request R01
+refuses never gets a plan, so V05 BUDGET_EXCEEDED now covers the plan's steps only.
+Alternative: running the check inside `planner.generate_plan`, rejected because a
+refused request would then be logged as a planner failure. Category: plan integrity,
+where the request length already was; no new category.
+
+**Renumbering, one simultaneous pass, and the last one.** Each old code was looked up
+once in an old-to-new table (codes without an entry would have been errors), so the
+old executor codes could not collide with the new R01, which was added by hand
+afterwards; a test checks that every E code is raised in `executor.py` and the
+Guardrails page test that "R0" matches only R01. These codes are now permanent:
+never renumbered or given another meaning (`ASSIGNED_GUARDRAIL_CODES` in
+`tests/test_guardrails.py`). The golden test applies this renaming to every earlier
+record, and a fourth record, "before_stage_codes", holds all five examples and the
+mock eval set as they were just before it.
+
+| Old code | New code | Name |
+|---|---|---|
+| (part of G05) | R01 | REQUEST_TOO_LONG |
+| L01 | P01 | PLANNER_REFUSED |
+| G01 | V01 | INVALID_PLAN |
+| G02 | V02 | UNKNOWN_CAPABILITY |
+| G03 | V03 | INVALID_PARAM |
+| G04 | V04 | TYPE_MISMATCH |
+| G05 | V05 | BUDGET_EXCEEDED |
+| G06 | V06 | UNKNOWN_DATASET |
+| G07 | V07 | RETURNS_ON_RATES |
+| G08 | V08 | FREQUENCY_MISMATCH |
+| G09 | V09 | LOOK_AHEAD |
+| G10 | V10 | MATERIAL_ASSUMPTION |
+| G11 | V11 | FORWARD_DATA_AS_SIGNAL |
+| R01 | E01 | DATASET_HASH_MISMATCH |
+| R02 | E02 | INSUFFICIENT_DATA |
+| R03 | E03 | MISSING_DATA |
+| R04 | E04 | ALIGNMENT_LOSS |
+| R05 | E05 | LOW_EFFECTIVE_SAMPLE |
+| N01 | N01 | UNGROUNDED_NARRATIVE |

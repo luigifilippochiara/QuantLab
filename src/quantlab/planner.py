@@ -18,7 +18,7 @@ as a `submit_plan` tool, and their output goes through the same parse and
 validation. This module is the only one that imports the provider SDKs.
 
 A failed call or unusable output never raises: it comes back as a PlanResult
-with an error and G01 issues, which the UI shows like any other blocked plan.
+with an error and V01 issues, which the UI shows like any other blocked plan.
 """
 
 import copy
@@ -104,7 +104,7 @@ class PlanResult:
 
     Fields:
         plan: the parsed plan, or None if planning failed.
-        issues: G01 issues explaining why there is no plan (empty on success).
+        issues: V01 issues explaining why there is no plan (empty on success).
         raw_output: what the planner returned (the tool input dict, or text), for audit.
         error: one-line error, or None.
         provider: "openai", "anthropic" or "mock".
@@ -149,7 +149,7 @@ def plan_from_output(raw: Any, request: str) -> tuple[Plan | None, list[Issue]]:
         request: the user's request.
 
     Returns:
-        (plan, []) on success, (None, G01 issues) otherwise.
+        (plan, []) on success, (None, V01 issues) otherwise.
     """
     if not isinstance(raw, dict):
         return None, [planner_failure_issue(f"expected a JSON object, got {type(raw).__name__}")]
@@ -272,7 +272,7 @@ def build_user_message(request: str, dataset_ids: list[str]) -> str:
 
 
 def accept_tool_input(result: PlanResult, tool_input: Any, request: str) -> PlanResult:
-    """Record the submit_plan arguments and parse them into a Plan (G01 issues if invalid)."""
+    """Record the submit_plan arguments and parse them into a Plan (V01 issues if invalid)."""
     result.raw_output = tool_input
     result.plan, result.issues = plan_from_output(tool_input, request)
     if result.issues:
@@ -281,7 +281,7 @@ def accept_tool_input(result: PlanResult, tool_input: Any, request: str) -> Plan
 
 
 def planning_failed(result: PlanResult, error: str) -> PlanResult:
-    """Mark a planning attempt as failed, with one G01 issue carrying the reason."""
+    """Mark a planning attempt as failed, with one V01 issue carrying the reason."""
     result.error = error
     result.issues = [planner_failure_issue(error)]
     return result
@@ -304,7 +304,7 @@ class OpenAIPlanner:
     output arrives as structured JSON. strict=False because strict mode requires
     closed objects while plan params are free-form maps; tool_choice="auto"
     plus an explicit instruction, so the same request works on every current
-    model. Schema conformance is enforced by our own Pydantic parse (G01).
+    model. Schema conformance is enforced by our own Pydantic parse (V01).
     """
 
     def __init__(self, settings: Settings, catalog: Catalog, client: Any = None) -> None:
@@ -354,7 +354,7 @@ class OpenAIPlanner:
                 # The cap covers reasoning tokens as well as the visible answer.
                 max_output_tokens=self.settings.planner_max_tokens,
             )
-        except Exception as exc:  # the SDK raises many error types; all become a G01
+        except Exception as exc:  # the SDK raises many error types; all become a V01
             result.latency_ms = _elapsed_ms(started)
             return planning_failed(result, api_error_message(exc, self.settings))
 
@@ -397,7 +397,7 @@ class AnthropicPlanner:
     the output arrives as structured JSON. The tool is not "strict" and not
     forced: forced tool_choice is rejected by current models, and strict mode
     requires closed objects while plan params are free-form maps. Schema
-    conformance is enforced by our own Pydantic parse (G01) instead.
+    conformance is enforced by our own Pydantic parse (V01) instead.
     """
 
     def __init__(self, settings: Settings, catalog: Catalog, client: Any = None) -> None:
@@ -446,7 +446,7 @@ class AnthropicPlanner:
                 betas=[FALLBACK_BETA],
                 fallbacks="default",
             )
-        except Exception as exc:  # the SDK raises many error types; all become a G01
+        except Exception as exc:  # the SDK raises many error types; all become a V01
             result.latency_ms = _elapsed_ms(started)
             return planning_failed(result, api_error_message(exc, self.settings))
 

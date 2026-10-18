@@ -79,7 +79,7 @@ def test_plan_from_output_sets_system_fields_and_rejects_junk() -> None:
     bad = copy.deepcopy(PLAN_A)
     bad["steps"][0]["code"] = "import os"
     plan, issues = plan_from_output(bad, "r")
-    assert plan is None and issues[0].code == "G01"
+    assert plan is None and issues[0].code == "V01"
 
 
 def test_system_prompt_has_registry_and_metadata_but_no_values(catalog: Catalog) -> None:
@@ -116,13 +116,13 @@ def test_live_call_shape_and_success(settings: Settings, catalog: Catalog) -> No
         (FakeAnthropicClient(error=RuntimeError("socket closed")), "socket closed"),
     ],
 )
-def test_planner_failures_become_g01(
+def test_planner_failures_become_v01(
     client: FakeAnthropicClient, expected: str, settings: Settings, catalog: Catalog
 ) -> None:
     result = generate_plan("anything", ["NASDAQCOM"], "live", settings, catalog, client)
     assert result.plan is None
     assert expected in result.error
-    assert {issue.code for issue in result.issues} == {"G01"}
+    assert {issue.code for issue in result.issues} == {"V01"}
 
 
 def test_describe_api_error_is_specific() -> None:
@@ -198,13 +198,13 @@ def test_openai_call_shape_and_success(openai_settings: Settings, catalog: Catal
         (FakeOpenAIClient(error=RuntimeError("socket closed")), "socket closed"),
     ],
 )  # fmt: skip
-def test_openai_failures_become_g01(
+def test_openai_failures_become_v01(
     client: FakeOpenAIClient, expected: str, openai_settings: Settings, catalog: Catalog
 ) -> None:
     result = generate_plan("anything", ["NASDAQCOM"], "live", openai_settings, catalog, client)
     assert result.plan is None
     assert expected in result.error
-    assert {issue.code for issue in result.issues} == {"G01"}
+    assert {issue.code for issue in result.issues} == {"V01"}
 
 
 def test_openai_errors_are_described(openai_settings: Settings) -> None:

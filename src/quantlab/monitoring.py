@@ -231,8 +231,8 @@ def capability_counts(events: list[dict[str, Any]]) -> dict[str, int]:
 def guardrail_counts(events: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """How often each guardrail fired, by code and action.
 
-    Planner refusals and validator issues are logged as validation_issue; the
-    executor's and the narrator check's issues as guardrail_triggered.
+    Request-check, planner-refusal and validator issues are logged as
+    validation_issue; the executor's and the narrator check's as guardrail_triggered.
 
     Args:
         events: all events.

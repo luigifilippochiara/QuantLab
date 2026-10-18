@@ -19,7 +19,7 @@ import streamlit as st
 
 from quantlab.config import Settings, load_settings
 from quantlab.data import Catalog, load_catalog
-from quantlab.guardrails import GUARDRAILS, Action, Category, Issue
+from quantlab.guardrails import ENFORCERS, GUARDRAILS, Action, Issue
 from quantlab.lineage import ReplayReport, TraceResult
 from quantlab.mock_scenarios import SCENARIOS_BY_ID
 from quantlab.narrator import format_number
@@ -48,6 +48,8 @@ STEP_BADGES = {
     Action.WARN: ":yellow-badge[:material/info: Warning]",
 }
 EDITED_BADGE = ":blue-badge[:material/edit: edited]"
+# What a stepless issue concerns, by who enforces it (anything else: the whole plan).
+STEPLESS_PLACES = {ENFORCERS["R"]: "request", ENFORCERS["N"]: "narrative"}
 
 STATUS_BADGE = {
     "completed": ":green-badge[completed]",
@@ -427,8 +429,8 @@ def render_issue(issue: Issue, titles: dict[str, str] | None = None) -> None:
         titles: step id -> step name (see step_titles), e.g. "Step 3 · C03 ·
             Compute returns"; the step is then named as in the plan, with its id.
     """
-    # Issues without a step concern the whole plan, or (N01) the narrative.
-    where = "narrative" if issue.category == Category.OUTPUT_GROUNDING else "whole plan"
+    # Issues without a step concern the whole plan, the request (R01) or the narrative (N01).
+    where = STEPLESS_PLACES.get(issue.enforced_by, "whole plan")
     if issue.step_id:
         title = (titles or {}).get(issue.step_id)
         where = f"{escape_md(title)} ({issue.step_id})" if title else f"step {issue.step_id}"

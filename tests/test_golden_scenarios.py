@@ -1,6 +1,6 @@
 """The example workflows and the mock eval set give exactly the results of their golden records.
 
-tests/fixtures/golden_scenarios.json holds three records. For each example
+tests/fixtures/golden_scenarios.json holds four records. For each example
 workflow, run in mock mode and auto-approved as `cli demo` does, each holds: the
 status, every static and runtime issue, the plan, every step's input and output
 hashes and metadata, the numbers of every output table and the facts sheet, on
@@ -16,12 +16,16 @@ snapshots.
   check, and the mock eval set (each case's plan, issues and score), recorded at
   commit 4e3e09e, before the guardrails were restructured (action, enforced by,
   category, L01 and N01).
+- "before_stage_codes": the same, recorded at commit 81078a9, before the codes
+  were named by pipeline stage (R request check, P planner, V validator, E
+  executor, N narrator check) and the request check R01 was added.
 
 Every result must be the same as recorded. The only allowed differences are the
 changes made on purpose since a record was made (MIGRATIONS), applied in order:
 the simplification translated guardrail codes and removed two parameters from
 the plans; the restructure translated two more codes and renamed an issue's
-"severity" to "action" (APPROVAL to APPROVE). No narrative raises N01.
+"severity" to "action" (APPROVAL to APPROVE); the stage naming translated every
+code but N01. No narrative raises N01, and no example or eval request raises R01.
 
 The fixture is a frozen reference: a record is never regenerated.
 """
@@ -85,15 +89,28 @@ class Migration:
     severity_to_action: bool
 
 
+# Stage naming: L planner -> P, G validator -> V, R executor -> E (same numbers),
+# N01 unchanged. The new R01 (the request check) translates no older code.
+STAGE_CODES = {
+    "L01": "P01",
+    **{f"G{i:02d}": f"V{i:02d}" for i in range(1, 12)},
+    **{f"R{i:02d}": f"E{i:02d}" for i in range(1, 6)},
+    "N01": "N01",
+}
+
 SIMPLIFICATION = Migration(SIMPLIFICATION_CODES, REMOVED_PARAMS, severity_to_action=False)
 RESTRUCTURE = Migration(RESTRUCTURE_CODES, {}, severity_to_action=True)
+STAGES = Migration(STAGE_CODES, {}, severity_to_action=False)
 
 # The changes made since each record was recorded, oldest first.
 MIGRATIONS = {
-    "before_simplification": (SIMPLIFICATION, RESTRUCTURE),
-    "final_examples": (RESTRUCTURE,),
-    "before_restructure": (RESTRUCTURE,),
+    "before_simplification": (SIMPLIFICATION, RESTRUCTURE, STAGES),
+    "final_examples": (RESTRUCTURE, STAGES),
+    "before_restructure": (RESTRUCTURE, STAGES),
+    "before_stage_codes": (STAGES,),
 }
+# The records that hold the mock eval set.
+EVAL_RECORDS = ("before_restructure", "before_stage_codes")
 
 # Output metadata compared step by step (the notes are free text and are not).
 META_FIELDS = ("kind", "frequency", "return_method", "periods", "horizon", "source_dataset_ids")
@@ -346,10 +363,12 @@ def test_scenarios_match_the_golden_record_on_the_committed_snapshots(
 
 
 def test_mock_eval_matches_the_golden_record(golden: dict[str, Any], tmp_path: Path) -> None:
-    recorded = golden["before_restructure"]["eval"]["cases"]
     actual = describe_eval_cases(committed_data_settings(tmp_path / "runs"))
-    assert sorted(actual) == sorted(recorded)  # the eval set itself is unchanged
-    for case_id, case in recorded.items():
-        expected = migrate_case(case, RESTRUCTURE)
-        for part, value in expected.items():
-            assert actual[case_id][part] == value, f"{case_id}: {part} differs"
+    for record in EVAL_RECORDS:
+        recorded = golden[record]["eval"]["cases"]
+        assert sorted(actual) == sorted(recorded)  # the eval set itself is unchanged
+        for case_id, case in recorded.items():
+            for migration in MIGRATIONS[record]:
+                case = migrate_case(case, migration)
+            for part, value in case.items():
+                assert actual[case_id][part] == value, f"{record}: {case_id}: {part} differs"

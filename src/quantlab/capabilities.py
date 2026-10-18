@@ -219,7 +219,7 @@ def compute_returns(series: Artifact, method: str, periods: int = 1) -> Artifact
         raise ValueError("returns need strictly positive levels.")
     ratio = prices / prices.shift(periods)
     # Simple returns compound multiplicatively and aggregate across assets;
-    # log returns add up over time. The choice changes results, hence approval (G10).
+    # log returns add up over time. The choice changes results, hence approval (V10).
     returns = ratio - 1 if method == "simple" else np.log(ratio)
     # The first `periods` values have no earlier price to compare with.
     returns = returns.dropna()
@@ -371,7 +371,7 @@ def flag_regime(
         )
     else:
         # One number computed from ALL observations, including those after t:
-        # look-ahead bias. Allowed only with explicit approval (G09).
+        # look-ahead bias. Allowed only with explicit approval (V09).
         threshold = pd.Series(x.quantile(quantile), index=x.index)
         note = f"flag = value > full-sample {quantile:g} quantile (uses future data)"
 
@@ -402,7 +402,7 @@ def forward_return(series: Artifact, method: str) -> Artifact:
     Why it starts at the close of t: a flag dated t uses data up to the close of t
     (e.g. the volatility of returns ending at t). The forward return begins exactly
     there, so "flag at t -> what happens next" never reuses the data behind the
-    flag. It is future information at t, so it is only ever an OUTCOME (G11).
+    flag. It is future information at t, so it is only ever an OUTCOME (V11).
 
     Args:
         series: SERIES artifact of kind price_level or index_level.

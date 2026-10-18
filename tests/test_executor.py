@@ -1,4 +1,4 @@
-"""Executor: dispatch whitelist, approval gate, runtime guardrails (R codes), dry-run agreement."""
+"""Executor: dispatch whitelist, approval gate, runtime guardrails (E codes), dry-run agreement."""
 
 import shutil
 from pathlib import Path
@@ -57,7 +57,7 @@ def test_blocked_plan_runs_nothing(catalog: Catalog) -> None:
     result = execute_plan(as_plan(ARIMA_PLAN), catalog)
     assert result.status == "blocked"
     assert result.artifacts == {} and result.step_records == []
-    assert runtime_codes(result) == {"G02"}
+    assert runtime_codes(result) == {"V02"}
 
 
 def test_unapproved_plan_runs_nothing(catalog: Catalog) -> None:
@@ -72,7 +72,7 @@ def test_scenario_1_flags_high_volatility_weeks(catalog: Catalog) -> None:
     assert result.status == "completed", result.error
     assert [r.step_id for r in result.step_records] == [f"s{i}" for i in range(1, 9)]
     assert all(r.output_hash and len(r.output_hash) == 64 for r in result.step_records)
-    assert not any(c.startswith("R") for c in runtime_codes(result))
+    assert not any(c.startswith("E") for c in runtime_codes(result))  # no executor warning
     flags = result.artifacts["s5"].value
     # The synthetic index has calm and stressed regimes: some weeks are flagged, not most.
     assert 0.02 < flags.mean() < 0.5
@@ -133,23 +133,23 @@ def test_dry_run_metadata_matches_runtime_metadata(name: str, catalog: Catalog) 
         assert predicted["dataset_ids"] == meta.source_dataset_ids, step_id
 
 
-# --- R01 DATASET_HASH_MISMATCH ----------------------------------------------------
+# --- E01 DATASET_HASH_MISMATCH ----------------------------------------------------
 
 
-def test_r01_tampered_snapshot_blocks_cleanly(catalog: Catalog) -> None:
+def test_e01_tampered_snapshot_blocks_cleanly(catalog: Catalog) -> None:
     path = catalog.path_for("NASDAQCOM")
     path.write_text(path.read_text() + "2099-01-01,1.0\n")
     result = execute_plan(as_plan(raw_plan(SUCCESS)), catalog, set(SCENARIO_1_APPROVALS))
     assert result.status == "blocked"
-    assert "R01" in runtime_codes(result)
+    assert "E01" in runtime_codes(result)
     assert result.step_records[0].status == "blocked"
     assert result.artifacts == {}
 
 
-# --- R02 INSUFFICIENT_DATA --------------------------------------------------------
+# --- E02 INSUFFICIENT_DATA --------------------------------------------------------
 
 
-def test_r02_window_too_long_for_the_history(catalog: Catalog) -> None:
+def test_e02_window_too_long_for_the_history(catalog: Catalog) -> None:
     # 30 years of monthly closes give 359 monthly returns, fewer than 3 x 200.
     plan = Plan(
         plan_id="p",
@@ -164,28 +164,28 @@ def test_r02_window_too_long_for_the_history(catalog: Catalog) -> None:
                  params={"window": 200}),
         ],
     )  # fmt: skip
-    result = execute_plan(fill_defaults(plan), catalog, {"G10:s3:return_method"})
+    result = execute_plan(fill_defaults(plan), catalog, {"V10:s3:return_method"})
     assert result.status == "blocked"
-    assert "R02" in runtime_codes(result)
+    assert "E02" in runtime_codes(result)
     assert result.step_records[-1].step_id == "s4"
 
 
-# --- R03 MISSING_DATA -------------------------------------------------------------
+# --- E03 MISSING_DATA -------------------------------------------------------------
 
 
-def test_r03_gappy_series_warns(tmp_path: Path) -> None:
+def test_e03_gappy_series_warns(tmp_path: Path) -> None:
     build_synthetic_data_dir(tmp_path / "gappy", missing_every=10)  # 10% missing
     gappy = load_catalog(tmp_path / "gappy" / "catalog.json")
     result = execute_plan(as_plan(SPREAD_PLAN), gappy)
     assert result.status == "completed"
-    assert "R03" in runtime_codes(result)
+    assert "E03" in runtime_codes(result)
 
 
-def test_r03_silent_on_normal_series(catalog: Catalog) -> None:
-    assert "R03" not in runtime_codes(execute_plan(as_plan(SPREAD_PLAN), catalog))
+def test_e03_silent_on_normal_series(catalog: Catalog) -> None:
+    assert "E03" not in runtime_codes(execute_plan(as_plan(SPREAD_PLAN), catalog))
 
 
-# --- R04 ALIGNMENT_LOSS -----------------------------------------------------------
+# --- E04 ALIGNMENT_LOSS -----------------------------------------------------------
 
 
 def _weekly(n: int, start: str, kind: SeriesKind = SeriesKind.RATE_LEVEL) -> Artifact:
@@ -194,18 +194,18 @@ def _weekly(n: int, start: str, kind: SeriesKind = SeriesKind.RATE_LEVEL) -> Art
     return Artifact(pd.Series(np.linspace(1, 2, n), index=index), DataType.SERIES, meta)
 
 
-def test_r04_alignment_loss() -> None:
+def test_e04_alignment_loss() -> None:
     step = Step(id="s3", capability="spread")
     spec = REGISTRY["spread"]
     long, short = _weekly(100, "2020-01-03"), _weekly(50, "2020-12-18")
     issues = check_alignment_loss(step, spec, {"a": long, "b": short})
-    assert [i.code for i in issues] == ["R04"]
+    assert [i.code for i in issues] == ["E04"]
     assert "'a'" in issues[0].message
     same = _weekly(100, "2020-01-03")
     assert check_alignment_loss(step, spec, {"a": long, "b": same}) == []
 
 
-def test_r04_real_case_different_start_dates(tmp_path: Path, catalog: Catalog) -> None:
+def test_e04_real_case_different_start_dates(tmp_path: Path, catalog: Catalog) -> None:
     # Drop the first ~15 years of DGS2, as in the real data (DGS2 starts 14 years after DGS10).
     data = tmp_path / "cut"
     shutil.copytree(catalog.base_dir, data)
@@ -213,14 +213,14 @@ def test_r04_real_case_different_start_dates(tmp_path: Path, catalog: Catalog) -
     lines = dgs2.read_text().splitlines()
     dgs2.write_text("\n".join([lines[0], *lines[4000:]]) + "\n")
     cut = load_catalog(data / "catalog.json")
-    # Record the edited file's hash in the catalog, so R01 does not fire first.
+    # Record the edited file's hash in the catalog, so E01 does not fire first.
     cut.entries["DGS2"] = cut.entries["DGS2"].model_copy(update={"sha256": file_sha256(dgs2)})
     result = execute_plan(as_plan(SPREAD_PLAN), cut)
     assert result.status == "completed"
-    assert "R04" in runtime_codes(result)
+    assert "E04" in runtime_codes(result)
 
 
-# --- R05 LOW_EFFECTIVE_SAMPLE -----------------------------------------------------
+# --- E05 LOW_EFFECTIVE_SAMPLE -----------------------------------------------------
 
 
 def _weekly_flags(pattern: str) -> Artifact:
@@ -231,7 +231,7 @@ def _weekly_flags(pattern: str) -> Artifact:
 
 
 @pytest.mark.parametrize("capability", ["compare_groups", "hac_mean_difference"])
-def test_r05_counts_episodes_not_flagged_weeks(capability: str) -> None:
+def test_e05_counts_episodes_not_flagged_weeks(capability: str) -> None:
     spec = REGISTRY[capability]
     outcome_input = spec.inputs[0].name  # "values" or "outcome"
     step = Step(id="s8", capability=capability)
@@ -239,7 +239,7 @@ def test_r05_counts_episodes_not_flagged_weeks(capability: str) -> None:
     few = _weekly_flags(("T" * 10 + "F" * 20) * 3)
     outcome = _weekly(len(few.value), "2020-01-03", SeriesKind.RETURNS)
     issues = check_low_effective_sample(step, spec, {outcome_input: outcome, "flags": few})
-    assert [i.code for i in issues] == ["R05"]
+    assert [i.code for i in issues] == ["E05"]
     assert "30 flagged weeks, but only 3 distinct episode(s)" in issues[0].message
     # 5 short episodes are enough, even with fewer flagged weeks.
     many = _weekly_flags(("TT" + "F" * 16) * 5)
@@ -247,7 +247,7 @@ def test_r05_counts_episodes_not_flagged_weeks(capability: str) -> None:
     assert check_low_effective_sample(step, spec, {outcome_input: outcome, "flags": many}) == []
 
 
-def test_r05_only_concerns_flag_comparisons() -> None:
+def test_e05_only_concerns_flag_comparisons() -> None:
     step = Step(id="s3", capability="spread")
     a, b = _weekly(30, "2020-01-03"), _weekly(30, "2020-01-03")
     assert check_low_effective_sample(step, REGISTRY["spread"], {"a": a, "b": b}) == []

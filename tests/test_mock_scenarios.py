@@ -112,13 +112,13 @@ def test_flagship_request_relies_on_these_registry_defaults() -> None:
     assert REGISTRY["hac_mean_difference"].params == ()
 
 
-def test_flagship_validates_with_exactly_two_g10_approvals(catalog: Catalog) -> None:
+def test_flagship_validates_with_exactly_two_v10_approvals(catalog: Catalog) -> None:
     raw = SCENARIOS_BY_ID["volatility_flag_success"].plan
     plan = fill_defaults(Plan(plan_id="p", request=FLAGSHIP_REQUEST, **raw))
     report = validate_plan(plan, catalog)
     assert [(i.issue_id, i.action) for i in report.issues] == [
-        ("G10:s3:return_method", "APPROVE"),  # log returns for the volatility
-        ("G10:s6:return_method", "APPROVE"),  # simple returns for the outcome
+        ("V10:s3:return_method", "APPROVE"),  # log returns for the volatility
+        ("V10:s6:return_method", "APPROVE"),  # simple returns for the outcome
     ]  # nothing else: no WARN, no BLOCK
     assert "method='log'" in report.issues[0].message
     assert "method='simple'" in report.issues[1].message
@@ -153,15 +153,15 @@ def test_scenario_1_needs_the_return_method_approvals_then_tests(settings: Setti
     assert narrative.grounding.grounded
 
 
-def test_scenario_1_demo_edit_full_sample_raises_g09_for_the_test(settings: Settings) -> None:
+def test_scenario_1_demo_edit_full_sample_raises_v09_for_the_test(settings: Settings) -> None:
     session = start("volatility_flag_success", settings)
     report = session.apply_param_edits({"s5": {"method": "full_sample"}})
-    g09 = next(i for i in report.approvals_required if i.code == "G09")
-    assert "invalidates the significance test in s8" in g09.message
+    v09 = next(i for i in report.approvals_required if i.code == "V09")
+    assert "invalidates the significance test in s8" in v09.message
     session.approve(SCENARIO_1_APPROVALS)
-    with pytest.raises(ExecutionRefusedError, match="G09:s5"):
+    with pytest.raises(ExecutionRefusedError, match="V09:s5"):
         session.execute()
-    session.approve(["G09:s5"])
+    session.approve(["V09:s5"])
     assert session.execute().status == "completed"
 
 
@@ -174,24 +174,24 @@ def test_scenario_1_demo_edit_dataset_to_a_yield_blocks_returns_on_rates(
     assert not any(i.message.startswith("Edit rejected") for i in report.issues)
     assert session.plan.steps[0].params["dataset_id"] == "DGS10"
     # ...that the re-validation blocks: "returns" of a yield are meaningless.
-    g07 = next(i for i in report.blocks if i.code == "G07")
-    assert (g07.name, g07.step_id) == ("RETURNS_ON_RATES", "s3")
-    assert "difference" in g07.suggestion
+    v07 = next(i for i in report.blocks if i.code == "V07")
+    assert (v07.name, v07.step_id) == ("RETURNS_ON_RATES", "s3")
+    assert "difference" in v07.suggestion
     # forward_return (s6) needs a price level too.
-    assert [i.issue_id for i in report.blocks] == ["G07:s3", "G04:s6:series"]
+    assert [i.issue_id for i in report.blocks] == ["V07:s3", "V04:s6:series"]
     with pytest.raises(ExecutionRefusedError):
         session.execute()
 
 
 def test_scenario_2_full_sample_threshold_needs_approval_then_runs(settings: Settings) -> None:
     session = start("vix_full_sample_lookahead", settings)
-    (g09,) = session.report.issues  # the look-ahead approval, and nothing else
-    assert (g09.issue_id, g09.action) == ("G09:s2", "APPROVE")
-    assert "information from the future" in g09.message
-    assert "method='expanding'" in g09.suggestion and "descriptive labelling" in g09.suggestion
-    with pytest.raises(ExecutionRefusedError, match="G09:s2"):
+    (v09,) = session.report.issues  # the look-ahead approval, and nothing else
+    assert (v09.issue_id, v09.action) == ("V09:s2", "APPROVE")
+    assert "information from the future" in v09.message
+    assert "method='expanding'" in v09.suggestion and "descriptive labelling" in v09.suggestion
+    with pytest.raises(ExecutionRefusedError, match="V09:s2"):
         session.execute()  # not without the human's decision
-    session.approve(["G09:s2"])
+    session.approve(["V09:s2"])
     assert session.execute().status == "completed"
     flags = session.execution.artifacts["s2"]
     # Daily flags above the whole history's 95th percentile: about 5% of the days.
@@ -213,7 +213,7 @@ def test_scenario_3_wall_holds_even_if_the_planner_misbehaves(settings: Settings
     request = SCENARIOS_BY_ID["arima_forecast_block"].request
     client = FakeAnthropicClient(tool_response(ARIMA_PLAN))
     session = run_request(request, ["NASDAQCOM"], "live", settings=settings, client=client)
-    assert session.report.codes() == ["G02"]
+    assert session.report.codes() == ["V02"]
     assert session.status == "blocked" and session.execution is None
 
 
@@ -247,10 +247,10 @@ def test_scenario_4_injection_never_reaches_a_shell(
 
 def test_scenario_5_frequency_mismatch_blocks_before_anything_runs(settings: Settings) -> None:
     session = start("spread_frequency_mismatch_block", settings)
-    (g08,) = session.report.issues  # the frequency mismatch, and nothing else
-    assert (g08.issue_id, g08.action) == ("G08:s4", "BLOCK")
-    assert "'a' is weekly, 'b' is daily" in g08.message
-    assert "Resample DGS2 to weekly" in g08.suggestion
+    (v08,) = session.report.issues  # the frequency mismatch, and nothing else
+    assert (v08.issue_id, v08.action) == ("V08:s4", "BLOCK")
+    assert "'a' is weekly, 'b' is daily" in v08.message
+    assert "Resample DGS2 to weekly" in v08.suggestion
     assert session.status == "blocked" and not session.can_execute()[0]
     with pytest.raises(ExecutionRefusedError):
         session.execute()
