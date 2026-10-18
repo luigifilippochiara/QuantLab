@@ -16,7 +16,27 @@ from quantlab.registry import REGISTRY
 
 import ui
 
+# The two decisions on a plan in their own colours: Execute green, Reject plan red.
+# Streamlit has no colour option for a button, so each one has a key, which gives its
+# container a CSS class, and these rules colour it while enabled (a disabled button
+# keeps the neutral disabled look). White text on both: contrast 5.0:1 and 4.8:1.
+DECISION_BUTTON_CSS = """
+<style>
+.st-key-execute button:not(:disabled) {
+  background-color: #188038; border-color: #188038; color: #ffffff;
+}
+.st-key-execute button:not(:disabled):hover { background-color: #137333; border-color: #137333; }
+.st-key-reject-plan button:not(:disabled) {
+  background-color: #d93025; border-color: #d93025; color: #ffffff;
+}
+.st-key-reject-plan button:not(:disabled):hover {
+  background-color: #b3261e; border-color: #b3261e;
+}
+</style>
+"""
+
 settings = ui.get_settings()
+st.html(DECISION_BUTTON_CSS)  # style only: applied without taking space on the page
 catalog = ui.get_catalog(settings)
 
 for key, default in [
@@ -277,6 +297,7 @@ can_reject = not finished and plan is not None and not plan.cannot_fulfill
 execute_col, reject_col = st.columns(2)
 if execute_col.button(
     "Execute",
+    key="execute",
     type="primary",
     icon=":material/play_arrow:",
     disabled=finished or bool(reason),
@@ -290,7 +311,11 @@ if execute_col.button(
             session.save_record()
     st.rerun()
 if reject_col.button(
-    "Reject plan", icon=":material/block:", disabled=not can_reject, width="stretch"
+    "Reject plan",
+    key="reject-plan",
+    icon=":material/block:",
+    disabled=not can_reject,
+    width="stretch",
 ):
     session.reject()
     st.rerun()

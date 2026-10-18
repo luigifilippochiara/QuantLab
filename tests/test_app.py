@@ -226,6 +226,18 @@ def test_scenario_4_shows_a_simulated_planner_blocked_by_v02(app_env: Settings) 
     assert not app.warning
 
 
+def test_execute_is_green_and_reject_red(app_env: Settings) -> None:
+    app = open_page("analysis.py")
+    app.sidebar.button(key="scenario-volatility_flag_success").click().run()
+    button(app, "Generate plan").click().run()
+    # Each decision button has a key, whose CSS class the page's style block colours.
+    assert (app.button(key="execute").label, app.button(key="reject-plan").label) == (
+        "Execute", "Reject plan")  # fmt: skip
+    (style,) = [h.proto.body for h in app.get("html") if "st-key-execute" in h.proto.body]
+    assert ".st-key-execute button:not(:disabled)" in style and "#188038" in style  # green
+    assert ".st-key-reject-plan button:not(:disabled)" in style and "#d93025" in style  # red
+
+
 def test_the_reviewer_can_reject_a_plan(app_env: Settings) -> None:
     app = open_page("analysis.py")
     app.sidebar.button(key="scenario-volatility_flag_success").click().run()
