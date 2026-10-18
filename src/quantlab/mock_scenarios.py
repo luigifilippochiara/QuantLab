@@ -10,12 +10,9 @@ the MockPlanner know these five and nothing else.
    comparison and a significance test of the following week's returns. It runs to
    completion after the analyst approves the two return methods (V10
    MATERIAL_ASSUMPTION, on s3 and s6). Its result carries the audit trail (the trace).
-2. Look-ahead protection (`vix_full_sample_lookahead`): the days when the VIX was
-   in the top 5% of its entire history. The full-sample threshold uses future data,
-   so it needs approval (V09 LOOK_AHEAD). Its action is APPROVE, not BLOCK: a
-   full-sample threshold is acceptable for descriptively labelling past stress days
-   but invalid as a signal or in a backtest. The system cannot know the intent, so
-   the human decides.
+2. Frequency-alignment protection (`spread_frequency_mismatch_block`): the spread
+   of a weekly and a daily yield, planned exactly as requested. The validator, not
+   the planner, catches the mismatch (V08 FREQUENCY_MISMATCH) before anything runs.
 3. Out-of-scope forecast request (`arima_forecast_block`): an ARIMA forecast of
    USD/CHF has no registered capability, so the planner declines (P01
    PLANNER_REFUSED) and lists what the registry can do instead.
@@ -24,9 +21,12 @@ the MockPlanner know these five and nothing else.
    capability (`run_python`); the validator blocks it deterministically (V02
    UNKNOWN_CAPABILITY) before approval, so nothing is ever executed. Example 3 shows
    the planner refusing; this one shows the wall that holds when it does not.
-5. Frequency-alignment protection (`spread_frequency_mismatch_block`): the spread
-   of a weekly and a daily yield, planned exactly as requested. The validator, not
-   the planner, catches the mismatch (V08 FREQUENCY_MISMATCH) before anything runs.
+5. Look-ahead protection (`vix_full_sample_lookahead`): the days when the VIX was
+   in the top 5% of its entire history. The full-sample threshold uses future data,
+   so it needs approval (V09 LOOK_AHEAD). Its action is APPROVE, not BLOCK: a
+   full-sample threshold is acceptable for descriptively labelling past stress days
+   but invalid as a signal or in a backtest. The system cannot know the intent, so
+   the human decides.
 
 Role in the architecture: data, shared by
 - the MockPlanner (returns these plans instead of calling an LLM, so the whole
@@ -202,39 +202,53 @@ SCENARIOS: list[Scenario] = [
         plan=_plan(["NASDAQCOM"], FLAGSHIP_STEPS, FLAGSHIP_NOTES),
     ),
     Scenario(
-        id="vix_full_sample_lookahead",
+        id="spread_frequency_mismatch_block",
         number=2,
-        label="2 · Look-ahead protection",
-        request="Flag the days when the VIX was in the top 5% of its entire history.",
-        dataset_ids=("VIXCLS",),
-        expected_status="completed",
-        expected_codes=("V09",),  # the look-ahead approval of the full-sample threshold only
-        auto_approve=True,
-        keywords=(("vix",), ("entire history", "full sample", "full-sample", "top 5%")),
+        label="2 · Frequency-alignment protection",
+        request=(
+            "Compute the spread between the weekly 10-year Treasury yield and the daily "
+            "2-year Treasury yield."
+        ),
+        dataset_ids=("DGS10", "DGS2"),
+        expected_status="blocked",
+        expected_codes=("V08",),
+        auto_approve=False,
+        keywords=(("spread",), ("treasury", "yield")),
+        # Deliberately misaligned, planned exactly as the request words it: the
+        # 10-year yield is resampled to weekly, the 2-year stays daily. The planner
+        # follows the request; the validator, not the planner, catches the mismatch
+        # (V08) before anything runs: an inner join would silently keep only the
+        # Fridays and mix the two frequencies in one series.
         plan=_plan(
-            ["VIXCLS"],
+            ["DGS10", "DGS2"],
             [
                 _step(
                     "s1",
                     "load_series",
-                    params={"dataset_id": "VIXCLS"},
-                    rationale="Load the VIX closing levels.",
+                    params={"dataset_id": "DGS10"},
+                    rationale="Load the daily 10-year Treasury yield.",
                 ),
-                # "Its entire history" asks for ONE threshold from all the data, past
-                # and future: method full_sample, and "top 5%" is the 95th percentile.
-                # A correct reading of the request, which still uses data nobody had
-                # on the flagged day: the validator asks the analyst to approve it (V09)
-                # rather than blocking a legitimate descriptive question.
                 _step(
                     "s2",
-                    "flag_regime",
+                    "resample",
                     {"series": "s1"},
-                    {"method": "full_sample", "quantile": 0.95},
-                    rationale="Flag the days above the 95th percentile of the whole VIX history.",
+                    {"freq": "W", "how": "last"},
+                    rationale="Weekly (Friday) 10-year yield, as requested.",
+                ),
+                _step(
+                    "s3",
+                    "load_series",
+                    params={"dataset_id": "DGS2"},
+                    rationale="Load the daily 2-year Treasury yield, kept daily as requested.",
+                ),
+                _step(
+                    "s4",
+                    "spread",
+                    {"a": "s2", "b": "s3"},
+                    rationale="10-year minus 2-year yield.",
                 ),
             ],
-            "The request explicitly asks for a threshold from the entire history, so the "
-            "flags use a full-sample threshold (future data included).",
+            "The 10-year yield is weekly and the 2-year yield daily, as the request states.",
         ),
     ),
     Scenario(
@@ -296,53 +310,39 @@ SCENARIOS: list[Scenario] = [
         ),
     ),
     Scenario(
-        id="spread_frequency_mismatch_block",
+        id="vix_full_sample_lookahead",
         number=5,
-        label="5 · Frequency-alignment protection",
-        request=(
-            "Compute the spread between the weekly 10-year Treasury yield and the daily "
-            "2-year Treasury yield."
-        ),
-        dataset_ids=("DGS10", "DGS2"),
-        expected_status="blocked",
-        expected_codes=("V08",),
-        auto_approve=False,
-        keywords=(("spread",), ("treasury", "yield")),
-        # Deliberately misaligned, planned exactly as the request words it: the
-        # 10-year yield is resampled to weekly, the 2-year stays daily. The planner
-        # follows the request; the validator, not the planner, catches the mismatch
-        # (V08) before anything runs: an inner join would silently keep only the
-        # Fridays and mix the two frequencies in one series.
+        label="5 · Look-ahead protection",
+        request="Flag the days when the VIX was in the top 5% of its entire history.",
+        dataset_ids=("VIXCLS",),
+        expected_status="completed",
+        expected_codes=("V09",),  # the look-ahead approval of the full-sample threshold only
+        auto_approve=True,
+        keywords=(("vix",), ("entire history", "full sample", "full-sample", "top 5%")),
         plan=_plan(
-            ["DGS10", "DGS2"],
+            ["VIXCLS"],
             [
                 _step(
                     "s1",
                     "load_series",
-                    params={"dataset_id": "DGS10"},
-                    rationale="Load the daily 10-year Treasury yield.",
+                    params={"dataset_id": "VIXCLS"},
+                    rationale="Load the VIX closing levels.",
                 ),
+                # "Its entire history" asks for ONE threshold from all the data, past
+                # and future: method full_sample, and "top 5%" is the 95th percentile.
+                # A correct reading of the request, which still uses data nobody had
+                # on the flagged day: the validator asks the analyst to approve it (V09)
+                # rather than blocking a legitimate descriptive question.
                 _step(
                     "s2",
-                    "resample",
+                    "flag_regime",
                     {"series": "s1"},
-                    {"freq": "W", "how": "last"},
-                    rationale="Weekly (Friday) 10-year yield, as requested.",
-                ),
-                _step(
-                    "s3",
-                    "load_series",
-                    params={"dataset_id": "DGS2"},
-                    rationale="Load the daily 2-year Treasury yield, kept daily as requested.",
-                ),
-                _step(
-                    "s4",
-                    "spread",
-                    {"a": "s2", "b": "s3"},
-                    rationale="10-year minus 2-year yield.",
+                    {"method": "full_sample", "quantile": 0.95},
+                    rationale="Flag the days above the 95th percentile of the whole VIX history.",
                 ),
             ],
-            "The 10-year yield is weekly and the 2-year yield daily, as the request states.",
+            "The request explicitly asks for a threshold from the entire history, so the "
+            "flags use a full-sample threshold (future data included).",
         ),
     ),
 ]

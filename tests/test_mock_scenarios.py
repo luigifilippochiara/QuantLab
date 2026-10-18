@@ -37,6 +37,19 @@ def start(scenario_id: str, settings: Settings) -> Session:
     return session
 
 
+def test_examples_are_numbered_in_list_order() -> None:
+    # The order of the sidebar buttons and of `cli demo`: the core analysis, then
+    # the blocks, and the look-ahead approval last.
+    assert [(s.number, s.id) for s in SCENARIOS] == [
+        (1, "volatility_flag_success"),
+        (2, "spread_frequency_mismatch_block"),
+        (3, "arima_forecast_block"),
+        (4, "prompt_injection_unknown_capability"),
+        (5, "vix_full_sample_lookahead"),
+    ]
+    assert all(s.label.startswith(f"{s.number} · ") for s in SCENARIOS)
+
+
 @pytest.mark.parametrize("scenario", SCENARIOS, ids=lambda s: s.id)
 def test_scenario_end_to_end(scenario: Scenario, settings: Settings) -> None:
     session = run_request(

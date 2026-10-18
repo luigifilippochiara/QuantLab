@@ -297,7 +297,7 @@ def test_v07_returns_on_rates_replaces_generic_type_error(catalog: Catalog) -> N
 
 
 def test_v08_spread_of_a_weekly_and_a_daily_yield(catalog: Catalog) -> None:
-    report = validate(raw_plan("spread_frequency_mismatch_block"), catalog)  # scenario 5
+    report = validate(raw_plan("spread_frequency_mismatch_block"), catalog)  # scenario 2
     assert report.is_blocked and report.codes() == ["V08"]
     (v08,) = report.issues
     assert v08.step_id == "s4"  # the spread step
@@ -325,7 +325,7 @@ def test_v08_spread_of_weekly_and_daily_series(catalog: Catalog) -> None:
 
 
 def test_v09_full_sample_threshold_needs_approval_and_explains_why(catalog: Catalog) -> None:
-    report = validate(raw_plan("vix_full_sample_lookahead"), catalog)  # scenario 2
+    report = validate(raw_plan("vix_full_sample_lookahead"), catalog)  # scenario 5
     assert not report.is_blocked
     assert [i.issue_id for i in report.approvals_required] == ["V09:s2"]
     v09 = report.approvals_required[0]
@@ -343,7 +343,7 @@ def test_v09_says_when_it_also_invalidates_the_significance_test(catalog: Catalo
     assert v09.issue_id == "V09:s5"  # unchanged id: the message is extra, the approval the same
     assert "It also invalidates the significance test in s8" in v09.message
     assert "would not have been" in v09.message
-    # Without a test downstream (scenario 2), the message does not mention one.
+    # Without a test downstream (scenario 5), the message does not mention one.
     plain = validate(raw_plan("vix_full_sample_lookahead"), catalog).approvals_required[0]
     assert "significance test" not in plain.message
 

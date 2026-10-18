@@ -129,14 +129,12 @@ app or with `cli demo`.
    the high-volatility weeks shaded, both groups' means and standard deviations,
    the number of distinct episodes, and the test's difference, p-value and 95%
    confidence interval.
-2. **Look-ahead protection** (`vix_full_sample_lookahead`): "Flag the days when
-   the VIX was in the top 5% of its entire history." The plan flags the days above
-   the 95th percentile of the whole VIX history, a full-sample threshold that uses
-   data nobody had on the flagged day. QuantLab runs it only with explicit approval
-   (V09), explains that such a threshold judges past days using information from
-   the future, and recommends the expanding method. It is an approval, not a
-   block: a full-sample threshold is fine for labelling past stress days but
-   invalid as a signal or in a backtest, and only the analyst knows which is meant.
+2. **Frequency-alignment protection** (`spread_frequency_mismatch_block`):
+   "Compute the spread between the weekly 10-year Treasury yield and the daily
+   2-year Treasury yield." Planned exactly as asked, the spread of a weekly and a
+   daily series would silently keep only the Fridays and mix two frequencies. The
+   validator, not the planner, blocks it (V08) before anything runs and states the
+   fix: resample the 2-year yield to weekly first.
 3. **Out-of-scope forecast request** (`arima_forecast_block`): "Fit an ARIMA
    model to forecast the USD/CHF exchange rate for next week." The registry has no
    capability that fits a model or makes a forecast, so the planner declines
@@ -154,12 +152,14 @@ app or with `cli demo`.
    example 3); this example shows the wall that holds when it does not, and
    automated tests confirm that nothing from the request reaches a shell or a
    subprocess.
-5. **Frequency-alignment protection** (`spread_frequency_mismatch_block`):
-   "Compute the spread between the weekly 10-year Treasury yield and the daily
-   2-year Treasury yield." Planned exactly as asked, the spread of a weekly and a
-   daily series would silently keep only the Fridays and mix two frequencies. The
-   validator, not the planner, blocks it (V08) before anything runs and states the
-   fix: resample the 2-year yield to weekly first.
+5. **Look-ahead protection** (`vix_full_sample_lookahead`): "Flag the days when
+   the VIX was in the top 5% of its entire history." The plan flags the days above
+   the 95th percentile of the whole VIX history, a full-sample threshold that uses
+   data nobody had on the flagged day. QuantLab runs it only with explicit approval
+   (V09), explains that such a threshold judges past days using information from
+   the future, and recommends the expanding method. It is an approval, not a
+   block: a full-sample threshold is fine for labelling past stress days but
+   invalid as a signal or in a backtest, and only the analyst knows which is meant.
 
 **Example output.** For example workflow 1 on the 1971-2026 NASDAQ snapshot,
 QuantLab reports that 446 of 2,842 weeks (15.7%) had a 12-week annualised
@@ -213,7 +213,7 @@ then switching to cached: the request stays in the box) then returns their
 plans instantly and identically, even on a slow network (the
 narrator still calls the model, and falls back to the deterministic template if
 it cannot). A live model may decline a request for a different reason than the
-canned plan (for example refuse example 5 outright with P01, rather than
+canned plan (for example refuse example 2 outright with P01, rather than
 proposing the misaligned spread that the validator blocks with V08); the command
 only checks that blocked workflows stay blocked.
 

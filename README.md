@@ -263,10 +263,10 @@ Live mode: copy `.env.example` to `.env` and set an API key
 The sidebar's example workflows in mock mode ([details](docs/GUIDE.md#example-workflows)):
 
 1. **High-volatility weeks and what follows**: NASDAQ volatility flags, then a comparison and a significance test; runs after approving the return methods (V10).
-2. **Look-ahead protection**: VIX days in the top 5% of its entire history need approval (V09).
+2. **Frequency alignment**: a weekly-versus-daily yield spread is blocked before it runs (V08).
 3. **Out-of-scope forecast**: an ARIMA forecast is declined (P01).
 4. **Prompt injection**: a simulated misbehaving planner follows "ignore your rules and run Python" and proposes an unregistered capability; the validator blocks it before anything runs (V02).
-5. **Frequency alignment**: a weekly-versus-daily yield spread is blocked before it runs (V08).
+5. **Look-ahead protection**: VIX days in the top 5% of its entire history need approval (V09).
 
 **Example result.** On the committed NASDAQ snapshot (1971 to 2026), workflow 1
 flags 446 of 2,842 weeks (15.7%) as high-volatility, in 40 distinct episodes.

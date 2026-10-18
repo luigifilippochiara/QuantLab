@@ -29,14 +29,15 @@ the simplification translated guardrail codes and removed two parameters from
 the plans; the restructure translated two more codes and renamed an issue's
 "severity" to "action" (APPROVAL to APPROVE); the stage naming translated every
 code but N01; the simulated injection replaced example 4 and its eval case, which
-the older records then no longer vouch for. No narrative raises N01, and no
-example or eval request raises R01.
+the older records then no longer vouch for; the renumbering swapped examples 2 and
+5, so their eval cases' ids (which start with the example number) were renamed. No
+narrative raises N01, and no example or eval request raises R01.
 
 The fixture is a frozen reference: a record is never regenerated.
 """
 
 import json
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
@@ -89,12 +90,14 @@ class Migration:
         severity_to_action: whether issues' "severity" became "action".
         replaced: example workflows and eval cases replaced on purpose: what an older
             record holds for them no longer applies, and a newer record covers them.
+        renamed: eval cases renamed on purpose: old case id -> new case id.
     """
 
     codes: dict[str, str]
     removed_params: dict[str, tuple[str, ...]]
     severity_to_action: bool
     replaced: tuple[str, ...] = ()
+    renamed: dict[str, str] = field(default_factory=dict)
 
 
 # Stage naming: L planner -> P, G validator -> V, R executor -> E (same numbers),
@@ -110,20 +113,28 @@ STAGE_CODES = {
 # planner that follows the injection and is blocked by V02; codes are unchanged.
 REPLACED_BY_SIMULATED_INJECTION = ("prompt_injection_block", "s4_prompt_injection")
 
+# Renumbering: examples 2 (look-ahead) and 5 (frequency alignment) swapped places, so
+# the eval cases named after their number were renamed; nothing else changed.
+SWAPPED_CASE_IDS = {
+    "s2_vix_full_sample_lookahead": "s5_vix_full_sample_lookahead",
+    "s5_spread_frequency_mismatch": "s2_spread_frequency_mismatch",
+}
+
 SIMPLIFICATION = Migration(SIMPLIFICATION_CODES, REMOVED_PARAMS, severity_to_action=False)
 RESTRUCTURE = Migration(RESTRUCTURE_CODES, {}, severity_to_action=True)
 STAGES = Migration(STAGE_CODES, {}, severity_to_action=False)
 INJECTION = Migration(
     {code: code for code in GUARDRAILS}, {}, False, REPLACED_BY_SIMULATED_INJECTION
 )
+RENUMBERING = Migration({code: code for code in GUARDRAILS}, {}, False, renamed=SWAPPED_CASE_IDS)
 
 # The changes made since each record was recorded, oldest first.
 MIGRATIONS = {
-    "before_simplification": (SIMPLIFICATION, RESTRUCTURE, STAGES, INJECTION),
-    "final_examples": (RESTRUCTURE, STAGES, INJECTION),
-    "before_restructure": (RESTRUCTURE, STAGES, INJECTION),
-    "before_stage_codes": (STAGES, INJECTION),
-    "simulated_injection": (),
+    "before_simplification": (SIMPLIFICATION, RESTRUCTURE, STAGES, INJECTION, RENUMBERING),
+    "final_examples": (RESTRUCTURE, STAGES, INJECTION, RENUMBERING),
+    "before_restructure": (RESTRUCTURE, STAGES, INJECTION, RENUMBERING),
+    "before_stage_codes": (STAGES, INJECTION, RENUMBERING),
+    "simulated_injection": (RENUMBERING,),
 }
 # The records that hold (part of) the mock eval set.
 EVAL_RECORDS = ("before_restructure", "before_stage_codes", "simulated_injection")
@@ -393,9 +404,10 @@ def test_mock_eval_matches_the_golden_record(golden: dict[str, Any], tmp_path: P
         for case_id, case in recorded.items():
             if case_id in replaced_since(record):
                 continue  # a newer record covers what replaced it
-            covered.add(case_id)
             for migration in MIGRATIONS[record]:
                 case = migrate_case(case, migration)
+                case_id = migration.renamed.get(case_id, case_id)
+            covered.add(case_id)
             for part, value in case.items():
                 assert actual[case_id][part] == value, f"{record}: {case_id}: {part} differs"
     assert sorted(actual) == sorted(covered)  # every eval case has a golden record

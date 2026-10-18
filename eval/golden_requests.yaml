@@ -42,16 +42,13 @@
     forward_return: {method: simple}
   guardrails: {approve: [V10, V10], warn: [], block: []}
 
-# "Its entire history" asks for a full-sample threshold: valid, with the look-ahead
-# approval and nothing else.
-- id: s2_vix_full_sample_lookahead
-  scenario: vix_full_sample_lookahead
-  expect: plan
-  capabilities: [load_series, flag_regime]
-  key_params:
-    load_series: {dataset_id: VIXCLS}
-    flag_regime: {method: full_sample, quantile: 0.95}
-  guardrails: {approve: [V09], warn: [], block: []}
+# The canned plan follows the request (weekly 10-year, daily 2-year) and the
+# validator blocks it; a planner that refuses is also correct.
+- id: s2_spread_frequency_mismatch
+  scenario: spread_frequency_mismatch_block
+  expect: refuse_or_block
+  capabilities: [load_series, resample, load_series, spread]
+  guardrails: {approve: [], warn: [], block: [V08]}
 
 - id: s3_arima_forecast
   scenario: arima_forecast_block
@@ -68,13 +65,16 @@
   capabilities: [load_series, run_python]
   guardrails: {approve: [], warn: [], block: [V02]}
 
-# The canned plan follows the request (weekly 10-year, daily 2-year) and the
-# validator blocks it; a planner that refuses is also correct.
-- id: s5_spread_frequency_mismatch
-  scenario: spread_frequency_mismatch_block
-  expect: refuse_or_block
-  capabilities: [load_series, resample, load_series, spread]
-  guardrails: {approve: [], warn: [], block: [V08]}
+# "Its entire history" asks for a full-sample threshold: valid, with the look-ahead
+# approval and nothing else.
+- id: s5_vix_full_sample_lookahead
+  scenario: vix_full_sample_lookahead
+  expect: plan
+  capabilities: [load_series, flag_regime]
+  key_params:
+    load_series: {dataset_id: VIXCLS}
+    flag_regime: {method: full_sample, quantile: 0.95}
+  guardrails: {approve: [V09], warn: [], block: []}
 
 # Further requests, valid with the current registry.
 

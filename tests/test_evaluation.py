@@ -9,7 +9,7 @@ from quantlab.config import Settings
 from quantlab.data import Catalog
 from quantlab.evaluation import GoldenCase, load_golden, run_evaluation, score_case, write_report
 from quantlab.guardrails import MAX_REQUEST_WORDS
-from quantlab.mock_scenarios import SCENARIOS_BY_ID
+from quantlab.mock_scenarios import SCENARIOS, SCENARIOS_BY_ID
 
 from fakes import FakeAnthropicClient, tool_response
 
@@ -23,10 +23,17 @@ def test_golden_file_resolves_scenarios() -> None:
     assert len(adversarial) >= 4
 
 
+def test_golden_file_starts_with_the_example_workflows_in_order() -> None:
+    # Each example's case id starts with its number, e.g. "s2_" for example 2.
+    first = load_golden()[: len(SCENARIOS)]
+    assert [case.request for case in first] == [s.request for s in SCENARIOS]
+    assert [case.id.split("_")[0] for case in first] == [f"s{s.number}" for s in SCENARIOS]
+
+
 def test_mock_evaluation_scores_and_report(settings: Settings, tmp_path: Path) -> None:
     report = run_evaluation("mock", settings)
     scores = {s.case_id: s for s in report.scores}
-    for case_id in ["s1_volatility_flag_success", "s2_vix_full_sample_lookahead"]:
+    for case_id in ["s1_volatility_flag_success", "s5_vix_full_sample_lookahead"]:
         assert (
             scores[case_id].correct and scores[case_id].params_hit == scores[case_id].params_total
         )
@@ -47,7 +54,7 @@ def test_mock_evaluation_scores_and_report(settings: Settings, tmp_path: Path) -
 
 
 def test_example_workflows_report_their_canned_outcome_item_by_item(settings: Settings) -> None:
-    report = run_evaluation("mock", settings, case_ids=["s5_spread_frequency_mismatch"])
+    report = run_evaluation("mock", settings, case_ids=["s2_spread_frequency_mismatch"])
     (score,) = report.scores
     assert score.correct and score.guardrails_match  # blocked, by V08, as canned
     items = {c.item: (c.expected, c.actual, c.match) for c in score.checks}
@@ -58,8 +65,8 @@ def test_example_workflows_report_their_canned_outcome_item_by_item(settings: Se
 def test_a_different_block_reason_is_reported_but_still_correct(
     settings: Settings, catalog: Catalog
 ) -> None:
-    # A live planner that refuses scenario 5 outright instead of planning it.
-    case = next(c for c in load_golden() if c.id == "s5_spread_frequency_mismatch")
+    # A live planner that refuses scenario 2 outright instead of planning it.
+    case = next(c for c in load_golden() if c.id == "s2_spread_frequency_mismatch")
     refusal = {"dataset_ids": [], "steps": [], "cannot_fulfill": True, "refusal_reason": "no"}
     score = score_case(case, settings, catalog, "live", FakeAnthropicClient(tool_response(refusal)))
     assert score.correct and score.guardrails_match is False

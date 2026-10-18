@@ -106,10 +106,10 @@ def print_session(session: Session) -> None:
 def cmd_demo(args: argparse.Namespace, settings: Settings) -> int:
     """Run example workflows 1-5 headlessly, then print example 1's trace (the audit trail).
 
-    Only scenarios 1 and 2 are auto-approved; blocked scenarios stay blocked. In
+    Only scenarios 1 and 5 are auto-approved; blocked scenarios stay blocked. In
     mock mode the plans are the canned ones, so both the status and the issue
     codes must match. With a real LLM (live/cached) only the status is checked:
-    the LLM may legitimately block for a different reason, e.g. refuse scenario 5
+    the LLM may legitimately block for a different reason, e.g. refuse scenario 2
     outright (P01) instead of proposing a plan that the validator blocks (V08).
     Running it in live mode also fills the plan cache for later cached-mode sessions.
     """

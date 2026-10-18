@@ -200,7 +200,7 @@ ARIMA_PLAN: dict[str, Any] = {
 }
 
 # The approvals scenario 1 needs: the return-method assumption of compute_returns
-# (s3, also scenario 2's) and of forward_return (s6).
+# (s3) and of forward_return (s6).
 RETURN_METHOD_APPROVAL = "V10:s3:return_method"
 FORWARD_METHOD_APPROVAL = "V10:s6:return_method"
 SCENARIO_1_APPROVALS = [RETURN_METHOD_APPROVAL, FORWARD_METHOD_APPROVAL]

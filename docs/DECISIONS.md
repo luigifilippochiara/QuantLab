@@ -1627,3 +1627,17 @@ comma. To fit five equal cards at laptop width, two captions got shorter: the
 modes read "1 live, 0 cached, 7 mock", and a card that misses its target no longer
 writes "Needs attention" (earlier sections): its orange background, orange caption
 and the warning icon on its title signal it, so colour is still not the only cue.
+
+## Examples 2 and 5 swapped
+
+**Example 2 is now frequency alignment (`spread_frequency_mismatch_block`, V08) and
+example 5 look-ahead protection (`vix_full_sample_lookahead`, V09)**, so the sidebar
+and `cli demo` show the core analysis, then the three blocks, and the one approval
+last. Nothing else about either example changed: request, plan, codes and results are
+the same. The number is part of the label ("2 · Frequency-alignment protection"), of
+the MockPlanner's aliases ("2") and of the two eval case ids, now
+`s2_spread_frequency_mismatch` and `s5_vix_full_sample_lookahead`, reordered in
+`eval/golden_requests.yaml`. The golden fixture stays frozen: a `RENUMBERING`
+migration in `tests/test_golden_scenarios.py` maps the recorded ids to the new ones.
+Earlier sections of this file keep the numbers they were written with. Alternative:
+keep the old eval ids, rejected because an "s2_" case would then be example 5.
