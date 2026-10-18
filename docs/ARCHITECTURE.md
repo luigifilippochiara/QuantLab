@@ -78,8 +78,8 @@ flowchart LR
 
 | Module (`src/quantlab/`) | Role |
 |---|---|
-| `config.py` | Settings from `.env`: API key, models, LLM mode, paths, budgets |
-| `types.py` | `DataType`, `SeriesKind`, `Frequency`; `Artifact` (value + explicit metadata); canonical hashing |
+| `config.py` | Settings from `.env`: API key, models, LLM mode, paths, budgets; LLM prices for the cost shown on the Monitoring page |
+| `types.py` | `DataType`, `SeriesKind`, `Frequency`; `Artifact` (value + explicit metadata); canonical hashing; `TokenUsage` (tokens of an LLM stage) |
 | `data.py` | Catalog, FRED CSV parsing, SHA-256 verification, LLM-safe dataset metadata |
 | `capabilities.py` | The quantitative functions: the only code that calls pandas/numpy/statsmodels for analysis |
 | `registry.py` | Capability specs, the `REGISTRY` whitelist, generated LLM summary and registry version |
@@ -90,8 +90,8 @@ flowchart LR
 | `planner.py` | OpenAI and Anthropic planners, mock planner, plan cache |
 | `narrator.py` | Facts sheet, LLM narrator, template fallback, numeric grounding check (N01) |
 | `lineage.py` | Run record (manifest), save/load, replay, trace |
-| `monitoring.py` | Append-only JSONL event log and dashboard aggregations |
-| `engine.py` | `Session`: plan, validate, edit, approve, execute, narrate, save; used by app, CLI, notebooks |
+| `monitoring.py` | Append-only JSONL event log; the Monitoring page's metrics, from run records and events, and its attention thresholds |
+| `engine.py` | `Session`: plan, validate, edit, approve, reject or execute, narrate, save; used by app, CLI, notebooks |
 | `evaluation.py` | Planner evaluation on golden requests |
 | `cli.py` | `python -m quantlab.cli demo / run / replay / trace / eval` |
 

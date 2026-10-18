@@ -1404,3 +1404,65 @@ derived from the table by code, but as Pydantic computed fields they are written
 into every manifest, so a reader of a run record sees them without the code, and
 they are ignored when a record is loaded (nothing is stored twice or read back).
 This replaces the earlier choice of keeping them out of run records.
+
+## Monitoring page: review decisions, tokens and cost
+
+**Two sources, one per kind of question.** Per-run numbers (activity, human review,
+tokens and cost, latency, failures) come from the run records, one per run in its
+final state. Events that can happen several times in a run or after it (guardrail
+firings, including one raised by an edit and then fixed; capability executions;
+replays) come from the event log. The event-only aggregations the page used before
+(`kpis`, `run_outcomes`, `stage_latency`, `recent_errors`) were replaced; every
+metric is a plain function in `monitoring.py` with unit tests. The filters (creation
+date, planner model and prompt version, all already in the record) select runs, and
+the events are restricted to those runs.
+
+**Every plan shown is on record.** The engine saves the run record each time a plan
+is validated, with status `ready` while it awaits a decision, so a plan nobody
+decided on (abandoned) exists as a record, not only as events.
+
+**Approving and rejecting are recorded decisions.** Executing a plan is its approval
+(`decision="approved"`, with `decided_at`); the new **Reject plan** button on the
+Analysis page (`Session.reject`) ends the run unexecuted with status `rejected` and a
+`plan_rejected` event. Rejected is a status, not only a decision, so each run falls in
+exactly one Activity card. A rejected or still-undecided plan is not replayed (there
+is nothing to compare), and no replay event is logged, so it cannot lower the replay
+match rate.
+
+**Human-review metrics count only interactive runs.** `interactive` is True for runs
+started on the Analysis page and False for headless runs (CLI, notebooks, demo),
+whose caller approves automatically: counting those would make approval rate and
+approval time meaningless (milliseconds, always approved). The page says how many
+headless runs were left out. Alternative rejected: one `decided_by` field, which would
+not cover a headless run that stops without a decision. Definitions: approval rate =
+approved / plans shown; abandoned = shown but neither approved nor rejected (including
+one still awaiting a decision); edit rate = approved plans whose final parameters
+differ from the proposal (`param_diff`, so an edit later undone does not count);
+approval time = from `plan_shown_at` (when planning finished and the plan was ready
+to show) to the approval; N01 failure rate = narratives with an N01 issue / narratives
+recorded since N01 existed; P01 refusal rate = refusals / requests that reached the
+planner (an R01 refusal never did).
+
+**Tokens per stage, never estimated.** `stage_tokens` (next to `stage_timings_ms`)
+holds a `TokenUsage` per LLM stage: the counts the API reported, None if a call failed
+before answering. A mock run records zeros. A cached plan records zero planner tokens
+and, as saved, the tokens of the call that created it (kept in the cache entry). The
+narrator's usage covers every call it made, including a withheld (N01) or unusable
+answer, which was billed. `LLMInfo.input_tokens`/`output_tokens` are unchanged (for a
+cache hit they still hold the original call's counts), so older records keep their
+meaning. `TokenUsage` lives in `types.py`, below the planner and the narrator, which
+both report it. A request refused by R01 now names the configured planner (model and
+prompt version) in its record rather than "mock", with no tokens, so the model filter
+groups it correctly.
+
+**Cost from hardcoded prices.** `config.LLM_PRICES_PER_MILLION_TOKENS` holds GPT-6
+Luna at $0.10 input and $0.50 output per million tokens (OpenAI's pricing, checked on
+2026-10-18), with the date and source next to it. Costs are computed when the page is
+shown, so a price update applies to every run. Mock runs are left out of cost; a model
+without a price shows n/a; prompt-caching and batch discounts are ignored, so costs are
+upper bounds.
+
+**Attention thresholds in one constant.** `monitoring.ATTENTION_THRESHOLDS`: replay
+match rate below 100%, N01 failure rate above 0%, failed runs above 0. Streamlit cannot
+colour a whole card without custom CSS, so an amber card shows an orange "Needs
+attention" line under its value and a warning icon.

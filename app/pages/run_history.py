@@ -3,7 +3,7 @@
 import pandas as pd
 import streamlit as st
 
-from quantlab.lineage import list_runs, load_run, replay, trace
+from quantlab.lineage import NEVER_EXECUTED, list_runs, load_run, replay, trace
 
 import ui
 
@@ -84,6 +84,8 @@ with st.container(border=True):
 st.subheader("Replay")
 if record.plan_final is None:
     st.caption("This run has no plan, so there is nothing to replay.")
+elif record.status in NEVER_EXECUTED:
+    st.caption(f"This plan was never executed ({record.status}), so there is nothing to replay.")
 elif st.button("Replay without the LLM", type="primary", icon=":material/replay:"):
     ui.render_replay(replay(run_id, settings), catalog)
 

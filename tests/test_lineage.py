@@ -14,6 +14,7 @@ from quantlab.lineage import (
     environment_info,
     list_runs,
     load_run,
+    load_runs,
     new_run_id,
     replay,
     save_run,
@@ -102,6 +103,26 @@ def test_list_runs_newest_first(settings: Settings, catalog: Catalog) -> None:
     rows = list_runs(settings.runs_dir)
     assert {row["run_id"] for row in rows} == {first.run_id, second.run_id}
     assert rows[0]["run_id"] >= rows[1]["run_id"]
+    # A corrupt manifest is skipped, not fatal to the history and monitoring pages.
+    (settings.runs_dir / "broken").mkdir()
+    (settings.runs_dir / "broken" / "manifest.json").write_text("{not json")
+    assert [r.run_id for r in load_runs(settings.runs_dir)] == [row["run_id"] for row in rows]
+
+
+def test_manifests_from_before_the_monitoring_fields_still_load(
+    settings: Settings, catalog: Catalog
+) -> None:
+    """Older records lack the review and token fields: they load as missing (None)."""
+    record = run_and_save(SCENARIO_1, settings, catalog)
+    path = settings.runs_dir / record.run_id / "manifest.json"
+    manifest = json.loads(path.read_text())
+    for name in ("stage_tokens", "interactive", "plan_shown_at", "decision", "decided_at"):
+        del manifest[name]
+    path.write_text(json.dumps(manifest))
+    old = load_run(record.run_id, settings.runs_dir)
+    assert (old.stage_tokens, old.interactive, old.plan_shown_at, old.decision) == (
+        None, None, None, None)  # fmt: skip
+    assert replay(record.run_id, settings).all_match
 
 
 def test_scenario_6_trace_from_the_test_back_to_the_nasdaq_file(

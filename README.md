@@ -89,7 +89,8 @@ flowchart LR
 4. **Approval.** The analyst reviews the plan and its validation results, and may
    edit parameter values only: steps and inputs are locked. Every edit goes back
    through the same validator and resets the approvals. Execute stays disabled
-   while a BLOCK remains or an APPROVE issue is unticked.
+   while a BLOCK remains or an APPROVE issue is unticked; **Reject plan** ends the
+   run with nothing run.
 5. **Executor.** Runs the approved plan step by step, calling the function the
    registry holds for each capability. It re-runs the validator first, so calling
    it directly cannot skip the checks, and applies runtime guardrails to the data.
@@ -194,8 +195,8 @@ to mock mode.
 
 ## Reproducibility and tracing
 
-Every run, completed or blocked, is saved in `runs/<run_id>/`. Its
-`manifest.json` stores:
+Every run is saved in `runs/<run_id>/` as soon as its plan is shown, and again
+when it is blocked, rejected or completed. Its `manifest.json` stores:
 
 - the request, the selected datasets and the model information (provider,
   model, prompt version, mode, cache hit, latency, tokens);
@@ -203,14 +204,16 @@ Every run, completed or blocked, is saved in `runs/<run_id>/`. Its
   the parameter-level diff;
 - the validation report and every approval, with its timestamp, the exact text
   approved (such as the assumption) and the plan version it was given for;
+- the review: whether a person reviewed the plan in the app, when it was shown,
+  and the decision (approved or rejected) with its time;
 - each dataset version: the file's SHA-256, retrieval time, rows and dates used;
 - the environment (Python, library versions, git commit) and the registry
   version;
 - each step: capability, library call, the parameters actually used (defaults
   filled in), input and output hashes, run-time notes such as the annualisation
   factor, and any issues;
-- the warnings, the narrative with its grounding result and note, and stage
-  timings.
+- the warnings, the narrative with its grounding result and note, stage timings,
+  and the tokens each LLM stage used, as the API reported them.
 
 Each output is saved next to the manifest as the exact text that was hashed, so
 `shasum -a 256` reproduces the hash in the manifest.
@@ -231,9 +234,12 @@ uv run python -m quantlab.cli replay <run_id>      # re-run without the model, c
 uv run python -m quantlab.cli trace <run_id> s8    # where does this number come from?
 ```
 
-`runs/events.jsonl` logs one event per stage, and the **Monitoring** page shows
-run outcomes, latency per stage, capability usage, guardrail activity and the
-plan-cache hit rate.
+`runs/events.jsonl` logs one event per stage. The **Monitoring** page, filtered
+by date, planner model and prompt version, shows activity, quality and governance
+(approval, replay match, edit and N01 and P01 rates, approval time), every
+guardrail's and capability's count, tokens and cost per stage (from hardcoded
+prices in `config.py`), the plan-cache savings, latency and recent errors; a
+card turns amber when it needs attention.
 
 ## Quickstart
 

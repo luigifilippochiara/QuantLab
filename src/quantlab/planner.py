@@ -39,6 +39,7 @@ from quantlab.guardrails import Issue, check_schema, planner_failure_issue
 from quantlab.mock_scenarios import match_scenario
 from quantlab.plan import Plan, new_plan_id, plan_tool_schema
 from quantlab.registry import llm_summary, registry_version
+from quantlab.types import TokenUsage
 
 # Bump whenever SYSTEM_PROMPT changes: it is part of the plan-cache key and of
 # every run record, so old cached plans are not reused with a new prompt.
@@ -532,6 +533,55 @@ def save_cached_plan(cache_dir: Path, key: str, request: str, result: PlanResult
         "raw_output": result.raw_output,
     }
     (cache_dir / f"{key}.json").write_text(json.dumps(entry, indent=2), encoding="utf-8")
+
+
+def unplanned_result(issues: list[Issue], mode: str, settings: Settings) -> PlanResult:
+    """The PlanResult of a request refused before the planner was called (R01).
+
+    No model was called, so there is no plan, no latency and no token count. The
+    result still names the planner the mode would have used, so the run record's
+    model and prompt version are those of the run's configuration.
+
+    Args:
+        issues: the issues that stopped the request (R01).
+        mode: the session's LLM mode.
+        settings: settings (provider and planner model).
+
+    Returns:
+        A PlanResult with no plan.
+    """
+    result = PlanResult(plan=None, issues=issues, error=issues[0].message, mode=mode)
+    if mode != "mock":
+        result.provider = settings.llm_provider
+        result.model = settings.planner_model
+        result.prompt_version = PROMPT_VERSION
+    return result
+
+
+def planning_usage(result: PlanResult) -> TokenUsage:
+    """The tokens the planning stage used, from the API's own counts (never estimated).
+
+    A mock plan uses none. A cached plan uses none either: the tokens of the call
+    that created it, kept in the cache entry, are what the cache saved (0 for a
+    cache entry that holds no counts).
+
+    Args:
+        result: what the planner returned.
+
+    Returns:
+        The stage's TokenUsage.
+    """
+    if result.mode == "mock":
+        return TokenUsage()
+    if result.from_cache:
+        return TokenUsage(
+            model=result.model,
+            saved_input_tokens=result.input_tokens or 0,
+            saved_output_tokens=result.output_tokens or 0,
+        )
+    return TokenUsage(
+        model=result.model, input_tokens=result.input_tokens, output_tokens=result.output_tokens
+    )
 
 
 def generate_plan(

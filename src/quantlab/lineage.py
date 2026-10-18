@@ -31,7 +31,7 @@ from quantlab.guardrails import Issue, ValidationReport
 from quantlab.monitoring import log_event
 from quantlab.plan import Plan
 from quantlab.registry import capability_code
-from quantlab.types import Artifact, DataType, canonical_text
+from quantlab.types import Artifact, DataType, TokenUsage, canonical_text
 
 # Library versions recorded in every manifest (fixed names, never user input).
 RECORDED_PACKAGES = (
@@ -160,7 +160,8 @@ class RunRecord(BaseModel):
     Fields:
         run_id: unique, time-sortable id.
         created_at: UTC timestamp.
-        status: planned | blocked | completed | failed.
+        status: planned | ready (shown, awaiting a decision) | blocked | rejected |
+            completed | failed.
         request: the user's request.
         dataset_ids: datasets selected by the user.
         llm: how the plan was produced.
@@ -179,7 +180,22 @@ class RunRecord(BaseModel):
         runtime_issues: issues raised during execution (runtime guardrails, E codes).
         narrative: narrator output and grounding check (see narrator.NarrativeResult).
         stage_timings_ms: latency per stage.
+        stage_tokens: tokens per LLM stage ("planning", "narration") as the API reported
+            them; a stage that did not run has no entry. None in records made before
+            tokens were recorded per stage.
         error: why the run did not complete, if it did not.
+        interactive: True if a person reviewed the plan on the Analysis page; False
+            for a headless run (CLI, notebooks, demo), whose caller decides. None in
+            older records.
+        plan_shown_at: when the plan was first shown for review (None if there was no
+            plan to review: the request was refused, or the planner failed or declined).
+        decision: "approved" (the plan was executed) or "rejected"; None while no
+            decision has been made (a plan left undecided is abandoned).
+        decided_at: when the decision was made.
+
+    The last five fields were added for the Monitoring page; records made before
+    them load with their defaults, and the metrics that need them leave those
+    records out.
     """
 
     run_id: str
@@ -203,7 +219,12 @@ class RunRecord(BaseModel):
     runtime_issues: list[Issue] = Field(default_factory=list)
     narrative: dict[str, Any] | None = None
     stage_timings_ms: dict[str, float] = Field(default_factory=dict)
+    stage_tokens: dict[str, TokenUsage] | None = None
     error: str | None = None
+    interactive: bool | None = None
+    plan_shown_at: str | None = None
+    decision: str | None = None
+    decided_at: str | None = None
 
 
 # ---------------------------------------------------------------------------
@@ -352,6 +373,24 @@ def load_run(run_id: str, runs_dir: Path) -> RunRecord:
     return RunRecord.model_validate_json(path.read_text(encoding="utf-8"))
 
 
+def load_runs(runs_dir: Path) -> list[RunRecord]:
+    """Load every saved run record, newest first.
+
+    Args:
+        runs_dir: the runs folder.
+
+    Returns:
+        The RunRecords (a corrupt manifest is skipped).
+    """
+    records = []
+    for manifest in runs_dir.glob("*/manifest.json"):
+        try:
+            records.append(RunRecord.model_validate_json(manifest.read_text(encoding="utf-8")))
+        except ValueError:
+            continue  # a corrupt manifest must not break the history or monitoring pages
+    return sorted(records, key=lambda record: record.run_id, reverse=True)
+
+
 def list_runs(runs_dir: Path) -> list[dict[str, Any]]:
     """Summaries of all saved runs, newest first.
 
@@ -361,23 +400,17 @@ def list_runs(runs_dir: Path) -> list[dict[str, Any]]:
     Returns:
         Rows of {run_id, created_at, status, request, n_steps, mode}.
     """
-    rows = []
-    for manifest in runs_dir.glob("*/manifest.json"):
-        try:
-            record = RunRecord.model_validate_json(manifest.read_text(encoding="utf-8"))
-        except ValueError:
-            continue  # a corrupt manifest must not break the history page
-        rows.append(
-            {
-                "run_id": record.run_id,
-                "created_at": record.created_at,
-                "status": record.status,
-                "request": record.request,
-                "n_steps": len(record.steps),
-                "mode": record.llm.mode if record.llm else None,
-            }
-        )
-    return sorted(rows, key=lambda row: row["run_id"], reverse=True)
+    return [
+        {
+            "run_id": record.run_id,
+            "created_at": record.created_at,
+            "status": record.status,
+            "request": record.request,
+            "n_steps": len(record.steps),
+            "mode": record.llm.mode if record.llm else None,
+        }
+        for record in load_runs(runs_dir)
+    ]
 
 
 # ---------------------------------------------------------------------------
@@ -443,12 +476,17 @@ def step_capability_code(step: StepRecord) -> str | None:
     return step.capability_code or capability_code(step.capability)
 
 
+# Statuses of a run whose plan never ran: shown and awaiting a decision, or rejected.
+NEVER_EXECUTED = ("ready", "rejected")
+
+
 def replay(run_id: str, settings: Settings) -> ReplayReport:
     """Re-execute a recorded run deterministically and compare output hashes.
 
     Steps: load the manifest; verify every recorded dataset hash against the
     current file; re-validate and execute plan_final with the recorded
-    approvals (no LLM involved); compare each step's output hash.
+    approvals (no LLM involved); compare each step's output hash. A plan that
+    never ran (awaiting a decision, or rejected) is not replayed.
 
     Args:
         run_id: the run to replay.
@@ -478,6 +516,17 @@ def replay(run_id: str, settings: Settings) -> ReplayReport:
 
     if record.plan_final is None:
         return _replay_report(record, checks, settings, None, [], "The run has no plan to replay.")
+    if record.status in NEVER_EXECUTED:
+        # Nothing ran, so there is nothing to compare: no replay, and no replay event.
+        return ReplayReport(
+            run_id=record.run_id,
+            all_match=False,
+            original_status=record.status,
+            replay_status=None,
+            datasets=checks,
+            steps=[],
+            message=f"The plan was never executed (status {record.status}): nothing to replay.",
+        )
     if not all(check.match for check in checks):
         changed = [c.dataset_id for c in checks if not c.match]
         message = f"Dataset files changed since the run: {changed}."

@@ -8,6 +8,9 @@ on forward returns") and lets the capability functions do the right thing at run
 time (e.g. annualise volatility with the right number of periods per year).
 Metadata travels in the Artifact, never in pandas `.attrs`, so it is always
 visible and never silently dropped.
+
+It also holds `TokenUsage`, the tokens an LLM stage used, which the planner and
+the narrator report and the run record and the Monitoring page read.
 """
 
 import hashlib
@@ -178,3 +181,27 @@ def artifact_hash(artifact: Artifact) -> str:
         64-character hex digest.
     """
     return hashlib.sha256(canonical_text(artifact).encode("utf-8")).hexdigest()
+
+
+@dataclass(frozen=True)
+class TokenUsage:
+    """The tokens one LLM stage (planning or narration) used, as the API reported them.
+
+    Counts are never estimated: None means the API reported none (the call failed
+    before answering). A plan served from the plan cache used no tokens; the
+    tokens of the call that created it are recorded as saved.
+
+    Fields:
+        model: the model the stage asked for, whose price applies (None if no model
+            was called, e.g. in mock mode).
+        input_tokens: input tokens billed.
+        output_tokens: output tokens billed, reasoning tokens included.
+        saved_input_tokens: input tokens a plan-cache hit avoided (0 otherwise).
+        saved_output_tokens: output tokens a plan-cache hit avoided (0 otherwise).
+    """
+
+    model: str | None = None
+    input_tokens: int | None = 0
+    output_tokens: int | None = 0
+    saved_input_tokens: int = 0
+    saved_output_tokens: int = 0

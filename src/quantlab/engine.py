@@ -5,16 +5,20 @@ through the pipeline, in this order:
 
     Session.start(request, datasets, mode)
       .create_plan()          request check (R01) -> planner (LLM or mock) -> plan,
-                              defaults filled -> validate
+                              defaults filled -> validate; the plan is now shown
       .apply_param_edits()    user edits VALUES only -> re-validate with the SAME validator
       .reset_to_proposal()    back to the planner's proposal (re-validated)
       .approve(issue_ids)     user approves APPROVE issues (timestamped)
-      .execute()              deterministic executor (refuses if blocked or unapproved)
+      .reject()               the reviewer decides not to run the plan (the run ends)
+      .execute()              the decision to run it; deterministic executor (refuses
+                              if blocked or unapproved)
       .narrate()              narrator + grounding check
       .save_record()          manifest + outputs under runs/<run_id>/
 
-Every stage appends monitoring events. The session is a plain dataclass, so
-its state is easy to inspect in a notebook or in Streamlit's session_state.
+Every stage appends monitoring events, and the run record is saved whenever
+the plan is validated, so a plan shown but never decided on is on record too.
+The session is a plain dataclass, so its state is easy to inspect in a notebook
+or in Streamlit's session_state.
 `run_request` chains all stages for headless use (CLI, notebooks, eval).
 """
 
@@ -51,8 +55,9 @@ from quantlab.lineage import (
 from quantlab.monitoring import log_event, utc_now
 from quantlab.narrator import NarrativeResult, narrate
 from quantlab.plan import Plan, plan_hash
-from quantlab.planner import PlanResult, generate_plan
+from quantlab.planner import PlanResult, generate_plan, planning_usage, unplanned_result
 from quantlab.registry import registry_version
+from quantlab.types import TokenUsage
 
 
 class ExecutionRefusedError(Exception):
@@ -72,6 +77,8 @@ class Session:
         run_id: unique run id.
         created_at: UTC timestamp.
         client: optional OpenAI or Anthropic client (tests inject a fake one).
+        interactive: True when a person reviews the plan on the Analysis page;
+            False for headless runs (CLI, notebooks, demo, tests).
         plan_result: what the planner returned.
         plan_original: the plan exactly as the planner proposed it.
         plan: the current plan: defaults filled in, user edits applied.
@@ -80,9 +87,12 @@ class Session:
         approvals: approvals granted for the current plan.
         execution: the execution result, once executed.
         narrative: the narrative, once written.
-        status: planned | ready | blocked | completed | failed.
+        status: planned | ready | blocked | rejected | completed | failed.
         timings_ms: latency of each stage.
         manifest_path: where the run record was saved, once saved.
+        plan_shown_at: when the plan was first shown for review (None without one).
+        decision: "approved" (executed) or "rejected", once decided.
+        decided_at: when the decision was made.
     """
 
     request: str
@@ -93,6 +103,7 @@ class Session:
     run_id: str
     created_at: str
     client: Any = None
+    interactive: bool = False
     plan_result: PlanResult | None = None
     plan_original: Plan | None = None
     plan: Plan | None = None
@@ -104,6 +115,9 @@ class Session:
     status: str = "planned"
     timings_ms: dict[str, float] = field(default_factory=dict)
     manifest_path: Path | None = None
+    plan_shown_at: str | None = None
+    decision: str | None = None
+    decided_at: str | None = None
 
     # ------------------------------------------------------------------ setup
 
@@ -115,6 +129,7 @@ class Session:
         mode: str | None = None,
         settings: Settings | None = None,
         client: Any = None,
+        interactive: bool = False,
     ) -> "Session":
         """Create a session for a new request.
 
@@ -124,6 +139,7 @@ class Session:
             mode: LLM mode; defaults to the configured mode.
             settings: settings; defaults to load_settings().
             client: optional OpenAI or Anthropic client (tests).
+            interactive: True when a person reviews the plan (the Analysis page).
 
         Returns:
             A new Session (a request_received event is logged).
@@ -138,6 +154,7 @@ class Session:
             run_id=new_run_id(),
             created_at=utc_now(),
             client=client,
+            interactive=interactive,
         )
         session._log(
             "request_received",
@@ -180,7 +197,7 @@ class Session:
         too_long = check_request_length(self.request)
         if too_long:
             # Refuse before spending an LLM call on an oversized request.
-            self.plan_result = PlanResult(plan=None, issues=too_long, error=too_long[0].message)
+            self.plan_result = unplanned_result(too_long, self.mode, self.settings)
             return self._planning_failed(too_long)
 
         result = generate_plan(
@@ -207,6 +224,8 @@ class Session:
         self._log("plan_generated", stage="planning", latency_ms=result.latency_ms, details=details)
         self.plan_original = result.plan
         self.plan = fill_defaults(result.plan)
+        if not result.plan.cannot_fulfill:  # a refusal (P01) is not a plan to review
+            self.plan_shown_at = utc_now()
         return self.validate()
 
     def _planning_failed(self, issues: list[Issue]) -> ValidationReport:
@@ -222,8 +241,9 @@ class Session:
         """Validate the current plan (the same validator for planner output and user edits).
 
         Returns:
-            The report. A blocked plan is saved as a blocked run straight away;
-            if the user then fixes it and executes, the same run id is overwritten.
+            The report. The run record is saved straight away, as blocked or as ready
+            (awaiting a decision), so every plan shown is on record; when the run
+            moves on, the same run id is overwritten.
         """
         if self.plan is None:
             raise ValueError("there is no plan to validate")
@@ -243,11 +263,8 @@ class Session:
         )
         for issue in self.report.issues:
             self._log("validation_issue", details=_issue_details(issue))
-        if self.report.is_blocked:
-            self.status = "blocked"
-            self.save_record()
-        else:
-            self.status = "ready"
+        self.status = "blocked" if self.report.is_blocked else "ready"
+        self.save_record()
         return self.report
 
     # ----------------------------------------------------------- human review
@@ -365,6 +382,22 @@ class Session:
                 details={"issue_id": issue_id, "code": issue.code, "approved_by": approved_by},
             )
 
+    def reject(self) -> None:
+        """Record the reviewer's decision not to run the plan; the run ends here, unexecuted.
+
+        Raises:
+            ValueError: if there is no plan to decide on, or it was already decided.
+        """
+        if self.plan is None or self.plan.cannot_fulfill:
+            raise ValueError("there is no plan to reject")
+        if self.decision is not None:
+            raise ValueError(f"the plan was already {self.decision}")
+        self.decision = "rejected"
+        self.decided_at = utc_now()
+        self.status = "rejected"
+        self._log("plan_rejected", details={"plan_hash": self.plan_hash})
+        self.save_record()
+
     def can_execute(self) -> tuple[bool, str]:
         """Whether execution is allowed now, and if not, why.
 
@@ -373,6 +406,8 @@ class Session:
         """
         if self.plan is None or self.report is None:
             return False, "There is no valid plan."
+        if self.decision == "rejected":
+            return False, "The plan was rejected."
         if self.report.is_blocked:
             return False, "The plan has blocking issues: " + ", ".join(
                 issue.issue_id for issue in self.report.blocks
@@ -396,6 +431,9 @@ class Session:
         allowed, reason = self.can_execute()
         if not allowed:
             raise ExecutionRefusedError(reason)
+        # Executing is the decision to run the plan: its approval as a whole.
+        self.decision = "approved"
+        self.decided_at = utc_now()
 
         self._log("execution_started", details={"n_steps": len(self.plan.steps)})
         result = execute_plan(
@@ -515,6 +553,11 @@ class Session:
                 error=result.error,
             )
         steps = self.execution.step_records if self.execution else []
+        stage_tokens: dict[str, TokenUsage] = {}
+        if "planning" in self.timings_ms:  # the planner ran (R01 stops before it)
+            stage_tokens["planning"] = planning_usage(result)
+        if self.narrative is not None and self.narrative.usage is not None:
+            stage_tokens["narration"] = self.narrative.usage
         return RunRecord(
             run_id=self.run_id,
             created_at=self.created_at,
@@ -537,7 +580,12 @@ class Session:
             runtime_issues=self.execution.issues if self.execution else [],
             narrative=self.narrative.model_dump() if self.narrative else None,
             stage_timings_ms=self.timings_ms,
+            stage_tokens=stage_tokens,
             error=self._error_message(),
+            interactive=self.interactive,
+            plan_shown_at=self.plan_shown_at,
+            decision=self.decision,
+            decided_at=self.decided_at,
         )
 
     def _error_message(self) -> str | None:

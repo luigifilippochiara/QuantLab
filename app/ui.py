@@ -29,6 +29,17 @@ from quantlab.types import Artifact, DataType, Frequency
 
 SERIES_COLOR = "#3987e5"  # blue: the series itself
 REGIME_COLOR = "#d95926"  # orange: flagged regimes, and the second measure in grouped bars
+# Monitoring charts. Guardrail bars take the colour of their action's badge; the
+# action is also written in each bar's label, so colour is never the only cue.
+ACTION_COLORS = {Action.BLOCK: "#e03e3e", Action.APPROVE: "#f28c28", Action.WARN: "#d4b106"}
+# Latency segments: the two LLM stages in the series pair, the fast deterministic
+# stages in muted tones (the stage is named in the legend and the hover text).
+STAGE_COLORS = {
+    "planning": SERIES_COLOR,
+    "validation": "#9aa0a6",
+    "execution": "#2a9d8f",
+    "narration": REGIME_COLOR,
+}
 
 ACTION_BADGE = {
     Action.BLOCK: ":red-badge[BLOCK]",
@@ -56,6 +67,7 @@ STATUS_BADGE = {
     "ready": ":blue-badge[ready to execute]",
     "planned": ":gray-badge[planned]",
     "blocked": ":red-badge[blocked]",
+    "rejected": ":gray-badge[rejected]",
     "failed": ":red-badge[failed]",
 }
 
@@ -335,7 +347,9 @@ def value_label(value: float) -> str:
     return f"{value:,.1f}"
 
 
-def bar_figure(labels: list[str], values: list[float], title: str) -> go.Figure:
+def bar_figure(
+    labels: list[str], values: list[float], title: str, text: list[str] | None = None
+) -> go.Figure:
     """Horizontal bar chart of one measure, each bar labelled with its value.
 
     The value axis is hidden: the labels carry the numbers, so a second scale
@@ -345,6 +359,7 @@ def bar_figure(labels: list[str], values: list[float], title: str) -> go.Figure:
         labels: category names (shown top to bottom in the given order).
         values: one value per category.
         title: chart title (names the measure).
+        text: the bar labels, if the values need their own format (e.g. dollars).
 
     Returns:
         A plotly Figure.
@@ -355,7 +370,7 @@ def bar_figure(labels: list[str], values: list[float], title: str) -> go.Figure:
             y=labels,
             orientation="h",
             marker={"color": SERIES_COLOR, "cornerradius": 4},
-            text=[value_label(v) for v in values],
+            text=text or [value_label(v) for v in values],
             textposition="outside",
             cliponaxis=False,
             hovertemplate="%{y}: %{x}<extra></extra>",
@@ -405,6 +420,112 @@ def grouped_bar_figure(
         bargap=0.3,
         bargroupgap=0.08,
         height=320,
+        margin={"l": 10, "r": 10, "t": 50, "b": 10},
+        yaxis_title=value_title,
+        legend={"orientation": "h", "y": 1.12, "x": 0},
+    )
+    return figure
+
+
+def action_bar_figure(
+    labels: list[str], values: list[float], actions: list[Action], title: str
+) -> go.Figure:
+    """Horizontal bars coloured by guardrail action, with one legend entry per action.
+
+    Args:
+        labels: bar names, top to bottom (each should include its action).
+        values: one value per bar.
+        actions: each bar's action, which sets its colour.
+        title: chart title.
+
+    Returns:
+        A plotly Figure.
+    """
+    figure = go.Figure()
+    for action, color in ACTION_COLORS.items():
+        rows = [i for i, a in enumerate(actions) if a == action]
+        figure.add_trace(
+            go.Bar(
+                x=[values[i] for i in rows],
+                y=[labels[i] for i in rows],
+                name=action.value,
+                orientation="h",
+                marker={"color": color, "cornerradius": 4},
+                text=[value_label(values[i]) for i in rows],
+                textposition="outside",
+                cliponaxis=False,
+                hovertemplate="%{y}: %{x}<extra></extra>",
+            )
+        )
+    figure.update_layout(
+        title=title,
+        height=max(220, 32 * len(labels) + 110),
+        margin={"l": 10, "r": 40, "t": 70, "b": 10},
+        xaxis={"visible": False},
+        # The categories keep the given order (most frequent first) across the traces.
+        yaxis={"categoryorder": "array", "categoryarray": labels, "autorange": "reversed"},
+        bargap=0.3,
+        legend={"orientation": "h", "y": 1.08, "x": 0},
+    )
+    return figure
+
+
+def line_figure(x: list[Any], y: list[float], title: str, value_title: str) -> go.Figure:
+    """A small line chart of one measure over time, with a marker on each point.
+
+    Args:
+        x: dates.
+        y: one value per date.
+        title: chart title.
+        value_title: y-axis title.
+
+    Returns:
+        A plotly Figure.
+    """
+    figure = go.Figure(
+        go.Scatter(x=x, y=y, mode="lines+markers", line={"color": SERIES_COLOR, "width": 2})
+    )
+    figure.update_layout(
+        title=title,
+        height=220,
+        margin={"l": 10, "r": 10, "t": 40, "b": 10},
+        yaxis={"title": value_title, "rangemode": "tozero"},
+        xaxis={"type": "date"},
+    )
+    return figure
+
+
+def stacked_bar_figure(
+    categories: list[str], segments: dict[str, list[float]], title: str, value_title: str
+) -> go.Figure:
+    """Vertical bars stacked from segments (e.g. each run's latency, stage by stage).
+
+    Args:
+        categories: x-axis categories (one bar each).
+        segments: segment name -> one value per category, stacked in the given order;
+            colours from STAGE_COLORS (blue for a segment without one).
+        title: chart title.
+        value_title: y-axis title (the shared unit).
+
+    Returns:
+        A plotly Figure with a legend.
+    """
+    figure = go.Figure()
+    for name, values in segments.items():
+        figure.add_trace(
+            go.Bar(
+                x=categories,
+                y=values,
+                name=name,
+                marker={"color": STAGE_COLORS.get(name, SERIES_COLOR)},
+                hovertemplate=f"{name}: %{{y:,.0f}}<extra>%{{x}}</extra>",
+            )
+        )
+    figure.update_layout(
+        title=title,
+        barmode="stack",
+        bargap=0.25,
+        height=340,
         margin={"l": 10, "r": 10, "t": 50, "b": 10},
         yaxis_title=value_title,
         legend={"orientation": "h", "y": 1.12, "x": 0},

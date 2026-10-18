@@ -41,7 +41,7 @@ from quantlab.planner import (
     make_anthropic_client,
     make_openai_client,
 )
-from quantlab.types import ANNUALISATION_FACTORS, Artifact, DataType
+from quantlab.types import ANNUALISATION_FACTORS, Artifact, DataType, TokenUsage
 
 NARRATOR_PROMPT_VERSION = "narrator-v4"
 
@@ -152,6 +152,9 @@ class NarrativeResult(BaseModel):
             the summary), or None.
         issues: N01 UNGROUNDED_NARRATIVE issues (empty when every number is grounded).
         note: the note shown under the narrative (see narrative_note); "" if none applies.
+        usage: the tokens of every narrator call made for this narrative, whether its
+            text is shown, withheld or was unusable (zero in mock mode). Set on the
+            narrative narrate() returns; None on a withheld one.
     """
 
     text: str
@@ -167,6 +170,7 @@ class NarrativeResult(BaseModel):
     withheld: "NarrativeResult | None" = None
     issues: list[Issue] = Field(default_factory=list)
     note: str = ""
+    usage: TokenUsage | None = None
 
 
 # ---------------------------------------------------------------------------
@@ -531,8 +535,9 @@ def narrate(
     )
     template.grounding = check_grounding(template.text, facts, plan, trusted_texts)
     result = template
+    usage = TokenUsage()  # mock mode calls no LLM
     if mode != "mock":
-        llm_result, error = _llm_narrative(request, plan, facts, issues, settings, client)
+        llm_result, error, usage = _llm_narrative(request, plan, facts, issues, settings, client)
         if llm_result is None:
             template.error = error  # keep the template, record why the LLM was not used
         else:
@@ -546,6 +551,7 @@ def narrate(
                 template.error = "The LLM narrative was withheld by N01 UNGROUNDED_NARRATIVE."
     result.issues = check_narrative_grounding(result)
     result.note = narrative_note(result)
+    result.usage = usage
     return result
 
 
@@ -683,12 +689,14 @@ def _llm_narrative(
     issues: list[Issue],
     settings: Settings,
     client: Any,
-) -> tuple[NarrativeResult | None, str | None]:
+) -> tuple[NarrativeResult | None, str | None, TokenUsage]:
     """Ask the configured provider's LLM for the narrative.
 
     Returns:
-        (result, None) on success, or (None, error message) if the call failed or
-        the answer is unusable.
+        (result, None, usage) on success, or (None, error message, usage) if the
+        call failed or the answer is unusable. `usage` holds the tokens the API
+        reported, even for an unusable answer (it was billed); None counts if the
+        call failed before answering.
     """
     prompt = build_user_prompt(request, plan, facts, issues)
     started = time.perf_counter()
@@ -698,10 +706,16 @@ def _llm_narrative(
         else:
             reply = _ask_anthropic(prompt, settings, client)
     except Exception as exc:  # any API failure falls back to the deterministic template
-        return None, api_error_message(exc, settings)
+        no_answer = TokenUsage(model=settings.narrator_model, input_tokens=None, output_tokens=None)
+        return None, api_error_message(exc, settings), no_answer
 
+    usage = TokenUsage(
+        model=settings.narrator_model,
+        input_tokens=reply.input_tokens,
+        output_tokens=reply.output_tokens,
+    )
     if reply.problem is not None or not reply.text:
-        return None, f"LLM narrative unusable ({reply.problem or 'empty answer'})."
+        return None, f"LLM narrative unusable ({reply.problem or 'empty answer'}).", usage
     return (
         NarrativeResult(
             text=reply.text,
@@ -713,4 +727,5 @@ def _llm_narrative(
             facts=facts,
         ),
         None,
+        usage,
     )

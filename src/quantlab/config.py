@@ -42,6 +42,14 @@ LLM_PROVIDERS = ("openai", "anthropic")
 # gpt-6.1-sol can be selected with QUANTLAB_PLANNER_MODEL as an alternative.
 DEFAULT_MODELS = {"openai": "gpt-6-luna", "anthropic": "claude-sonnet-5-5"}
 
+# LLM prices in US dollars per million tokens, by model id. Used only to show
+# costs on the Monitoring page, computed from the token counts the API reported.
+# GPT-6 Luna: OpenAI API pricing (https://openai.com/api/pricing), checked on
+# 2026-10-18. Update the numbers here when prices change. A model without an
+# entry has no cost (shown as n/a). Discounts (cached input, batch) are not
+# modelled, so a cost is an upper bound.
+LLM_PRICES_PER_MILLION_TOKENS = {"gpt-6-luna": {"input": 0.10, "output": 0.50}}
+
 
 @dataclass(frozen=True)
 class Settings:

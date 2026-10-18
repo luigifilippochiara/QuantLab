@@ -1,24 +1,40 @@
-"""Monitoring: an append-only JSONL event log and the aggregations behind the dashboard.
+"""Monitoring: an append-only JSONL event log, and the metrics behind the Monitoring page.
 
 Role in the architecture: every stage of every run (and every replay) appends
 one JSON object per line to runs/events.jsonl. Nothing is ever rewritten, so
 the log is a simple audit trail and is trivial to ship to a real log platform
-later. The functions at the bottom turn the events into the numbers shown on
-the Monitoring page: run outcomes, latency per stage, capability usage,
-guardrail activity, recent errors and the plan-cache hit rate.
+later.
+
+The Monitoring page reads two sources, and the functions below turn them into
+its numbers (the page only lays them out):
+- run records (runs/<run_id>/manifest.json), one per run in its final state:
+  activity, human review, narrative and planner outcomes, tokens and cost,
+  latency and failures;
+- the event log, for what can happen several times in a run or after it:
+  guardrail firings (one raised by an edit and then fixed still counts),
+  capability executions and replays.
 
 The event types are listed in EVENT_TYPES below: the spec's list plus
 "plan_validated" and "execution_finished", which carry the validation and
-execution stage latencies.
+execution stage latencies, and "plan_rejected", the reviewer's rejection.
 """
 
 import json
 from collections import Counter
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import numpy as np
+
+from quantlab.guardrails import ENFORCERS, GUARDRAILS, Action
+from quantlab.registry import REGISTRY
+from quantlab.types import TokenUsage
+
+if TYPE_CHECKING:
+    # For type hints only: lineage imports this module (to log replays), so a
+    # runtime import of lineage here would be circular.
+    from quantlab.lineage import RunRecord
 
 EVENT_TYPES = (
     "request_received",
@@ -35,15 +51,21 @@ EVENT_TYPES = (
     "narrative_checked",
     "run_completed",
     "run_failed",
+    "plan_rejected",
     "replay_completed",
 )
 
-# Which event carries the latency of which pipeline stage.
-STAGE_EVENTS = {
-    "planning": ("plan_generated", "plan_failed"),
-    "validation": ("plan_validated",),
-    "execution": ("execution_finished",),
-    "narration": ("narrative_checked",),
+# The pipeline stages, in order, as named in a run record's stage_timings_ms.
+STAGES = ("planning", "validation", "execution", "narration")
+# The stages that call an LLM (keys of stage_tokens), and their names in the cost table.
+COST_STAGES = {"planning": "planner", "narration": "narrator"}
+
+# When a card on the Monitoring page needs attention (it turns amber): metric ->
+# (direction, threshold). Kept in one place so the limits are easy to review.
+ATTENTION_THRESHOLDS = {
+    "replay_match_rate": ("below", 1.0),  # every replay must reproduce its run exactly
+    "n01_failure_rate": ("above", 0.0),  # no narrative should quote an unchecked number
+    "failed": ("above", 0),  # a failed run (not a block) is an error to investigate
 }
 
 
@@ -114,162 +136,505 @@ def read_events(path: Path) -> list[dict[str, Any]]:
 
 
 # ---------------------------------------------------------------------------
-# Aggregations for the dashboard
+# Helpers
 # ---------------------------------------------------------------------------
 
 
-def run_outcomes(events: list[dict[str, Any]]) -> dict[str, str]:
-    """Final status of each run: "completed", "blocked", "failed" or "in_progress".
-
-    A run's status is taken from its LAST run_completed / run_failed event, so a
-    plan that was blocked, then edited and executed successfully counts as completed.
+def needs_attention(metric: str, value: float | None) -> bool:
+    """Whether a metric's value crosses its threshold in ATTENTION_THRESHOLDS.
 
     Args:
-        events: all events.
+        metric: a key of ATTENTION_THRESHOLDS (any other metric never needs attention).
+        value: the metric's value (None, no data, never needs attention).
 
     Returns:
-        run_id -> status, for every run that has a request_received event.
+        True if the card should turn amber.
     """
-    outcomes: dict[str, str] = {}
-    for event in events:
-        run_id, kind = event["run_id"], event["event_type"]
-        if kind == "request_received":
-            outcomes.setdefault(run_id, "in_progress")
-        elif kind == "run_completed":
-            outcomes[run_id] = "completed"
-        elif kind == "run_failed":
-            outcomes[run_id] = event["details"].get("status", "failed")
-    return outcomes
+    if value is None or metric not in ATTENTION_THRESHOLDS:
+        return False
+    direction, threshold = ATTENTION_THRESHOLDS[metric]
+    return value < threshold if direction == "below" else value > threshold
 
 
-def kpis(events: list[dict[str, Any]]) -> dict[str, Any]:
-    """Headline numbers: run counts and rates, replay results, plan-cache hit rate.
+def share(count: int, total: int) -> float | None:
+    """count / total rounded to 4 decimals, or None when there is nothing to divide by."""
+    return round(count / total, 4) if total else None
+
+
+def mean_and_p95(values: list[float]) -> tuple[float | None, float | None]:
+    """Mean and 95th percentile (linear interpolation), or (None, None) without values."""
+    if not values:
+        return None, None
+    return float(np.mean(values)), float(np.percentile(values, 95))
+
+
+def parse_time(timestamp: str) -> datetime:
+    """Parse a UTC timestamp written by utc_now() or a run record, e.g. 2026-10-14T19:24:42.123Z."""
+    return datetime.fromisoformat(timestamp)
+
+
+def token_cost(
+    model: str | None,
+    input_tokens: int | None,
+    output_tokens: int | None,
+    prices: dict[str, dict[str, float]],
+) -> float | None:
+    """Cost in US dollars of a number of tokens at a model's price.
 
     Args:
-        events: all events.
+        model: the model id (the key into `prices`).
+        input_tokens: input tokens (None: not reported).
+        output_tokens: output tokens (None: not reported).
+        prices: model -> {"input": $ per million tokens, "output": $ per million tokens}
+            (config.LLM_PRICES_PER_MILLION_TOKENS).
 
     Returns:
-        Dict with n_runs, n_completed, n_blocked, n_failed, n_in_progress,
-        success_rate, blocked_rate, failed_rate (shares of finished runs, None
-        if no run finished), n_replays, replay_match_rate and cache_hit_rate
-        (share of non-mock plans served from the cache, None if there were none).
+        The cost; 0.0 for no tokens; None if a count is missing or the model has no price.
     """
-    statuses = Counter(run_outcomes(events).values())
-    finished = statuses["completed"] + statuses["blocked"] + statuses["failed"]
+    if input_tokens is None or output_tokens is None:
+        return None
+    if input_tokens == 0 and output_tokens == 0:
+        return 0.0
+    price = prices.get(model or "")
+    if price is None:
+        return None
+    return (input_tokens * price["input"] + output_tokens * price["output"]) / 1_000_000
 
-    def share(count: int, total: int) -> float | None:
-        return round(count / total, 4) if total else None
 
-    replays = [e for e in events if e["event_type"] == "replay_completed"]
-    llm_plans = [
-        e
-        for e in events
-        if e["event_type"] == "plan_generated" and e["details"].get("mode") != "mock"
+# ---------------------------------------------------------------------------
+# Filters
+# ---------------------------------------------------------------------------
+
+
+def run_order(record: "RunRecord") -> tuple[datetime, str]:
+    """Sort key, oldest first: the creation time (to the millisecond), then the run id.
+
+    The run id alone is not enough: two runs created in the same second differ only
+    in their random suffix.
+    """
+    return parse_time(record.created_at), record.run_id
+
+
+def run_date(record: "RunRecord") -> date:
+    """The UTC date a run was created."""
+    return parse_time(record.created_at).date()
+
+
+def run_model(record: "RunRecord") -> str:
+    """The planner model a run used (for mock runs "mock"; "unknown" without LLM info)."""
+    return record.llm.model if record.llm else "unknown"
+
+
+def run_prompt_version(record: "RunRecord") -> str:
+    """The planner prompt version a run used ("unknown" without LLM info)."""
+    return record.llm.prompt_version if record.llm else "unknown"
+
+
+def filter_runs(
+    records: list["RunRecord"],
+    start: date | None = None,
+    end: date | None = None,
+    models: list[str] | None = None,
+    prompt_versions: list[str] | None = None,
+) -> list["RunRecord"]:
+    """The runs created between two dates (inclusive) with the chosen model and prompt.
+
+    Args:
+        records: run records.
+        start: first creation date kept (None: no lower bound).
+        end: last creation date kept (None: no upper bound).
+        models: planner models kept (empty or None: all).
+        prompt_versions: planner prompt versions kept (empty or None: all).
+
+    Returns:
+        The matching records, in their original order.
+    """
+    return [
+        r
+        for r in records
+        if (start is None or run_date(r) >= start)
+        and (end is None or run_date(r) <= end)
+        and (not models or run_model(r) in models)
+        and (not prompt_versions or run_prompt_version(r) in prompt_versions)
     ]
-    cache_hits = sum(1 for e in llm_plans if e["details"].get("from_cache"))
+
+
+def events_for_runs(events: list[dict[str, Any]], run_ids: set[str]) -> list[dict[str, Any]]:
+    """The events of the given runs (a replay's event carries the replayed run's id)."""
+    return [e for e in events if e["run_id"] in run_ids]
+
+
+# ---------------------------------------------------------------------------
+# Activity (run records)
+# ---------------------------------------------------------------------------
+
+
+def activity(records: list["RunRecord"]) -> dict[str, int]:
+    """How many runs ended in each state.
+
+    Args:
+        records: run records.
+
+    Returns:
+        Dict with total, completed, blocked, failed, rejected (by the reviewer) and
+        awaiting (a plan shown with no decision yet: status ready).
+    """
+    statuses = Counter(r.status for r in records)
     return {
-        "n_runs": sum(statuses.values()),
-        "n_completed": statuses["completed"],
-        "n_blocked": statuses["blocked"],
-        "n_failed": statuses["failed"],
-        "n_in_progress": statuses["in_progress"],
-        "success_rate": share(statuses["completed"], finished),
-        "blocked_rate": share(statuses["blocked"], finished),
-        "failed_rate": share(statuses["failed"], finished),
-        "n_replays": len(replays),
-        "replay_match_rate": share(
-            sum(1 for e in replays if e["details"].get("all_match")), len(replays)
-        ),
-        "cache_hit_rate": share(cache_hits, len(llm_plans)),
+        "total": len(records),
+        "completed": statuses["completed"],
+        "blocked": statuses["blocked"],
+        "failed": statuses["failed"],
+        "rejected": statuses["rejected"],
+        "awaiting": statuses["ready"] + statuses["planned"],
     }
 
 
-def stage_latency(events: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """Mean and 95th-percentile latency of each pipeline stage.
+def runs_per_day(records: list["RunRecord"]) -> list[dict[str, Any]]:
+    """Runs created on each day from the first run to the last (days without runs: 0).
 
     Args:
-        events: all events.
+        records: run records.
 
     Returns:
-        One dict per stage with stage, count, mean_ms and p95_ms (None if no data).
+        Rows of {date, runs}, oldest first ([] without records).
     """
-    rows = []
-    for stage, event_types in STAGE_EVENTS.items():
-        latencies = [
-            e["latency_ms"]
-            for e in events
-            if e["event_type"] in event_types and e.get("latency_ms") is not None
-        ]
-        rows.append(
-            {
-                "stage": stage,
-                "count": len(latencies),
-                "mean_ms": round(float(np.mean(latencies)), 1) if latencies else None,
-                "p95_ms": round(float(np.percentile(latencies, 95)), 1) if latencies else None,
-            }
-        )
-    return rows
+    if not records:
+        return []
+    counts = Counter(run_date(r) for r in records)
+    first, last = min(counts), max(counts)
+    days = [first + timedelta(days=n) for n in range((last - first).days + 1)]
+    return [{"date": day, "runs": counts[day]} for day in days]
 
 
-def capability_counts(events: list[dict[str, Any]]) -> dict[str, int]:
-    """How many times each capability was executed (completed or failed).
+# ---------------------------------------------------------------------------
+# Quality and governance (run records, and replay events)
+# ---------------------------------------------------------------------------
+
+
+def review_outcomes(records: list["RunRecord"]) -> dict[str, Any]:
+    """What reviewers decided about the plans shown to them on the Analysis page.
+
+    Only interactive runs with a plan shown count: headless runs (CLI, notebooks,
+    demo) are decided by their caller, not reviewed by a person, and older records
+    lack the fields. A plan shown but neither approved (executed) nor rejected is
+    abandoned, including one still awaiting a decision.
 
     Args:
-        events: all events.
+        records: run records.
 
     Returns:
-        capability -> count, most used first.
+        Dict with shown, approved, rejected, abandoned, approval_rate (approved /
+        shown), edit_rate (approved plans whose parameters the reviewer changed /
+        approved), approval_median_s and approval_p95_s (seconds from plan shown to
+        approved), and headless (headless runs with a plan, left out).
+    """
+    shown = [r for r in records if r.interactive and r.plan_shown_at]
+    approved = [r for r in shown if r.decision == "approved"]
+    rejected = [r for r in shown if r.decision == "rejected"]
+    waits = [
+        (parse_time(r.decided_at) - parse_time(r.plan_shown_at)).total_seconds()
+        for r in approved
+        if r.decided_at
+    ]
+    median, p95 = (
+        (float(np.median(waits)), float(np.percentile(waits, 95))) if waits else (None, None)
+    )
+    return {
+        "shown": len(shown),
+        "approved": len(approved),
+        "rejected": len(rejected),
+        "abandoned": len(shown) - len(approved) - len(rejected),
+        "approval_rate": share(len(approved), len(shown)),
+        # param_diff: parameters whose final value differs from the planner's proposal.
+        "edit_rate": share(sum(1 for r in approved if r.param_diff), len(approved)),
+        "approval_median_s": median,
+        "approval_p95_s": p95,
+        "headless": sum(1 for r in records if r.interactive is False and r.plan_shown_at),
+    }
+
+
+def replay_results(events: list[dict[str, Any]]) -> dict[str, Any]:
+    """How many replays ran and the share that reproduced their run exactly.
+
+    Args:
+        events: monitoring events.
+
+    Returns:
+        Dict with replays and replay_match_rate (None without replays).
+    """
+    replays = [e for e in events if e["event_type"] == "replay_completed"]
+    matching = sum(1 for e in replays if e["details"].get("all_match"))
+    return {"replays": len(replays), "replay_match_rate": share(matching, len(replays))}
+
+
+def narrative_failures(records: list["RunRecord"]) -> dict[str, Any]:
+    """The share of narratives that failed the grounding check (N01).
+
+    Args:
+        records: run records (narratives recorded before N01 existed are left out).
+
+    Returns:
+        Dict with narratives and n01_failure_rate (None without narratives).
+    """
+    narratives = [r.narrative for r in records if r.narrative and "issues" in r.narrative]
+    failed = sum(1 for n in narratives if any(i["code"] == "N01" for i in n["issues"]))
+    return {"narratives": len(narratives), "n01_failure_rate": share(failed, len(narratives))}
+
+
+def planner_refusals(records: list["RunRecord"]) -> dict[str, Any]:
+    """The share of requests the planner was asked about that it refused (P01).
+
+    Args:
+        records: run records (a request refused before the planner, R01, is left out).
+
+    Returns:
+        Dict with planned (requests that reached the planner) and p01_refusal_rate.
+    """
+    codes = [r.validation.codes() if r.validation else [] for r in records if r.llm]
+    planned = [c for c in codes if "R01" not in c]
+    refused = sum(1 for c in planned if "P01" in c)
+    return {"planned": len(planned), "p01_refusal_rate": share(refused, len(planned))}
+
+
+# ---------------------------------------------------------------------------
+# Guardrails and capabilities (events)
+# ---------------------------------------------------------------------------
+
+
+def guardrail_counts(events: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """How often each guardrail fired: every guardrail in the table, zeros included.
+
+    Request-check, planner-refusal and validator issues are logged as
+    validation_issue; the executor's and the narrator check's as guardrail_triggered.
+    A code that is no longer in the table (from an older version) is not counted.
+
+    Args:
+        events: monitoring events.
+
+    Returns:
+        Rows of {code, name, action, count}, most frequent first; guardrails with
+        the same count keep the table's order, so the zeros come last in pipeline order.
+    """
+    counts = Counter(
+        e["details"].get("code")
+        for e in events
+        if e["event_type"] in ("validation_issue", "guardrail_triggered")
+    )
+    rows = [
+        {"code": code, "name": g.name, "action": g.action.value, "count": counts[code]}
+        for code, g in GUARDRAILS.items()
+    ]
+    return sorted(rows, key=lambda row: -row["count"])  # a stable sort keeps the ties in order
+
+
+def capability_counts(events: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """How many times each capability was executed: every registered one, zeros included.
+
+    Args:
+        events: monitoring events (step_completed and step_failed count).
+
+    Returns:
+        Rows of {capability, code, count}, most used first; ties keep the registry's order.
     """
     counts = Counter(
         e["details"].get("capability")
         for e in events
         if e["event_type"] in ("step_completed", "step_failed")
     )
-    return dict(counts.most_common())
+    rows = [
+        {"capability": name, "code": spec.code, "count": counts[name]}
+        for name, spec in REGISTRY.items()
+    ]
+    return sorted(rows, key=lambda row: -row["count"])
 
 
-def guardrail_counts(events: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """How often each guardrail fired, by code and action.
+# ---------------------------------------------------------------------------
+# Cost (run records)
+# ---------------------------------------------------------------------------
 
-    Request-check, planner-refusal and validator issues are logged as
-    validation_issue; the executor's and the narrator check's as guardrail_triggered.
+
+def costed_runs(records: list["RunRecord"]) -> list["RunRecord"]:
+    """The runs that count towards cost: not mock, with tokens recorded per stage."""
+    return [r for r in records if r.stage_tokens is not None and r.llm and r.llm.mode != "mock"]
+
+
+def _stage_values(record: "RunRecord", prices: dict[str, dict[str, float]]) -> dict[str, dict]:
+    """One run's input tokens, output tokens and cost per cost stage, and in total.
+
+    A stage that did not run used nothing (zeros). A value that is unknown (tokens
+    not reported, or a model without a price) is None, and so is the total built on it.
+    """
+    values = {}
+    for stage, name in COST_STAGES.items():
+        usage = record.stage_tokens.get(stage, TokenUsage())
+        values[name] = {
+            "input": usage.input_tokens,
+            "output": usage.output_tokens,
+            "cost": token_cost(usage.model, usage.input_tokens, usage.output_tokens, prices),
+        }
+    values["total"] = {
+        measure: None
+        if any(v[measure] is None for v in values.values())
+        else sum(v[measure] for v in values.values())
+        for measure in ("input", "output", "cost")
+    }
+    return values
+
+
+def cost_table(
+    records: list["RunRecord"], prices: dict[str, dict[str, float]]
+) -> list[dict[str, Any]]:
+    """Tokens and cost per run, by stage (planner, narrator, total): mean and 95th percentile.
 
     Args:
-        events: all events.
+        records: run records; only costed_runs(records) count (mock runs are left out).
+        prices: model -> price per million tokens (config.LLM_PRICES_PER_MILLION_TOKENS).
 
     Returns:
-        Rows of {code, name, action, count}, most frequent first.
+        Rows of {stage, runs, input_mean, input_p95, output_mean, output_p95,
+        cost_mean, cost_p95, cost_total} (None where no value is known).
     """
-    counts: Counter[tuple[str, str, str]] = Counter()
-    for event in events:
-        if event["event_type"] in ("validation_issue", "guardrail_triggered"):
-            d = event["details"]
-            counts[(d.get("code", "?"), d.get("name", "?"), d.get("action", "?"))] += 1
+    per_run = [_stage_values(r, prices) for r in costed_runs(records)]
+    rows = []
+    for stage in [*COST_STAGES.values(), "total"]:
+        row: dict[str, Any] = {"stage": stage, "runs": len(per_run)}
+        for measure in ("input", "output", "cost"):
+            known = [v[stage][measure] for v in per_run if v[stage][measure] is not None]
+            row[f"{measure}_mean"], row[f"{measure}_p95"] = mean_and_p95(known)
+        costs = [v[stage]["cost"] for v in per_run if v[stage]["cost"] is not None]
+        row["cost_total"] = sum(costs) if costs else None
+        rows.append(row)
+    return rows
+
+
+def cache_savings(
+    records: list["RunRecord"], prices: dict[str, dict[str, float]]
+) -> dict[str, Any]:
+    """The plan-cache hit rate, and the tokens and dollars the hits saved.
+
+    Args:
+        records: run records; runs that called (or would have called) the planner
+            in live or cached mode count; mock runs and R01 refusals do not.
+        prices: model -> price per million tokens.
+
+    Returns:
+        Dict with planner_calls, cache_hits, hit_rate, saved_input_tokens,
+        saved_output_tokens and saved_cost (US dollars; hits recorded before tokens
+        were recorded per stage add nothing).
+    """
+    calls = [
+        r for r in records if r.llm and r.llm.mode != "mock" and "planning" in r.stage_timings_ms
+    ]
+    hits = [r for r in calls if r.llm.from_cache]
+    saved = [
+        r.stage_tokens["planning"] for r in hits if r.stage_tokens and "planning" in r.stage_tokens
+    ]
+    costs = [
+        token_cost(u.model, u.saved_input_tokens, u.saved_output_tokens, prices) for u in saved
+    ]
+    return {
+        "planner_calls": len(calls),
+        "cache_hits": len(hits),
+        "hit_rate": share(len(hits), len(calls)),
+        "saved_input_tokens": sum(u.saved_input_tokens for u in saved),
+        "saved_output_tokens": sum(u.saved_output_tokens for u in saved),
+        "saved_cost": sum(c for c in costs if c is not None),
+    }
+
+
+# ---------------------------------------------------------------------------
+# Latency and failures (run records)
+# ---------------------------------------------------------------------------
+
+
+def latency_table(records: list["RunRecord"]) -> list[dict[str, Any]]:
+    """Mean and 95th-percentile latency of each pipeline stage, over the runs that reached it.
+
+    Args:
+        records: run records.
+
+    Returns:
+        One row per stage: {stage, runs, mean_ms, p95_ms} (None where no run reached it).
+    """
+    rows = []
+    for stage in STAGES:
+        values = [r.stage_timings_ms[stage] for r in records if stage in r.stage_timings_ms]
+        mean, p95 = mean_and_p95(values)
+        rows.append({"stage": stage, "runs": len(values), "mean_ms": mean, "p95_ms": p95})
+    return rows
+
+
+def latency_by_run(records: list["RunRecord"], limit: int = 30) -> list[dict[str, Any]]:
+    """Each stage's latency in the most recent runs, for a stacked bar per run.
+
+    Args:
+        records: run records.
+        limit: how many of the most recent runs.
+
+    Returns:
+        Rows of {run_id, created_at, planning, validation, execution, narration}
+        (milliseconds; 0 for a stage the run did not reach), oldest first.
+    """
+    recent = sorted(records, key=run_order)[-limit:]
     return [
-        {"code": code, "name": name, "action": action, "count": count}
-        for (code, name, action), count in counts.most_common()
+        {
+            "run_id": r.run_id,
+            "created_at": r.created_at,
+            **{stage: r.stage_timings_ms.get(stage, 0.0) for stage in STAGES},
+        }
+        for r in recent
     ]
 
 
-def recent_errors(events: list[dict[str, Any]], limit: int = 10) -> list[dict[str, Any]]:
-    """The most recent failures (planner errors, failed steps, failed or blocked runs).
+def failure_point(record: "RunRecord") -> tuple[str, str | None]:
+    """Where a blocked or failed run stopped: the stage, and the guardrail code if one fired.
 
     Args:
-        events: all events.
+        record: a blocked or failed run record.
+
+    Returns:
+        (stage, code): the stage enforcing the first BLOCK issue (request check,
+        planner, validator or executor), "Executor" for a step that failed without
+        one, "Approval" for a plan left unapproved in a headless run, or "Unknown".
+    """
+    issues = record.validation.issues if record.validation else []
+    blocks = [i for i in issues + record.runtime_issues if i.action == Action.BLOCK]
+    if blocks:
+        code = blocks[0].code
+        return ENFORCERS.get(code[0], "Unknown"), code
+    if any(step.status != "completed" for step in record.steps):
+        return ENFORCERS["E"], None
+    approvals = [i for i in issues if i.action == Action.APPROVE]
+    if approvals and not record.steps:
+        return "Approval", approvals[0].code
+    return "Unknown", None
+
+
+def recent_failures(records: list["RunRecord"], limit: int = 10) -> list[dict[str, Any]]:
+    """The most recent blocked or failed runs, with where they stopped and why.
+
+    Args:
+        records: run records.
         limit: maximum number of rows.
 
     Returns:
-        Rows of {timestamp, run_id, event_type, error}, newest first.
+        Rows of {time, run_id, status, stage, code, message}, newest first.
     """
-    error_types = ("plan_failed", "step_failed", "run_failed")
-    rows = [
-        {
-            "timestamp": e["timestamp"],
-            "run_id": e["run_id"],
-            "event_type": e["event_type"],
-            "error": e["details"].get("error", ""),
-        }
-        for e in events
-        if e["event_type"] in error_types
-    ]
-    return list(reversed(rows))[:limit]
+    failed = sorted(
+        (r for r in records if r.status in ("blocked", "failed")), key=run_order, reverse=True
+    )[:limit]
+    rows = []
+    for r in failed:
+        stage, code = failure_point(r)
+        rows.append(
+            {
+                "time": r.created_at,
+                "run_id": r.run_id,
+                "status": r.status,
+                "stage": stage,
+                "code": code,
+                "message": r.error or "",
+            }
+        )
+    return rows

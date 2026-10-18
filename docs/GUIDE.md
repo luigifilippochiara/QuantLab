@@ -53,8 +53,9 @@ The **Analysis** page follows the safety model step by step:
    listed in the validation results, naming its step (e.g. "Step 3 · C03 · Compute
    returns").
 3. Read the validation results. Blocking issues must be resolved, approvals must
-   be ticked, and warnings are shown for context.
-4. Click **Execute**. Results appear per step: charts for series (with flagged
+   be ticked, and warnings are shown for context. If the plan is not what you
+   want, click **Reject plan**: nothing runs, and the decision is recorded.
+4. Click **Execute** (your approval of the plan). Results appear per step: charts for series (with flagged
    periods shaded), tables for statistics, and a plain-English narrative marked
    "all numbers verified" when every number checks out. A short note under the
    narrative says who wrote it (an AI narrative may contain errors in wording or
@@ -63,8 +64,13 @@ The **Analysis** page follows the safety model step by step:
    every step to the source file, with its SHA-256, FRED id and retrieval date.
 
 The other pages: **Run history** lists past runs, shows each manifest and user
-edits, and replays a run without the model; **Monitoring** shows run outcomes,
-latency per stage, capability usage and guardrail activity; **Capability
+edits, and replays a run without the model; **Monitoring** shows, for the runs
+selected by date, planner model and prompt version, the activity (runs completed,
+blocked, failed and rejected), quality and governance (approval rate, replay
+match rate, edit rate, approval time, N01 failure rate, P01 refusal rate), every
+guardrail's and every capability's count, tokens and cost per stage, latency per
+stage and the recent errors, with a card turning amber when it needs attention;
+**Capability
 registry** lists every approved capability with its code, inputs, parameters and
 assumptions; **Guardrails** lists every guardrail with its action, who enforces
 it, its category and what it prevents.
@@ -208,13 +214,16 @@ to **mock**: everything keeps working offline with the canned plans.
 
 ## Reproducibility, lineage and monitoring
 
-* **Run record.** `runs/<run_id>/manifest.json`: request, model information
-  (model, prompt version, mode, cache hit, latency, tokens), the plan as proposed
-  and as run with its version hash, parameter edits and the parameter-level diff,
-  validation report, approvals, dataset versions (file SHA-256, retrieval time,
-  rows and dates used), environment (Python, library versions, git commit),
-  registry version, step records with input and output hashes, warnings, the
-  narrative with its grounding result, and stage timings.
+* **Run record.** `runs/<run_id>/manifest.json`, saved as soon as a plan is shown
+  and again at every step: request, model information (model, prompt version,
+  mode, cache hit, latency, tokens), the plan as proposed and as run with its
+  version hash, parameter edits and the parameter-level diff, validation report,
+  approvals, the review (in the app or headless, when the plan was shown, and the
+  decision, approved or rejected, with its time), dataset versions (file SHA-256,
+  retrieval time, rows and dates used), environment (Python, library versions,
+  git commit), registry version, step records with input and output hashes,
+  warnings, the narrative with its grounding result, and stage timings and tokens
+  per LLM stage (a cached plan uses none and records the tokens it saved).
 * **Outputs.** `runs/<run_id>/outputs/<step>_<capability>.csv|json`. Each file is
   the canonical text that was hashed, so `shasum -a 256` reproduces the hash in
   the manifest.
@@ -229,9 +238,11 @@ to **mock**: everything keeps working offline with the canned plans.
   range used.
 * **Monitoring.** `runs/events.jsonl` receives one event per stage (request,
   planning, validation issues, approvals, each step, runtime guardrails,
-  narration, completion, replays). The Monitoring page shows run counts and
-  success / blocked / failed rates, mean and p95 latency per stage, capability
-  usage, guardrail activity, recent errors and the plan-cache hit rate.
+  narration, completion, rejections, replays). The Monitoring page reads the run
+  records for per-run numbers (activity, review, tokens and cost, latency,
+  failures) and the event log for guardrail firings, capability executions and
+  replays. Costs come from the reported tokens and the prices in
+  `config.LLM_PRICES_PER_MILLION_TOKENS`; mock runs are left out of them.
 
 ## Quality assurance
 

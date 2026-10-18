@@ -44,8 +44,8 @@ REGISTRY, LLM summary, version) -> `plan` (Pydantic Plan/Step) -> `guardrails`
 (static guardrails, dry run, GUARDRAILS table) -> `mock_scenarios` (example workflows) ->
 `executor` (dispatch, runtime guardrails, step records) -> `planner` /
 `narrator` (the only LLM code; OpenAI and Anthropic) -> `lineage` (manifest, replay, trace) ->
-`monitoring` (events.jsonl) -> `engine` (Session orchestrator used by app, CLI
-and notebooks) -> `evaluation`, `cli`. The Streamlit app is in `app/`
+`monitoring` (events.jsonl, the Monitoring page's metrics) -> `engine` (Session
+orchestrator used by app, CLI and notebooks) -> `evaluation`, `cli`. The Streamlit app is in `app/`
 (user interface only).
 
 ## Adding a capability

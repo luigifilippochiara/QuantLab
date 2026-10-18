@@ -23,7 +23,7 @@ from quantlab.narrator import (
     template_narrative,
 )
 from quantlab.plan import Plan
-from quantlab.types import Artifact, ArtifactMeta, DataType, Frequency
+from quantlab.types import Artifact, ArtifactMeta, DataType, Frequency, TokenUsage
 
 from conftest import SPREAD_PLAN, as_plan, raw_plan
 from fakes import FakeAnthropicClient, FakeOpenAIClient, openai_text_response, text_response
@@ -170,6 +170,7 @@ def test_template_narrative_is_fully_grounded(
     assert narrative.grounding.numbers_checked > 5
     # The template is not written by an AI: only the numbers sentence applies.
     assert narrative.note == NUMBERS_CHECKED_NOTE and AI_WRITTEN_NOTE not in narrative.note
+    assert narrative.usage == TokenUsage()  # mock mode: no LLM call, zero tokens
 
 
 def test_grounded_llm_narrative_passes_n01(settings: Settings, catalog: Catalog) -> None:
@@ -181,6 +182,8 @@ def test_grounded_llm_narrative_passes_n01(settings: Settings, catalog: Catalog)
                         client=client)  # fmt: skip
     assert narrative.source == "llm" and narrative.grounding.grounded
     assert narrative.issues == [] and narrative.withheld is None
+    # The tokens the API reported (the fake's usage), priced by the model asked for.
+    assert narrative.usage == TokenUsage(model="test-model", input_tokens=1200, output_tokens=300)
     # The disclaimer under an AI narrative whose numbers all passed the check.
     assert narrative.note == (
         "This interpretation was written by an AI and may contain errors in wording or "
@@ -213,6 +216,9 @@ def test_llm_narrative_with_invented_number_fires_n01_and_is_withheld(
     assert n01.category == "Output grounding"
     assert "7.77" in n01.message and "withheld" in n01.message
     assert narrative.note == ""  # N01 fired: no claim that any number was verified
+    # The withheld call was billed: its tokens are the narration's, recorded once.
+    assert narrative.usage == TokenUsage(model="test-model", input_tokens=1200, output_tokens=300)
+    assert narrative.withheld.usage is None
     prompt = client.calls[0]["messages"][0]["content"]
     assert "FACTS SHEET" in prompt and latest in prompt
     assert "temperature" not in client.calls[0]
@@ -314,6 +320,8 @@ def test_llm_failure_falls_back_to_the_template(settings: Settings, catalog: Cat
     assert narrative.source == "template"
     assert "connection reset" in narrative.error
     assert narrative.grounding.grounded
+    # No answer, so no token count: unknown, never estimated.
+    assert narrative.usage == TokenUsage(model="test-model", input_tokens=None, output_tokens=None)
 
 
 def test_openai_narrative_path(settings: Settings, catalog: Catalog) -> None:
@@ -339,3 +347,5 @@ def test_incomplete_openai_narrative_falls_back(settings: Settings, catalog: Cat
     narrative = narrate(plan.request, plan, result.artifacts, issues, "live", openai_settings,
                         client=client)  # fmt: skip
     assert narrative.source == "template" and "incomplete" in narrative.error
+    # The unusable answer was still billed, so its tokens are recorded.
+    assert narrative.usage == TokenUsage(model="test-model", input_tokens=1500, output_tokens=400)

@@ -7,12 +7,14 @@ import pytest
 from quantlab.config import Settings
 from quantlab.engine import ExecutionRefusedError, Session, run_request
 from quantlab.guardrails import MAX_REQUEST_CHARS, MAX_REQUEST_WORDS
-from quantlab.lineage import load_run, replay
+from quantlab.lineage import load_run, load_runs, replay
 from quantlab.mock_scenarios import SCENARIOS_BY_ID
-from quantlab.monitoring import kpis, read_events
+from quantlab.monitoring import activity, read_events
+from quantlab.planner import PROMPT_VERSION
+from quantlab.types import TokenUsage
 
-from conftest import SCENARIO_1_APPROVALS
-from fakes import FakeAnthropicClient, text_response
+from conftest import SCENARIO_1_APPROVALS, raw_plan
+from fakes import FakeAnthropicClient, text_response, tool_response
 
 SUCCESS = SCENARIOS_BY_ID["volatility_flag_success"]  # scenario 1
 
@@ -77,7 +79,7 @@ def test_ungrounded_llm_narrative_is_withheld_and_recorded_as_n01(settings: Sett
     events = read_events(settings.events_path)
     fired = [e["details"] for e in events if e["event_type"] == "guardrail_triggered"]
     assert [(d["code"], d["action"]) for d in fired] == [("N01", "WARN")]
-    assert kpis(events)["n_completed"] == 1
+    assert activity(load_runs(settings.runs_dir))["completed"] == 1
 
 
 def test_param_edit_revalidates_and_clears_approvals(settings: Settings) -> None:
@@ -147,6 +149,9 @@ def test_r01_blocks_an_oversized_request_before_the_planner(text: str, settings:
     assert client.calls == []  # the planner was never called: no tokens spent
     record = load_run(session.run_id, settings.runs_dir)
     assert record.status == "blocked" and "1,000 words" in record.error
+    # No LLM stage ran, so no tokens; the record names the planner the mode would use.
+    assert record.stage_tokens == {} and record.plan_shown_at is None
+    assert (record.llm.model, record.llm.prompt_version) == ("test-model", PROMPT_VERSION)
     events = read_events(settings.events_path)
     assert [e["details"]["code"] for e in events if e["event_type"] == "validation_issue"] == [
         "R01"
@@ -175,5 +180,81 @@ def test_monitoring_sees_every_stage(settings: Settings) -> None:
     assert {"request_received", "plan_generated", "plan_validated", "approval_granted",
             "execution_started", "step_completed", "execution_finished",
             "narrative_checked", "run_completed", "run_failed"} <= types  # fmt: skip
-    summary = kpis(events)
-    assert (summary["n_runs"], summary["n_completed"], summary["n_blocked"]) == (2, 1, 1)
+    summary = activity(load_runs(settings.runs_dir))
+    assert (summary["total"], summary["completed"], summary["blocked"]) == (2, 1, 1)
+
+
+def test_a_plan_shown_is_saved_while_it_awaits_a_decision(settings: Settings) -> None:
+    session = Session.start(
+        SUCCESS.request, list(SUCCESS.dataset_ids), "mock", settings, interactive=True
+    )
+    session.create_plan()
+    record = load_run(session.run_id, settings.runs_dir)  # saved before any decision
+    assert record.status == "ready" and record.interactive is True
+    assert record.plan_shown_at and record.decision is None and record.decided_at is None
+    assert record.stage_tokens == {"planning": TokenUsage()}  # mock: zero tokens
+    # An edit re-validates and saves again, so the record always holds the current plan.
+    session.apply_param_edits({"s4": {"window": 26}})
+    assert load_run(session.run_id, settings.runs_dir).param_diff[0].final == 26
+
+
+def test_executing_is_the_approval_decision(settings: Settings) -> None:
+    session = start(settings)
+    session.approve(SCENARIO_1_APPROVALS)
+    session.execute()
+    session.narrate()
+    session.save_record()
+    record = load_run(session.run_id, settings.runs_dir)
+    assert record.decision == "approved" and record.interactive is False  # a headless session
+    assert record.plan_shown_at <= record.decided_at
+    assert record.stage_tokens == {"planning": TokenUsage(), "narration": TokenUsage()}
+
+
+def test_rejecting_ends_the_run_unexecuted(settings: Settings) -> None:
+    session = start(settings)
+    session.reject()
+    assert session.status == "rejected" and session.execution is None
+    assert session.can_execute() == (False, "The plan was rejected.")
+    with pytest.raises(ExecutionRefusedError):
+        session.execute()
+    with pytest.raises(ValueError, match="already rejected"):
+        session.reject()
+    record = load_run(session.run_id, settings.runs_dir)
+    assert (record.status, record.decision, record.error) == ("rejected", "rejected", None)
+    assert record.plan_shown_at <= record.decided_at
+    events = read_events(settings.events_path)
+    assert events[-1]["event_type"] == "plan_rejected"
+    # A plan that never ran is not replayed (and logs no replay).
+    report = replay(session.run_id, settings)
+    assert not report.all_match and "never executed" in report.message
+    assert read_events(settings.events_path) == events
+    assert activity(load_runs(settings.runs_dir))["rejected"] == 1
+
+
+def test_a_refusal_has_no_plan_to_review(settings: Settings) -> None:
+    session = start(settings, "arima_forecast_block")
+    assert session.plan.cannot_fulfill and session.plan_shown_at is None
+    with pytest.raises(ValueError, match="no plan to reject"):
+        session.reject()
+
+
+def test_live_run_records_the_tokens_of_each_stage(settings: Settings) -> None:
+    # One fake answers both calls: a plan for the planner; for the narrator the same
+    # answer has no text, so it is unusable, yet billed, and its tokens are recorded.
+    client = FakeAnthropicClient(tool_response(raw_plan(SUCCESS.id)))
+    session = run_request(SUCCESS.request, list(SUCCESS.dataset_ids), "live", True, settings,
+                          client)  # fmt: skip
+    assert session.status == "completed" and len(client.calls) == 2
+    record = load_run(session.run_id, settings.runs_dir)
+    reported = TokenUsage(model="test-model", input_tokens=1200, output_tokens=300)
+    assert record.stage_tokens == {"planning": reported, "narration": reported}
+    assert record.narrative["source"] == "template"
+
+    # The same request again in cached mode: the planner is not called; the cache
+    # saved the original call's tokens.
+    again = run_request(SUCCESS.request, list(SUCCESS.dataset_ids), "cached", True, settings,
+                        client)  # fmt: skip
+    assert again.plan_result.from_cache and len(client.calls) == 3  # the narrator only
+    cached = load_run(again.run_id, settings.runs_dir).stage_tokens["planning"]
+    assert cached == TokenUsage(model="test-model", input_tokens=0, output_tokens=0,
+                                saved_input_tokens=1200, saved_output_tokens=300)  # fmt: skip

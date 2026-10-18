@@ -7,18 +7,22 @@ header, mock-only example workflows and full dataset names on hover.
 """
 
 import dataclasses
+import json
 
 import pytest
 from streamlit.testing.v1 import AppTest
 
 from quantlab.config import PROJECT_ROOT, Settings
 from quantlab.data import load_catalog
-from quantlab.engine import Session
+from quantlab.engine import Session, run_request
 from quantlab.guardrails import ENFORCERS, GUARDRAILS, Action
+from quantlab.lineage import LLMInfo, RunRecord, load_runs, new_run_id, save_run
 from quantlab.mock_scenarios import FLAGSHIP_REQUEST, SCENARIOS_BY_ID
+from quantlab.monitoring import STAGES, utc_now
 from quantlab.narrator import NUMBERS_CHECKED_NOTE
 from quantlab.plan import Step
 from quantlab.registry import REGISTRY
+from quantlab.types import TokenUsage
 
 from conftest import SCENARIO_1_APPROVALS
 from fakes import FakeAnthropicClient, text_response
@@ -183,6 +187,21 @@ def test_blocked_scenario_cannot_execute(scenario_id: str, app_env: Settings) ->
     button(app, "Generate plan").click().run()
     assert button(app, "Execute").disabled
     assert any("blocked" in m.value for m in app.markdown if "Run `" in m.value)
+    # A blocked plan can still be rejected; a refusal holds no plan to reject.
+    refusal = scenario_id != "spread_frequency_mismatch_block"
+    assert button(app, "Reject plan").disabled is refusal
+
+
+def test_the_reviewer_can_reject_a_plan(app_env: Settings) -> None:
+    app = open_page("analysis.py")
+    app.sidebar.button(key="scenario-volatility_flag_success").click().run()
+    button(app, "Generate plan").click().run()
+    button(app, "Reject plan").click().run()
+    assert not app.exception, app.exception
+    assert button(app, "Execute").disabled and button(app, "Reject plan").disabled
+    assert any(i.value.startswith("You rejected this plan") for i in app.info)
+    [record] = load_runs(app_env.runs_dir)
+    assert (record.status, record.decision, record.interactive) == ("rejected", "rejected", True)
 
 
 @pytest.mark.parametrize(
@@ -480,3 +499,84 @@ def test_step_summary_falls_back_to_every_parameter(app_env: Settings) -> None:
     assert ui.step_summary(unknown, None, None, catalog) == "steps ahead: 1"
     header = ui.step_header(2, unknown, "steps ahead: 1", {Action.BLOCK}, edited=False)
     assert header == "Step 2 · Arima · steps ahead: 1 :red-badge[:material/block: Blocked]"
+
+
+def chart_bars(app: AppTest) -> list[int]:
+    """The number of bars (or points) in each plotly chart of the page, in order."""
+    return [
+        sum(len(trace.get("y", [])) for trace in json.loads(chart.proto.spec)["data"])
+        for chart in app.get("plotly_chart")
+    ]
+
+
+def test_monitoring_page_with_no_runs_shows_a_note(app_env: Settings) -> None:
+    app = open_page("monitoring.py")
+    assert app.info[0].value.startswith("No runs yet")
+    assert not app.get("plotly_chart") and not app.metric and not app.subheader
+
+
+def test_monitoring_page_sections_cards_and_charts(app_env: Settings) -> None:
+    scenario = SCENARIOS_BY_ID["volatility_flag_success"]
+    # 1. Approved and executed on the Analysis page; 2. rejected there.
+    for decide in ("approve", "reject"):
+        session = Session.start(scenario.request, list(scenario.dataset_ids), "mock", app_env,
+                                interactive=True)  # fmt: skip
+        session.create_plan()
+        if decide == "reject":
+            session.reject()
+            continue
+        session.approve([i.issue_id for i in session.unresolved_approvals()])
+        session.execute()
+        session.narrate()
+        session.save_record()
+    # 3. A headless run blocked by V08; 4. a failed run; 5. a live run with tokens.
+    blocked = SCENARIOS_BY_ID["spread_frequency_mismatch_block"]
+    run_request(blocked.request, list(blocked.dataset_ids), "mock", settings=app_env)
+    now = utc_now()
+    save_run(
+        RunRecord(
+            run_id=new_run_id(),
+            created_at=now,
+            status="failed",
+            request="x",
+            error="boom",
+            stage_timings_ms={"planning": 5.0},
+        ),
+        {},
+        app_env.runs_dir,
+    )
+    luna = {"model": "gpt-6-luna"}
+    save_run(RunRecord(run_id=new_run_id() + "x", created_at=now, status="completed",
+                       request="y", llm=LLMInfo(provider="openai", prompt_version="planner-v6",
+                                                mode="live", **luna),
+                       stage_timings_ms={"planning": 1200.0, "narration": 800.0},
+                       stage_tokens={"planning": TokenUsage(input_tokens=1500, output_tokens=400,
+                                                            **luna),
+                                     "narration": TokenUsage(input_tokens=1000,
+                                                             output_tokens=200, **luna)}),
+             {}, app_env.runs_dir)  # fmt: skip
+
+    app = open_page("monitoring.py")
+    assert [h.value for h in app.subheader] == ["Activity", "Quality and governance",
+        "Guardrails", "Capabilities", "Cost", "Latency", "Recent errors"]  # fmt: skip
+    cards = {m.proto.label: m.proto for m in app.metric}
+    values = {
+        label: cards[label].body
+        for label in ("Runs", "Completed", "Blocked", "Failed", "Rejected by the reviewer")
+    }
+    assert values == {"Runs": "5", "Completed": "2", "Blocked": "1", "Failed": "1",
+                      "Rejected by the reviewer": "1"}  # fmt: skip
+    # Failed runs need attention: the card turns amber; a clean N01 rate does not.
+    assert "Needs attention" in cards["Failed"].delta and cards["Failed"].color == 3  # ORANGE
+    assert "Needs attention" not in cards["N01 failure rate"].delta
+    # Two plans reviewed in the app: one approved, one rejected; the headless run is left out.
+    assert cards["Approval rate"].body == "50%"
+    assert cards["Approval rate"].delta == "1 approved · 1 rejected · 0 abandoned"
+    # Runs per day, every guardrail, every capability, cost per stage, and the latency
+    # of each of the five runs as one segment per stage.
+    assert chart_bars(app) == [1, len(GUARDRAILS), len(REGISTRY), 2, 5 * len(STAGES)]
+    cost = app.table[0].value
+    assert cost.loc["planner", "Cost (mean)"] == "$0.000350"  # 1,500 x $0.10/M + 400 x $0.50/M
+    assert cost.loc["total", "Input tokens (mean)"] == "2,500"
+    errors = app.dataframe[0].value
+    assert errors["code"].tolist() == ["—", "V08"] and errors["message"][0] == "boom"

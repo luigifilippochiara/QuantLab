@@ -83,7 +83,7 @@ if st.button(
     "Generate plan", type="primary", icon=":material/auto_awesome:", disabled=not request.strip()
 ):
     with st.spinner("Planning..."):
-        session = Session.start(request, datasets, mode, settings)
+        session = Session.start(request, datasets, mode, settings, interactive=True)
         session.create_plan()
     st.session_state.session = session
     st.session_state.replay_report = None
@@ -102,7 +102,8 @@ st.divider()
 st.markdown(f"Run `{session.run_id}` · {ui.STATUS_BADGE.get(session.status, session.status)}")
 plan = session.plan
 result = session.plan_result
-finished = session.status == "completed"
+# A completed or rejected run is final: its plan can no longer change.
+finished = session.status in ("completed", "rejected")
 # step id -> {param: value} for widget values that differ from the plan: changes
 # the user has made but not applied (and re-validated) yet.
 pending: dict[str, dict] = {}
@@ -119,7 +120,7 @@ else:
         icon=":material/tune:",
     )
     if finished:
-        st.caption("This run has completed; generate a new plan to change it.")
+        st.caption(f"This run is {session.status}; generate a new plan to change it.")
     proposal = {step.id: step.params for step in session.proposal.steps}
     dry_run = session.report.dry_run if session.report else {}
     # Widget keys include the plan version, so after an edit is applied (or reset)
@@ -266,8 +267,15 @@ elif blocking:
 elif unticked:
     reason = f"Resolve {len(unticked)} approval{'' if len(unticked) == 1 else 's'} to continue."
 already_approved = {a.issue_id for a in session.approvals}
-if st.button(
-    "Execute", type="primary", icon=":material/play_arrow:", disabled=finished or bool(reason)
+# Rejecting is the reviewer's other decision; a refusal or a missing plan has nothing to reject.
+can_reject = not finished and plan is not None and not plan.cannot_fulfill
+execute_col, reject_col = st.columns(2)
+if execute_col.button(
+    "Execute",
+    type="primary",
+    icon=":material/play_arrow:",
+    disabled=finished or bool(reason),
+    width="stretch",
 ):
     session.approve([issue_id for issue_id in ticked if issue_id not in already_approved])
     with st.spinner("Executing and writing the narrative..."):
@@ -276,8 +284,16 @@ if st.button(
             session.narrate()
             session.save_record()
     st.rerun()
+if reject_col.button(
+    "Reject plan", icon=":material/block:", disabled=not can_reject, width="stretch"
+):
+    session.reject()
+    st.rerun()
 if reason:
     st.caption(reason)
+if session.status == "rejected":
+    st.info("You rejected this plan: nothing was run. Generate a new plan to start again.",
+            icon=":material/block:")  # fmt: skip
 
 # ---------------------------------------------------------------- results
 
