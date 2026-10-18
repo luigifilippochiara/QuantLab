@@ -23,12 +23,14 @@ from quantlab.executor import (
     MISSING_DATA_THRESHOLD,
 )
 from quantlab.guardrails import (
+    CATEGORY_DEFINITIONS,
     ENFORCERS,
     GUARDRAILS,
     LLM_STAGES,
     MAX_REQUEST_CHARS,
     MAX_REQUEST_WORDS,
     Action,
+    Category,
     GuardrailType,
     Issue,
     ValidationReport,
@@ -558,6 +560,30 @@ def test_every_guardrail_has_an_action_a_category_and_a_description() -> None:
     for guardrail in GUARDRAILS.values():
         assert guardrail.action in Action and guardrail.category.value
         assert guardrail.description.endswith("."), guardrail.code
+
+
+# The audited category of every guardrail (docs/DECISIONS.md): one each. R01 checks the
+# request and E01 the data file, both inputs, so they are Input validity.
+AUDITED_CATEGORIES = {
+    Category.PLAN_INTEGRITY: ["V01", "V05"],
+    Category.APPROVED_SCOPE: ["P01", "V02", "V06"],
+    Category.INPUT_VALIDITY: ["R01", "V03", "V04", "E01"],
+    Category.METHODOLOGY: ["V07", "V08", "V09", "V10", "V11", "E05"],
+    Category.DATA_QUALITY: ["E02", "E03", "E04"],
+    Category.OUTPUT_GROUNDING: ["N01"],
+}
+
+
+def test_every_guardrail_has_its_audited_category() -> None:
+    actual = {c: [code for code, g in GUARDRAILS.items() if g.category == c] for c in Category}
+    assert actual == AUDITED_CATEGORIES
+
+
+def test_every_category_is_defined_and_used() -> None:
+    # One list (the enum), one definition each, and no empty category.
+    assert list(CATEGORY_DEFINITIONS) == list(Category)
+    assert all(d.endswith(".") for d in CATEGORY_DEFINITIONS.values())
+    assert {g.category for g in GUARDRAILS.values()} == set(Category)
 
 
 def test_issues_are_only_built_through_make_issue() -> None:

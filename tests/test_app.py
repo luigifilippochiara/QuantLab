@@ -16,7 +16,7 @@ from streamlit.testing.v1 import AppTest
 from quantlab.config import PROJECT_ROOT, Settings
 from quantlab.data import load_catalog
 from quantlab.engine import Session, run_request
-from quantlab.guardrails import ENFORCERS, GUARDRAILS, Action
+from quantlab.guardrails import CATEGORY_DEFINITIONS, ENFORCERS, GUARDRAILS, Action
 from quantlab.lineage import LLMInfo, RunRecord, load_runs, new_run_id, replay, save_run
 from quantlab.mock_scenarios import FLAGSHIP_REQUEST, SCENARIOS_BY_ID
 from quantlab.monitoring import (
@@ -390,6 +390,17 @@ def test_guardrail_filters_combine_and_clear(app_env: Settings) -> None:
     assert app.text_input(key="guardrail_search").value == ""
     assert all(m.value == [] for m in app.multiselect)
     assert button(app, "Clear filters").disabled
+
+
+def test_category_filter_explains_and_selects_each_category(app_env: Settings) -> None:
+    app = open_page("guardrails.py")
+    category = app.multiselect(key="guardrail_category")
+    for name, definition in CATEGORY_DEFINITIONS.items():  # the tooltip, from the one list
+        assert f"**{name}**: {definition}" in category.help
+    category.select("Input validity").run()
+    # The request (R01) and the data file (E01) are inputs too.
+    assert guardrail_codes(app) == ["R01", "V03", "V04", "E01"]
+    assert list(app.table[0].value["Category"].unique()) == ["Input validity"]
 
 
 def test_guardrail_type_filter_alone_and_combined(app_env: Settings) -> None:

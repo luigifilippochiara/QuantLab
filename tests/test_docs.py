@@ -5,7 +5,7 @@ import re
 
 from quantlab.config import PROJECT_ROOT
 from quantlab.evaluation import load_golden
-from quantlab.guardrails import GUARDRAILS
+from quantlab.guardrails import CATEGORY_DEFINITIONS, GUARDRAILS, Category
 from quantlab.mock_scenarios import FLAGSHIP_REQUEST, SCENARIOS_BY_ID
 from quantlab.registry import REGISTRY
 
@@ -21,6 +21,17 @@ def test_guardrail_table_matches_the_code() -> None:
         row = (f"| {g.code} | `{g.name}` | {g.action.value} | {g.enforced_by} | "
                f"{g.type.value} | {g.category.value} | {g.description} |")  # fmt: skip
         assert row in ARCHITECTURE, f"docs/ARCHITECTURE.md guardrail row out of date: {g.code}"
+
+
+def test_docs_name_the_categories_of_the_code() -> None:
+    # The category list is the Category enum; the docs name it in the same order, and
+    # the architecture document gives each category's definition.
+    names = [c.value.lower() for c in Category]
+    sentence = f"{', '.join(names[:-1])} or {names[-1]}"
+    for name, text in [("README.md", README), ("docs/ARCHITECTURE.md", ARCHITECTURE)]:
+        assert sentence in re.sub(r"\s+", " ", text), name
+    for category, definition in CATEGORY_DEFINITIONS.items():
+        assert f"- **{category.value}**: {definition}" in ARCHITECTURE, category
 
 
 def test_capability_table_lists_every_capability_with_its_code() -> None:

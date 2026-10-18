@@ -1587,3 +1587,32 @@ sit in ratio columns so every label and caption fits on one line at a laptop wid
 one row); in Cost and Latency a small gap under the section header and a smaller
 chart top margin (34 px instead of 50) line the chart's top up with the table's, and
 the latency legend moved to the top right so it does not cover the title.
+
+## Guardrail categories: two corrections and an audit
+
+**R01 REQUEST_TOO_LONG and E01 DATASET_HASH_MISMATCH are Input validity.** R01 checks
+the request and E01 the data file before it is loaded: both are inputs, not the plan
+(R01 was Plan integrity) or the quality of loaded data (E01 was Data quality). No code,
+name, action, stage or behaviour changed.
+
+**The categories live in one place**: the `Category` enum, with
+`CATEGORY_DEFINITIONS` beside it (one line each). The Guardrails page builds its
+column, its filter and the filter's tooltip from them; the architecture document lists
+the definitions, and a docs test checks that its category list and the README's are
+the enum's, in order. `tests/test_guardrails.py` pins each code's category.
+
+| Category | Definition | Guardrails |
+|---|---|---|
+| Plan integrity | The plan is well-formed and of a size a person can review. | V01, V05 |
+| Approved scope | Only approved capabilities and catalogued datasets, for requests the registry can serve. | P01, V02, V06 |
+| Input validity | Every input is acceptable: the request's size, each parameter, each step's input kind, and data files that match their recorded hash. | R01, V03, V04, E01 |
+| Methodology | The analysis is statistically and economically sound. | V07, V08, V09, V10, V11, E05 |
+| Data quality | There is enough data, and gaps or alignment do not silently distort it. | E02, E03, E04 |
+| Output grounding | The written summary quotes only values the run computed or used. | N01 |
+
+**Audit of the other seventeen: no change.** Three are borderline and stay where
+they are: V07 RETURNS_ON_RATES and V08 FREQUENCY_MISMATCH are also input rules, but
+their reason is methodological (rates are differenced; one statistic must not mix
+frequencies); E05 LOW_EFFECTIVE_SAMPLE is also about having enough data, but it judges
+the strength of the inference (independent episodes). Output grounding has one member,
+N01, the only check on the output; merging it into another category would mislabel it.

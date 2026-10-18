@@ -200,7 +200,14 @@ and what goes wrong without it. Every guardrail has:
 * a **type**, derived from the stage: **LLM** for the planner's guardrail,
   **Deterministic** for every other stage;
 * a **category**, what it protects: plan integrity, approved scope, input
-  validity, methodology, data quality or output grounding.
+  validity, methodology, data quality or output grounding
+  (`guardrails.CATEGORY_DEFINITIONS`, also in the Guardrails page's Category filter):
+  - **Plan integrity**: The plan is well-formed and of a size a person can review.
+  - **Approved scope**: Only approved capabilities and catalogued datasets, for requests the registry can serve.
+  - **Input validity**: Every input is acceptable: the request's size, each parameter, each step's input kind, and data files that match their recorded hash.
+  - **Methodology**: The analysis is statistically and economically sound.
+  - **Data quality**: There is enough data, and gaps or alignment do not silently distort it.
+  - **Output grounding**: The written summary quotes only values the run computed or used.
 
 The table matches `guardrails.GUARDRAILS` row for row (`tests/test_docs.py`
 checks it); the same table feeds the **Guardrails** page, its counts and every
@@ -212,7 +219,7 @@ runs can still be replayed.
 
 | Code | Name | Action | Enforced by | Type | Category | Description |
 |---|---|---|---|---|---|---|
-| R01 | `REQUEST_TOO_LONG` | BLOCK | Request check | Deterministic | Plan integrity | Blocks a request over 1,000 words, or 8,000 characters (so a text without spaces cannot slip through), before it reaches the LLM. Prevents pasted documents or stuffed instructions from driving the planner. |
+| R01 | `REQUEST_TOO_LONG` | BLOCK | Request check | Deterministic | Input validity | Blocks a request over 1,000 words, or 8,000 characters (so a text without spaces cannot slip through), before it reaches the LLM. Prevents pasted documents or stuffed instructions from driving the planner. |
 | P01 | `PLANNER_REFUSED` | BLOCK | Planner | LLM | Approved scope | The planner may decline a request it cannot serve with the approved capabilities, or one that tries to override its rules, giving a reason instead of a plan (in mock mode, any request without a canned plan); nothing runs. Prevents an out-of-scope or malicious request from being forced into a misleading plan. |
 | V01 | `INVALID_PLAN` | BLOCK | Validator | Deterministic | Plan integrity | The plan must match the plan schema exactly (no missing or extra fields), have at least one step, use unique step ids, and give each step exactly the inputs its capability defines, each taken from an earlier step. Also raised when the planner returns no usable plan: an API error or timeout, an answer cut off or refused by the provider, or no readable plan submitted. Prevents a malformed, ambiguous or out-of-order plan from running. |
 | V02 | `UNKNOWN_CAPABILITY` | BLOCK | Validator | Deterministic | Approved scope | Every step must call a capability in the approved registry, so no unreviewed or untested code is ever run, whatever the LLM asks for. |
@@ -225,7 +232,7 @@ runs can still be replayed.
 | V09 | `LOOK_AHEAD` | APPROVE | Validator | Deterministic | Methodology | A flag threshold computed from the full sample, which includes data from after each flagged date, needs explicit approval. Prevents results that look better than anything achievable in real time from passing unnoticed. |
 | V10 | `MATERIAL_ASSUMPTION` | APPROVE | Validator | Deterministic | Methodology | Choices that change the answer need explicit approval: today, the return method (log or simple) of compute_returns and forward_return. Prevents the LLM from making material assumptions silently. |
 | V11 | `FORWARD_DATA_AS_SIGNAL` | BLOCK | Validator | Deterministic | Methodology | Forward returns may only be the outcome of a comparison or of the significance test, never the input to a volatility, a flag or any other step. Prevents future information from leaking into a signal. |
-| E01 | `DATASET_HASH_MISMATCH` | BLOCK | Executor | Deterministic | Data quality | Each snapshot file must match the hash recorded in the catalog before it is loaded. Prevents analysis of altered or different data. |
+| E01 | `DATASET_HASH_MISMATCH` | BLOCK | Executor | Deterministic | Input validity | Each snapshot file must match the hash recorded in the catalog before it is loaded. Prevents analysis of altered or different data. |
 | E02 | `INSUFFICIENT_DATA` | BLOCK | Executor | Deterministic | Data quality | Each step needs its capability's minimum number of observations, for example three times the window for a rolling volatility and 30 shared dates for the significance test. Prevents statistics computed on too little data. |
 | E03 | `MISSING_DATA` | WARN | Executor | Deterministic | Data quality | Warns when more than 5% of a loaded series' values are missing (they are dropped). Prevents gaps from silently distorting the results. |
 | E04 | `ALIGNMENT_LOSS` | WARN | Executor | Deterministic | Data quality | Warns when aligning two series on their common dates drops more than 10% of either. Prevents a silently shrunken sample. |

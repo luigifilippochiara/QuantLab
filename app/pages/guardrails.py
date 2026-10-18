@@ -5,13 +5,21 @@ planner refusal, the validator, the executor and the narrator check take each
 issue's name and action from, so this page cannot drift from what they enforce.
 The filter options come from the same table (in the order of the Action,
 GuardrailType and Category enums and of ENFORCERS), so they always match the
-values it holds.
+values it holds; the Category filter's tooltip gives each category's definition
+(CATEGORY_DEFINITIONS).
 """
 
 import pandas as pd
 import streamlit as st
 
-from quantlab.guardrails import ENFORCERS, GUARDRAILS, Action, Category, GuardrailType
+from quantlab.guardrails import (
+    CATEGORY_DEFINITIONS,
+    ENFORCERS,
+    GUARDRAILS,
+    Action,
+    Category,
+    GuardrailType,
+)
 
 INTRO = (
     "Guardrails are the checks that keep an analysis safe and meaningful. When one fires, "
@@ -76,7 +84,12 @@ search = search_col.text_input(
 action_col.multiselect("Action", ACTION_OPTIONS, key="guardrail_action")
 enforcer_col.multiselect("Enforced by", ENFORCER_OPTIONS, key="guardrail_enforcer")
 type_col.multiselect("Type", TYPE_OPTIONS, key="guardrail_type")
-category_col.multiselect("Category", CATEGORY_OPTIONS, key="guardrail_category")
+category_col.multiselect(
+    "Category",
+    CATEGORY_OPTIONS,
+    key="guardrail_category",
+    help="\n\n".join(f"**{c}**: {CATEGORY_DEFINITIONS[Category(c)]}" for c in CATEGORY_OPTIONS),
+)
 
 selected = {column: st.session_state[key] for key, column in FILTERS.items()}
 shown = [row for row in ROWS if matches(row, search, selected)]

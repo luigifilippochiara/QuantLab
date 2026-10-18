@@ -58,14 +58,33 @@ class Action(StrEnum):
 
 
 class Category(StrEnum):
-    """What a guardrail protects."""
+    """What a guardrail protects (CATEGORY_DEFINITIONS says what each one covers)."""
 
-    PLAN_INTEGRITY = "Plan integrity"  # the request and plan are well-formed, of reviewable size
-    APPROVED_SCOPE = "Approved scope"  # only registered capabilities and catalog data
-    INPUT_VALIDITY = "Input validity"  # parameters and input kinds make sense
-    METHODOLOGY = "Methodology"  # the analysis is statistically and economically sound
-    DATA_QUALITY = "Data quality"  # the data is the recorded version, and there is enough
-    OUTPUT_GROUNDING = "Output grounding"  # the narrative quotes only values of the run
+    PLAN_INTEGRITY = "Plan integrity"
+    APPROVED_SCOPE = "Approved scope"
+    INPUT_VALIDITY = "Input validity"
+    METHODOLOGY = "Methodology"
+    DATA_QUALITY = "Data quality"
+    OUTPUT_GROUNDING = "Output grounding"
+
+
+# What each category covers, in one line: the only place the definitions are written,
+# read by the Guardrails page (the Category filter's tooltip).
+CATEGORY_DEFINITIONS = {
+    Category.PLAN_INTEGRITY: "The plan is well-formed and of a size a person can review.",
+    Category.APPROVED_SCOPE: (
+        "Only approved capabilities and catalogued datasets, for requests the registry can serve."
+    ),
+    Category.INPUT_VALIDITY: (
+        "Every input is acceptable: the request's size, each parameter, each step's input "
+        "kind, and data files that match their recorded hash."
+    ),
+    Category.METHODOLOGY: "The analysis is statistically and economically sound.",
+    Category.DATA_QUALITY: (
+        "There is enough data, and gaps or alignment do not silently distort it."
+    ),
+    Category.OUTPUT_GROUNDING: "The written summary quotes only values the run computed or used.",
+}
 
 
 class GuardrailType(StrEnum):
@@ -141,7 +160,7 @@ GUARDRAILS: dict[str, Guardrail] = {
     g.code: g
     for g in [
         Guardrail(
-            "R01", "REQUEST_TOO_LONG", BLOCK, Category.PLAN_INTEGRITY,
+            "R01", "REQUEST_TOO_LONG", BLOCK, Category.INPUT_VALIDITY,
             "Blocks a request over 1,000 words, or 8,000 characters (so a text without "
             "spaces cannot slip through), before it reaches the LLM. Prevents pasted "
             "documents or stuffed instructions from driving the planner.",
@@ -224,7 +243,7 @@ GUARDRAILS: dict[str, Guardrail] = {
             "information from leaking into a signal.",
         ),
         Guardrail(
-            "E01", "DATASET_HASH_MISMATCH", BLOCK, Category.DATA_QUALITY,
+            "E01", "DATASET_HASH_MISMATCH", BLOCK, Category.INPUT_VALIDITY,
             "Each snapshot file must match the hash recorded in the catalog before it is "
             "loaded. Prevents analysis of altered or different data.",
         ),
