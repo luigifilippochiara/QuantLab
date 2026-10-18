@@ -32,7 +32,7 @@ from quantlab.plan import Step
 from quantlab.registry import REGISTRY
 from quantlab.types import TokenUsage
 
-from conftest import SCENARIO_1_APPROVALS
+from conftest import SCENARIO_1_APPROVALS, as_plan, raw_plan
 from fakes import FakeAnthropicClient, text_response
 
 PAGES = PROJECT_ROOT / "app" / "pages"
@@ -509,6 +509,28 @@ def test_one_click_applies_a_typed_value(app_env: Settings) -> None:
     assert any(c.value == ":blue[edited (was 12)]" for c in app.caption)
 
 
+def test_apply_is_highlighted_only_while_there_are_unapplied_edits(app_env: Settings) -> None:
+    app = plan_scenario_1(app_env)
+
+    def apply_style() -> str:
+        return app.button(key="apply-edits").proto.type
+
+    def quantile():  # the field of the plan version shown now
+        return next(n for n in app.number_input if n.key.endswith("-s5-quantile"))
+
+    assert apply_style() == "secondary"  # no edits: white
+    quantile().set_value(0.95).run()
+    assert apply_style() == "primary"  # an edit not applied yet: red
+    app.button(key="apply-edits").click().run()
+    assert any("Changes applied and re-validated" in i.value for i in app.info)
+    assert apply_style() == "secondary"  # the applied plan is the new baseline
+    quantile().set_value(0.9).run()
+    assert apply_style() == "primary"
+    quantile().set_value(0.95).run()  # set back to the applied value: nothing to apply
+    assert apply_style() == "secondary"
+    assert not any("not applied yet" in c.value for c in app.caption)
+
+
 def test_execute_ignores_a_click_while_a_change_is_not_applied(app_env: Settings) -> None:
     app = plan_scenario_1(app_env)
     approve_all(app)
@@ -585,6 +607,28 @@ def test_step_summary_falls_back_to_every_parameter(app_env: Settings) -> None:
     assert ui.step_summary(unknown, None, None, catalog) == "steps ahead: 1"
     header = ui.step_header(2, unknown, "steps ahead: 1", {Action.BLOCK}, edited=False)
     assert header == "Step 2 · Arima · steps ahead: 1 :red-badge[:material/block: Blocked]"
+
+
+def test_unapplied_edits_compares_the_fields_with_the_last_validated_plan(
+    app_env: Settings,
+) -> None:
+    import ui  # importable once app_env has put app/ on the path
+
+    plan = as_plan(raw_plan("volatility_flag_success"))
+    fields = {step.id: dict(step.params) for step in plan.steps}  # every field as planned
+    assert ui.unapplied_edits(plan, fields) == {}  # no change
+    fields["s5"]["quantile"] = 0.95
+    assert ui.unapplied_edits(plan, fields) == {"s5": {"quantile": 0.95}}  # a real change
+    fields["s5"]["quantile"] = 0.9
+    assert ui.unapplied_edits(plan, fields) == {}  # a change set back to the plan's value
+
+    # Types count, as for the validator: a planner's 12.0 for the int window (V03)
+    # differs from the field's 12, so applying the field's value fixes it.
+    raw = raw_plan("volatility_flag_success")
+    next(s for s in raw["steps"] if s["id"] == "s4")["params"]["window"] = 12.0
+    assert ui.unapplied_edits(as_plan(raw), fields) == {"s4": {"window": 12}}
+    assert not ui.same_value(True, 1)
+    assert ui.same_value({"a": [0.9], "b": 1}, {"b": 1, "a": [0.9]})  # key order is no change
 
 
 def chart_bars(app: AppTest) -> list[int]:

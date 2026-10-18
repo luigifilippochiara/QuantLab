@@ -1641,3 +1641,22 @@ the MockPlanner's aliases ("2") and of the two eval case ids, now
 migration in `tests/test_golden_scenarios.py` maps the recorded ids to the new ones.
 Earlier sections of this file keep the numbers they were written with. Alternative:
 keep the old eval ids, rejected because an "s2_" case would then be example 5.
+
+## Apply is highlighted only when there is something to apply
+
+**"Apply changes & re-validate" is primary (red) only while the plan editor holds
+unapplied edits, and secondary (white) otherwise**; it stays clickable in both states.
+It had been red all the time since the one-click fix enabled it permanently (before
+that, it was disabled, so grey, until a change was seen). **The baseline is the
+session's plan** (`st.session_state.session.plan`), the last validated plan, which
+`apply_param_edits` and `reset_to_proposal` replace after re-validating; a second copy
+in session state could drift from the plan the engine validates. `ui.unapplied_edits`
+compares each field with it as canonical JSON (sorted keys, each value's own type: 12
+and 12.0 differ, as they do for the validator), so a value changed and set back is no
+change. The button is drawn after every field, so its style follows each change in the
+same run; a number field counts once its value is committed (Enter, Tab or a click
+elsewhere), since Streamlit sends no keystrokes. **The button has a key**: without one,
+Streamlit's widget id includes the button type, so a click on the white button that
+commits a typed value (and turns the button red in that run) would be lost, the
+two-click bug again. Alternative: treating 12 and 12.0 as equal, rejected because a
+planner's 12.0 for an int parameter (V03) would then show as nothing to apply.

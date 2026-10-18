@@ -127,6 +127,8 @@ finished = session.status in ("completed", "rejected")
 # step id -> {param: value} for widget values that differ from the plan: changes
 # the user has made but not applied (and re-validated) yet.
 pending: dict[str, dict] = {}
+# step id -> {param: value} for every parameter field, as it is now.
+values: dict[str, dict] = {}
 
 st.subheader("Plan")
 # A canned plan that simulates a planner behaviour (e.g. one that follows an
@@ -203,26 +205,33 @@ else:
                         catalog,
                         disabled=finished,
                     )
+                    values.setdefault(step.id, {})[spec_param.name] = value
                     original = proposal.get(step.id, {}).get(spec_param.name)
                     if not ui.same_value(value, current):
-                        pending.setdefault(step.id, {})[spec_param.name] = value
                         st.caption(":orange[changed, not applied yet]")
                     elif not ui.same_value(current, original):
                         st.caption(f":blue[edited (was {original})]")
 
+    # Drawn after every field, so this run already sees each change, and a change set
+    # back to the plan's value is no change.
+    pending = ui.unapplied_edits(plan, values)
     edited = any(
         not ui.same_value(value, proposal.get(step.id, {}).get(name))
         for step in plan.steps
         for name, value in step.params.items()
     )
     left, right = st.columns(2)
-    # Enabled whenever the plan can change, not only once a change is seen: a number
-    # field sends its typed value only when it loses focus, so a button disabled until
-    # then would swallow the first click (which only moves the focus) and need a second.
-    # The click itself sends the value, and this run already sees it in `pending`.
+    # Highlighted (primary) only while there are changes to apply, but enabled whenever
+    # the plan can change: a number field sends its typed value only when it loses
+    # focus, so a button disabled until then would swallow the first click (which only
+    # moves the focus) and need a second. The click itself sends the value, and this run
+    # already sees it in `pending`. The key keeps the button the same widget when its
+    # style changes in that run: without one, Streamlit's widget id includes the type,
+    # and the click on the white button would be lost.
     if left.button(
         "Apply changes & re-validate",
-        type="primary",
+        key="apply-edits",
+        type="primary" if pending else "secondary",
         icon=":material/rule:",
         disabled=finished,
         width="stretch",

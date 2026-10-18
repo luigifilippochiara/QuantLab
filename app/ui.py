@@ -11,6 +11,7 @@ all pass, so the same two colours work in either theme without detecting it.
 """
 
 import html
+import json
 from typing import Any
 
 import pandas as pd
@@ -239,8 +240,32 @@ def step_header(position: int, step: Step, summary: str, actions: set[Action], e
 
 
 def same_value(a: Any, b: Any) -> bool:
-    """Equal value AND type: 12 -> 12.0 counts as a change for the strict validator."""
-    return a == b and type(a) is type(b)
+    """Whether two parameter values are the same, compared as canonical JSON (sorted keys).
+
+    The JSON text keeps each value's type, as the validator does: 12 and 12.0 differ
+    (an int parameter rejects 12.0, and its field shows 12, so applying fixes it), and
+    so do True and 1. Lists and dicts compare element by element.
+    """
+    return json.dumps(a, sort_keys=True) == json.dumps(b, sort_keys=True)
+
+
+def unapplied_edits(plan: Plan, values: dict[str, dict[str, Any]]) -> dict[str, dict[str, Any]]:
+    """The plan editor's values that differ from the last validated plan: what Apply applies.
+
+    Args:
+        plan: the last validated plan (the session's plan), the baseline.
+        values: step id -> {param: the value in its field now}.
+
+    Returns:
+        step id -> {param: new value}, only for values that differ from the plan; empty
+        when nothing changed, or every change was set back to the plan's value.
+    """
+    edits: dict[str, dict[str, Any]] = {}
+    for step in plan.steps:
+        for name, value in values.get(step.id, {}).items():
+            if not same_value(value, step.params.get(name)):
+                edits.setdefault(step.id, {})[name] = value
+    return edits
 
 
 def load_scenario(scenario_id: str) -> None:
