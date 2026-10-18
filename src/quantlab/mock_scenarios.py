@@ -126,8 +126,8 @@ def _registry_menu() -> str:
 # weeks), and forward returns are always one period ahead with Newey-West lags set by
 # their rule, so a live planner can still reach exactly the canned plan below (the
 # golden set checks it item by item). Defined once: the app, the CLI, the
-# notebooks, the golden set and the tests read it from here; the README quotes it, and
-# a test checks the quote.
+# notebooks, the golden set and the tests read it from here; docs/GUIDE.md quotes it,
+# and a test checks the quote.
 FLAGSHIP_REQUEST = (
     "Using NASDAQ, calculate weekly log returns, 12-week volatility, and flag unusually "
     "volatile weeks. Compare next-week simple returns after volatile weeks with those after "

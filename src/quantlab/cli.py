@@ -91,6 +91,8 @@ def print_session(session: Session) -> None:
             badge += "; the LLM narrative was withheld (N01)"
         print(f"\nNarrative ({session.narrative.source}; {badge}):")
         print(f"  {session.narrative.text}")
+        if session.narrative.note:
+            print(f"  Note: {session.narrative.note}")
     if session.manifest_path:
         print(f"\nManifest: {session.manifest_path}")
 

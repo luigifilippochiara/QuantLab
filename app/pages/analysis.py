@@ -356,6 +356,8 @@ if narrative is not None:
             icon=":material/verified:",
         )
     st.markdown(ui.escape_md(narrative.text))
+    if narrative.note:  # who wrote it and, only if N01 passed, that its numbers were checked
+        st.caption(narrative.note)
     source = f"LLM ({narrative.model})" if narrative.source == "llm" else "deterministic template"
     st.caption(
         f"Written by: {source}" + (f" · LLM error: {narrative.error}" if narrative.error else "")

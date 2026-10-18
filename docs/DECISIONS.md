@@ -1251,3 +1251,44 @@ back to daily is reachable from a plan; it is a candidate for a future static ch
 score), recorded before the change. `tests/test_golden_scenarios.py` applies to each
 record the migrations made since (simplification, then restructure) and requires
 everything else to be identical; no example raises N01.
+
+## Narrative note, a shorter README, the logo
+
+**A note under the narrative, written once.** Directly under the narrative the app
+and the CLI show a short caption, also kept in the run record (`narrative.note`):
+"This interpretation was written by an AI and may contain errors in wording or
+reasoning. Every number in it has been checked automatically against the computed
+results (N01)." The two sentences are constants in `narrator.py`
+(`AI_WRITTEN_NOTE`, `NUMBERS_CHECKED_NOTE`) and `narrative_note` decides which
+apply: the first only for an LLM narrative, because the template is not written by
+an AI and saying so would be false; the second only when the grounding check passed
+and raised no N01, so the note never claims numbers were verified when they were
+not. After an N01 the note is empty and the N01 issue is shown instead, and the
+"all numbers verified" banner is not shown either. Alternative: one fixed text under
+every narrative, rejected because in mock mode it would call the template an AI.
+
+**The README is an overview; the detail moved to `docs/`.** The README now reads in
+about two minutes: what QuantLab is, the pipeline, a short note on capabilities and
+guardrails, the quickstart, the five examples in one line each, and limitations.
+Nothing was deleted: usage (the app, plan editing, the examples in full with the
+example output, live mode, reproducibility, monitoring, testing, layout) moved to
+`docs/GUIDE.md`, and the design (safety model, diagram and module map, why plans
+instead of code, the capability and guardrail tables, the model calls, the full
+limitations and roadmap) to `docs/ARCHITECTURE.md`. The tables are not duplicated in
+the README; `tests/test_docs.py` now checks them in `docs/ARCHITECTURE.md`, checks
+that the guide quotes the flagship request, and checks that every link and anchor in
+the README, and the logo path, resolve.
+
+**The logo is the app's icon, exported once.** The app has no image file: its logo
+is the Material Symbol `query_stats` drawn by Streamlit from its icon font. The same
+glyph (the Rounded variant, the one Streamlit uses; Apache License 2.0) is saved once
+as `assets/logo.svg` and shown at the top of the README. It is filled with the app's
+series blue, which was checked against both light and dark backgrounds, because
+GitHub shows the README in either theme. The app keeps its font icon: replacing it
+with the image would change the sidebar and header layout for no gain.
+
+**Dead-code check.** ruff (unused imports, variables and arguments) and vulture, each
+finding confirmed by hand, found nothing to remove in the tracked code: the names
+vulture reports are used by a framework (Pydantic `model_config` and record fields,
+Streamlit session-state keys, pytest fixtures requested for their side effects).
+`eval/run_eval.py` duplicates `cli eval` but is documented and kept.

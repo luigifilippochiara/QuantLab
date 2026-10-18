@@ -5,6 +5,7 @@ import pytest
 from quantlab.cli import main
 from quantlab.config import Settings
 from quantlab.lineage import list_runs
+from quantlab.narrator import NUMBERS_CHECKED_NOTE
 
 
 @pytest.fixture
@@ -34,6 +35,7 @@ def test_demo_behaves_as_expected(cli_env: Settings, capsys: pytest.CaptureFixtu
 def test_run_replay_and_trace(cli_env: Settings, capsys: pytest.CaptureFixture) -> None:
     assert main(["run", "1", "--datasets", "NASDAQCOM", "--mode", "mock", "--approve-all"]) == 0
     run_id = list_runs(cli_env.runs_dir)[0]["run_id"]
+    assert f"  Note: {NUMBERS_CHECKED_NOTE}" in capsys.readouterr().out  # under the narrative
     assert main(["replay", run_id]) == 0
     replayed = capsys.readouterr().out
     assert "ALL HASHES MATCH" in replayed and "C10" in replayed

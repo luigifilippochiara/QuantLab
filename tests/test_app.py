@@ -16,6 +16,7 @@ from quantlab.data import load_catalog
 from quantlab.engine import Session
 from quantlab.guardrails import ENFORCERS, GUARDRAILS, Action
 from quantlab.mock_scenarios import FLAGSHIP_REQUEST, SCENARIOS_BY_ID
+from quantlab.narrator import NUMBERS_CHECKED_NOTE
 from quantlab.plan import Step
 from quantlab.registry import REGISTRY
 
@@ -73,6 +74,9 @@ def test_scenario_1_full_flow(app_env: Settings) -> None:
 
     successes = [s.value for s in app.success]
     assert any("numbers verified" in text for text in successes)
+    # The note directly under the (template) narrative: its numbers were checked.
+    captions = [c.value for c in app.caption]
+    assert NUMBERS_CHECKED_NOTE in captions
     # Results and trace name each capability by code and name.
     results = [e.label for e in app.expander if e.label.startswith("s")]
     assert results[3].startswith("s4 · C06 · rolling_volatility · completed")
@@ -219,6 +223,7 @@ def test_ungrounded_llm_narrative_is_withheld_with_an_n01_issue(app_env: Setting
     assert any("N01 UNGROUNDED_NARRATIVE" in m.value and "narrative" in m.value
                for m in app.markdown)  # fmt: skip
     assert not any("numbers verified" in s.value for s in app.success)
+    assert not any("has been checked" in c for c in captions)  # never claimed after N01
     # The withheld text appears once, in a collapsed expander, with its failing number.
     shown = invented.replace(".", "\\.")  # as escaped for Markdown (ui.escape_md)
     assert [m.value for m in app.markdown if shown in m.value] == [shown]

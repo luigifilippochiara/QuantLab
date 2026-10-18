@@ -76,7 +76,7 @@ ENFORCERS = {
 
 @dataclass(frozen=True)
 class Guardrail:
-    """Description of one guardrail (used for issues, the README and the UI).
+    """Description of one guardrail (used for issues, the UI and docs/ARCHITECTURE.md).
 
     Fields:
         code: e.g. "G07"; its first letter says who enforces it (see ENFORCERS).
@@ -106,7 +106,7 @@ PERIOD_NAMES = {Frequency.D: "day", Frequency.W: "week", Frequency.M: "month"}
 FREQUENCY_RANK = {Frequency.D: 0, Frequency.W: 1, Frequency.M: 2}
 
 # Every guardrail, in pipeline order: planner, validator, executor, narrator check.
-# The descriptions are shown as they are on the Guardrails page and in the README.
+# The descriptions are shown as they are on the Guardrails page and in docs/ARCHITECTURE.md.
 GUARDRAILS: dict[str, Guardrail] = {
     g.code: g
     for g in [

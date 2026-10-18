@@ -35,6 +35,7 @@ def test_end_to_end_scenario_1_with_manifest_and_replay(settings: Settings) -> N
     narrative = session.narrate()
     assert narrative.grounding.grounded
     manifest = session.save_record()
+    assert load_run(session.run_id, settings.runs_dir).narrative["note"] == narrative.note
 
     record = load_run(session.run_id, settings.runs_dir)
     assert manifest.exists() and record.status == "completed"
@@ -65,6 +66,7 @@ def test_ungrounded_llm_narrative_is_withheld_and_recorded_as_n01(settings: Sett
     assert [(w.issue_id, w.action) for w in record.warnings] == [("N01:plan:llm", "WARN")]
     assert record.narrative["withheld"]["text"] == invented
     assert record.narrative["withheld"]["grounding"]["ungrounded"] == ["123.456"]
+    assert record.narrative["note"] == ""  # no "every number checked" claim after N01
     events = read_events(settings.events_path)
     fired = [e["details"] for e in events if e["event_type"] == "guardrail_triggered"]
     assert [(d["code"], d["action"]) for d in fired] == [("N01", "WARN")]

@@ -9,6 +9,8 @@ from quantlab.data import Catalog
 from quantlab.executor import execute_plan
 from quantlab.guardrails import validate_plan
 from quantlab.narrator import (
+    AI_WRITTEN_NOTE,
+    NUMBERS_CHECKED_NOTE,
     Fact,
     GroundingResult,
     NarrativeResult,
@@ -17,6 +19,7 @@ from quantlab.narrator import (
     check_narrative_grounding,
     format_number,
     narrate,
+    narrative_note,
     template_narrative,
 )
 from quantlab.plan import Plan
@@ -165,6 +168,8 @@ def test_template_narrative_is_fully_grounded(
     assert narrative.source == "template"
     assert narrative.grounding.grounded, narrative.grounding.ungrounded
     assert narrative.grounding.numbers_checked > 5
+    # The template is not written by an AI: only the numbers sentence applies.
+    assert narrative.note == NUMBERS_CHECKED_NOTE and AI_WRITTEN_NOTE not in narrative.note
 
 
 def test_grounded_llm_narrative_passes_n01(settings: Settings, catalog: Catalog) -> None:
@@ -176,6 +181,12 @@ def test_grounded_llm_narrative_passes_n01(settings: Settings, catalog: Catalog)
                         client=client)  # fmt: skip
     assert narrative.source == "llm" and narrative.grounding.grounded
     assert narrative.issues == [] and narrative.withheld is None
+    # The disclaimer under an AI narrative whose numbers all passed the check.
+    assert narrative.note == (
+        "This interpretation was written by an AI and may contain errors in wording or "
+        "reasoning. Every number in it has been checked automatically against the computed "
+        "results (N01)."
+    )
 
 
 def test_llm_narrative_with_invented_number_fires_n01_and_is_withheld(
@@ -201,6 +212,7 @@ def test_llm_narrative_with_invented_number_fires_n01_and_is_withheld(
     assert n01.enforced_by == "Narrator check (deterministic)"
     assert n01.category == "Output grounding"
     assert "7.77" in n01.message and "withheld" in n01.message
+    assert narrative.note == ""  # N01 fired: no claim that any number was verified
     prompt = client.calls[0]["messages"][0]["content"]
     assert "FACTS SHEET" in prompt and latest in prompt
     assert "temperature" not in client.calls[0]
@@ -213,6 +225,9 @@ def test_n01_also_guards_the_template_narrative() -> None:
     result = NarrativeResult(text="x", source="template", facts=[], grounding=ungrounded)
     [n01] = check_narrative_grounding(result)
     assert n01.issue_id == "N01:plan:template" and "3.14" in n01.message
+    assert narrative_note(result.model_copy(update={"issues": [n01]})) == ""
+    llm_ungrounded = result.model_copy(update={"source": "llm"})
+    assert narrative_note(llm_ungrounded) == AI_WRITTEN_NOTE  # never the "checked" sentence
 
 
 def test_llm_narrative_with_a_wrong_date_fails_grounding(

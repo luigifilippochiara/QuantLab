@@ -2,8 +2,9 @@
 
 QuantLab turns natural-language requests into quantitative analyses using only
 approved, pre-written capabilities. Read `README.md` for the overview,
-`docs/SPEC.md` for the original specification and `docs/DECISIONS.md` for every
-decision the spec did not cover. Record new decisions there (one short
+`docs/ARCHITECTURE.md` for the design (with the capability and guardrail tables),
+`docs/GUIDE.md` for usage, `docs/SPEC.md` for the original specification and
+`docs/DECISIONS.md` for every decision the spec did not cover. Record new decisions there (one short
 paragraph: what, why, alternatives).
 
 ## Core principle (non-negotiable)
@@ -59,7 +60,7 @@ significance test (`hac_mean_difference`), and no forecasts or models (see
    min_obs rule, assumptions, library calls, `meta_from_params` if a parameter
    sets output metadata). Codes (`C` and two digits) are permanent: never
    renumbered or reused; record each new one in `ASSIGNED_CODES` in
-   `tests/test_registry.py`, and add the capability to the README table.
+   `tests/test_registry.py`, and add the capability to the table in `docs/ARCHITECTURE.md`.
 3. Add hand-computed numerical tests in `tests/test_capabilities.py`;
    `tests/test_registry.py` checks the signature matches the spec, and
    `tests/test_executor.py` checks the dry run matches runtime metadata.

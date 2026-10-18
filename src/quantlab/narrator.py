@@ -45,6 +45,16 @@ from quantlab.types import ANNUALISATION_FACTORS, Artifact, DataType
 
 NARRATOR_PROMPT_VERSION = "narrator-v4"
 
+# The note shown directly under the narrative (app and CLI) and kept in the run
+# record: who wrote it and, only when the grounding check passed, that its numbers
+# were checked. narrative_note() decides which sentences apply.
+AI_WRITTEN_NOTE = (
+    "This interpretation was written by an AI and may contain errors in wording or reasoning."
+)
+NUMBERS_CHECKED_NOTE = (
+    "Every number in it has been checked automatically against the computed results (N01)."
+)
+
 SYSTEM_PROMPT = """\
 You write short, plain-English summaries of quantitative analysis results for a bank's \
 markets and risk teams.
@@ -141,6 +151,7 @@ class NarrativeResult(BaseModel):
             check, with its own grounding result (kept for audit; never shown as
             the summary), or None.
         issues: N01 UNGROUNDED_NARRATIVE issues (empty when every number is grounded).
+        note: the note shown under the narrative (see narrative_note); "" if none applies.
     """
 
     text: str
@@ -155,6 +166,7 @@ class NarrativeResult(BaseModel):
     grounding: GroundingResult | None = None
     withheld: "NarrativeResult | None" = None
     issues: list[Issue] = Field(default_factory=list)
+    note: str = ""
 
 
 # ---------------------------------------------------------------------------
@@ -533,7 +545,30 @@ def narrate(
                 template.withheld = llm_result
                 template.error = "The LLM narrative was withheld by N01 UNGROUNDED_NARRATIVE."
     result.issues = check_narrative_grounding(result)
+    result.note = narrative_note(result)
     return result
+
+
+def narrative_note(result: NarrativeResult) -> str:
+    """The note shown under a narrative: who wrote it, and whether its numbers were checked.
+
+    The AI sentence applies only to an LLM narrative: the template is not written
+    by an AI. The numbers sentence is added only when the grounding check passed
+    and raised no N01 issue, so the note never claims the numbers were verified
+    when they were not (after an N01, the issue is shown instead).
+
+    Args:
+        result: the narrative, with its grounding checked and its N01 issues set.
+
+    Returns:
+        The note, or "" when neither sentence applies.
+    """
+    sentences = []
+    if result.source == "llm":
+        sentences.append(AI_WRITTEN_NOTE)
+    if result.grounding is not None and result.grounding.grounded and not result.issues:
+        sentences.append(NUMBERS_CHECKED_NOTE)
+    return " ".join(sentences)
 
 
 def check_narrative_grounding(result: NarrativeResult) -> list[Issue]:
