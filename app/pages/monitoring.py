@@ -44,10 +44,11 @@ import ui
 # Column ratios of the KPI cards, so every label and caption fits on one line (the
 # font is unchanged). Activity: one row, wider for Total runs (its mode breakdown)
 # and Failed (its "Needs attention" line). Quality and governance: two rows of three
-# equal columns, aligned; its six labels need about 1,260 px in one row, more than
-# the page has on a laptop screen.
+# columns with the same ratios, so they align (its six labels need about 1,260 px in
+# one row, more than the page has on a laptop screen); the third column is the
+# widest, for Approval time's median and p95, e.g. "27.5 min (p95 43.2 min)".
 ACTIVITY_COLUMNS = [1.4, 1, 1, 1.05, 1.45]
-QUALITY_COLUMNS = [1, 1, 1]
+QUALITY_COLUMNS = [1, 0.8, 1.2]
 # The cost and latency sections set a table beside a chart. A small gap under the
 # section header moves both columns down; the chart's title sits higher in its column
 # (a smaller top margin than the default 50 px), so the chart's top lines up with the
@@ -224,8 +225,8 @@ review = review_outcomes(runs)
 replays = replay_results(events)
 narratives = grounded_narratives(runs)
 refusals = planner_refusals(runs)
-approval_col, replay_col, edit_col = st.columns(QUALITY_COLUMNS)
-time_col, grounded_col, refused_col = st.columns(QUALITY_COLUMNS)
+approval_col, edit_col, time_col = st.columns(QUALITY_COLUMNS)
+refused_col, grounded_col, replay_col = st.columns(QUALITY_COLUMNS)
 with approval_col:
     card(
         "Approval rate",
@@ -233,14 +234,6 @@ with approval_col:
         out_of(review["approved"] + review["rejected"], "plan reviewed", "plans reviewed"),
         help="Share of the decided plans that the reviewer approved (executed): approved / "
         "(approved + rejected).",
-    )
-with replay_col:
-    card(
-        "Replay match rate",
-        percent(replays["replay_match_rate"]),
-        out_of(replays["replays"], "replay"),
-        status=target_status("replay_match_rate", replays["replay_match_rate"]),
-        help="Share of replays whose every output hash matched the original run.",
     )
 with edit_col:
     card(
@@ -250,12 +243,21 @@ with edit_col:
         help="Share of approved plans whose parameters the reviewer changed first.",
     )
 with time_col:
+    median, p95 = review["approval_median_s"], review["approval_p95_s"]
     card(
         "Approval time (median)",
-        duration(review["approval_median_s"]),
+        duration(median) if median is None else f"{duration(median)} (p95 {duration(p95)})",
         out_of(len(approval_waits(runs)), "plan approved", "plans approved", "over"),
-        help="Median time from the plan being shown to its approval; p95 "
-        f"{duration(review['approval_p95_s'])}.",
+        help="Median time from the plan being shown to its approval; in brackets, the 95th "
+        "percentile.",
+    )
+with refused_col:
+    # The share's denominator is every counted run, the Total runs card.
+    card(
+        "Planner refused (P01)",
+        f"{refusals['refused']:,} ({percent(refusals['refused_share'])})",
+        out_of(counts["total"], "run"),
+        help="Runs the planner refused (P01 PLANNER_REFUSED), and their share of all runs.",
     )
 with grounded_col:
     card(
@@ -266,13 +268,13 @@ with grounded_col:
         help="Share of the runs with a narrative whose narrative passed the grounding check "
         "(no N01 UNGROUNDED_NARRATIVE).",
     )
-with refused_col:
-    # The share's denominator is every counted run, the Total runs card.
+with replay_col:
     card(
-        "Planner refused (P01)",
-        f"{refusals['refused']:,} ({percent(refusals['refused_share'])})",
-        out_of(counts["total"], "run"),
-        help="Runs the planner refused (P01 PLANNER_REFUSED), and their share of all runs.",
+        "Replay match rate",
+        percent(replays["replay_match_rate"]),
+        out_of(replays["replays"], "replay"),
+        status=target_status("replay_match_rate", replays["replay_match_rate"]),
+        help="Share of replays whose every output hash matched the original run.",
     )
 
 # ---------------------------------------------------------------- capabilities

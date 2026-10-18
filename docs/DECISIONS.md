@@ -1566,8 +1566,8 @@ current results.
 runs" (the activity cards and Planner refused, whose share uses the same total), "of N
 plans reviewed" (approval rate: approved + rejected), "of N plans approved" (edit rate,
 whose actual denominator is the approved plans), "over N plans approved" (approval
-time, the median over the approved plans with timestamps; its p95 moved to the
-tooltip), "of N narratives", "of N replays", "of N planner calls" and "over N cache
+time, the median over the approved plans with timestamps, shown with its p95 in
+brackets), "of N narratives", "of N replays", "of N planner calls" and "over N cache
 hits" (the cache cards; the input/output split of the saved tokens moved to the
 tooltip). Nouns agree with the count ("of 1 run"). **Total runs** instead shows the
 runs per LLM mode ("1 live · 0 cached · 4 mock", `mode_counts`, read from the run

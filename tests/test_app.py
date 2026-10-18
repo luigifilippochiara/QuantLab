@@ -8,6 +8,7 @@ header, mock-only example workflows and full dataset names on hover.
 
 import dataclasses
 import json
+import re
 
 import pandas as pd
 import pytest
@@ -671,9 +672,11 @@ def test_monitoring_page_sections_cards_and_charts(app_env: Settings) -> None:
     # The undecided and headless runs are left out, so the shares add up to 100%.
     assert values == {"Total runs": "5", "Completed": "2 (40%)", "Blocked": "1 (20%)",
                       "Failed": "1 (20%)", "Rejected by human": "1 (20%)"}  # fmt: skip
-    # The activity cards, in order.
-    assert [m.proto.label for m in app.metric][:5] == [
-        "Total runs", "Completed", "Blocked", "Rejected by human", "Failed"]  # fmt: skip
+    # The activity cards, then the quality and governance cards, in order.
+    assert [m.proto.label for m in app.metric][:11] == [
+        "Total runs", "Completed", "Blocked", "Rejected by human", "Failed",
+        "Approval rate", "Edit rate", "Approval time (median)", "Planner refused (P01)",
+        "Grounded narrative (N01)", "Replay match rate"]  # fmt: skip
     # Every card says what its number is out of; Total runs splits by LLM mode.
     assert cards["Total runs"].delta == "1 live · 0 cached · 4 mock"
     assert cards["Completed"].delta == "of 5 runs"
@@ -683,6 +686,8 @@ def test_monitoring_page_sections_cards_and_charts(app_env: Settings) -> None:
         "50%", "of 2 plans reviewed")  # fmt: skip
     assert cards["Edit rate"].delta == "of 1 plan approved"
     assert cards["Approval time (median)"].delta == "over 1 plan approved"
+    # The median, with the 95th percentile in brackets.
+    assert re.fullmatch(r"\d+\.\d s \(p95 \d+\.\d s\)", cards["Approval time (median)"].body)
     assert (cards["Grounded narrative (N01)"].body, cards["Grounded narrative (N01)"].delta) == (
         "100%", "of 1 narrative")  # fmt: skip
     assert (cards["Planner refused (P01)"].body, cards["Planner refused (P01)"].delta) == (
@@ -693,7 +698,7 @@ def test_monitoring_page_sections_cards_and_charts(app_env: Settings) -> None:
     # Cards with a target: orange when missed, green when met.
     assert "Needs attention" in cards["Failed"].delta and cards["Failed"].color == 3  # ORANGE
     assert tinted_cards(app.main, "missed") == ["Failed"]
-    assert tinted_cards(app.main, "met") == ["Replay match rate", "Grounded narrative (N01)"]
+    assert tinted_cards(app.main, "met") == ["Grounded narrative (N01)", "Replay match rate"]
     # Every capability; the guardrails that fired in the counted runs; cost per stage; mean
     # and p95 for each stage with data (all but the untimed request check).
     runs = monitored_runs(load_runs(app_env.runs_dir))
@@ -725,6 +730,7 @@ def test_monitoring_page_with_no_counted_run_still_shows_replays(app_env: Settin
     assert app.info[0].value.startswith("No decided runs from the Analysis page yet")
     cards = {m.proto.label: m.proto for m in app.metric}
     assert cards["Total runs"].body == "0" and cards["Completed"].body == "0 (n/a)"
+    assert cards["Approval time (median)"].body == "n/a"  # no p95 without data
     assert (cards["Replay match rate"].body, cards["Replay match rate"].delta) == (
         "100%", "of 1 replay")  # fmt: skip
     assert cards["Total runs"].delta == "0 live · 0 cached · 0 mock"
