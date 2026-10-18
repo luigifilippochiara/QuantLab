@@ -9,7 +9,7 @@ from quantlab.executor import StepRecord
 from quantlab.guardrails import GUARDRAILS, ValidationReport, make_issue
 from quantlab.lineage import LLMInfo, ParamChange, RunRecord
 from quantlab.monitoring import (
-    ATTENTION_THRESHOLDS,
+    KPI_TARGETS,
     activity,
     approval_waits,
     cache_savings,
@@ -20,12 +20,13 @@ from quantlab.monitoring import (
     latency_table,
     log_event,
     narrative_failures,
-    needs_attention,
     planner_refusals,
     read_events,
     recent_failures,
     replay_results,
     review_outcomes,
+    share,
+    target_status,
     token_cost,
 )
 from quantlab.registry import REGISTRY
@@ -83,19 +84,29 @@ def test_read_events_skips_broken_lines(tmp_path: Path) -> None:
 @pytest.mark.parametrize(
     ("metric", "value", "expected"),
     [
-        ("replay_match_rate", 1.0, False),
-        ("replay_match_rate", 0.99, True),
-        ("n01_failure_rate", 0.0, False),
-        ("n01_failure_rate", 0.01, True),
-        ("failed", 0, False),
-        ("failed", 1, True),
-        ("failed", None, False),  # no data never needs attention
-        ("approval_rate", 0.0, False),  # a metric without a threshold
+        # Met: exactly the target.
+        ("replay_match_rate", 1.0, "met"),
+        ("n01_failure_rate", 0.0, "met"),
+        ("failed", 0, "met"),
+        # Missed: anything else, however close.
+        ("replay_match_rate", share(9999, 10000), "missed"),
+        ("n01_failure_rate", share(1, 10000), "missed"),
+        ("failed", 1, "missed"),
+        # No data yet (no replays, no narratives): never shown as met.
+        ("replay_match_rate", None, "no_data"),
+        ("n01_failure_rate", None, "no_data"),
+        ("failed", None, "no_data"),
     ],
 )
-def test_attention_thresholds(metric: str, value: float | None, expected: bool) -> None:
-    assert needs_attention(metric, value) is expected
-    assert set(ATTENTION_THRESHOLDS) == {"replay_match_rate", "n01_failure_rate", "failed"}
+def test_target_status(metric: str, value: float | None, expected: str) -> None:
+    assert target_status(metric, value) == expected
+
+
+def test_targets_and_exact_rates() -> None:
+    assert KPI_TARGETS == {"replay_match_rate": 1.0, "n01_failure_rate": 0.0, "failed": 0}
+    # Rates are not rounded, so a near miss cannot round up to the target.
+    assert share(99999, 100000) != 1.0 and share(1, 100000) != 0.0
+    assert (share(7, 7), share(0, 7), share(1, 0)) == (1.0, 0.0, None)
 
 
 def test_token_cost() -> None:
@@ -182,7 +193,7 @@ def test_replays_narratives_and_refusals() -> None:
         record("c", status="blocked", codes=("R01",)),  # never reached the planner
         record("d", mode="mock"),
     ]
-    assert planner_refusals(runs) == {"planned": 3, "p01_refusal_rate": 0.3333}
+    assert planner_refusals(runs) == {"planned": 3, "p01_refusal_rate": pytest.approx(1 / 3)}
 
 
 def test_guardrail_counts_list_every_guardrail_most_frequent_first() -> None:

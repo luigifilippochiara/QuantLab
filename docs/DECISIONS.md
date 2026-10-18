@@ -1492,3 +1492,27 @@ The cost and latency tables are static tables (`st.table`) with pandas Styler fo
 right-aligned): an interactive dataframe of seven columns scrolled sideways in its half
 of the page, while a static table wraps its headers. The cost chart's height matches
 the table and the cache cards beside it.
+
+## Cards with a target are green or orange
+
+**Three cards have a known correct value**, held in one constant,
+`monitoring.KPI_TARGETS` (the former `ATTENTION_THRESHOLDS`, renamed since it now holds
+targets): replay match rate 100%, N01 failure rate 0%, failed runs 0.
+`target_status(metric, value)` returns "met" (the value equals the target),
+"missed" or "no_data" (no value yet, e.g. no replay has run), and replaces
+`needs_attention`. A metric without data is never green. The page only maps the status
+to a colour: a light green or light orange background, and a missed card keeps its
+orange "Needs attention" line and warning icon, so colour is never the only cue. Every
+other card stays neutral.
+
+**Rates are no longer rounded** (`share`): rounded to four decimals, 99,999 matching
+replays out of 100,000 read as exactly 100% and would show green. The page formats
+rates for display, so nothing visible changed.
+
+**The colour is CSS on a keyed container.** Streamlit has no background option for a
+metric, so a card with a status sits in a container keyed `kpi-met-...` or
+`kpi-missed-...`, whose CSS class a small style block tints (injected with `st.html`,
+which takes no space on the page). The tints are translucent, like Streamlit's own
+alerts, so the text keeps the theme's colour: contrast stays above 11:1 in the light
+theme and 13:1 in the dark one. This replaces the earlier note that a whole card could
+not be coloured without custom CSS.

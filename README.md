@@ -238,8 +238,9 @@ uv run python -m quantlab.cli trace <run_id> s8    # where does this number come
 all runs, activity, quality and governance (approval, replay match, edit and N01
 and P01 rates, approval time), the guardrails that fired, capability use, tokens
 and cost per stage (from hardcoded prices in `config.py`), the plan-cache
-savings, latency per pipeline stage and recent errors; a card turns amber when
-it needs attention.
+savings, latency per pipeline stage and recent errors. The cards with a target
+(replay match 100%, N01 failures 0%, failed runs 0) are green when it is met and
+orange when it is not.
 
 ## Quickstart
 

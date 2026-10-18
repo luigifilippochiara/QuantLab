@@ -510,6 +510,17 @@ def chart_bars(app: AppTest) -> list[int]:
     ]
 
 
+def tinted_cards(node, status: str) -> list[str]:
+    """Labels of the KPI cards inside a container keyed "kpi-<status>-..." (tinted by CSS)."""
+    labels = []
+    for child in getattr(node, "children", {}).values():
+        if f"-kpi-{status}-" in getattr(child.proto, "id", ""):
+            labels += [metric.proto.label for metric in child.get("metric")]
+        else:
+            labels += tinted_cards(child, status)
+    return labels
+
+
 def test_monitoring_page_with_no_runs_shows_a_note(app_env: Settings) -> None:
     app = open_page("monitoring.py")
     assert app.info[0].value.startswith("No runs yet")
@@ -568,9 +579,14 @@ def test_monitoring_page_sections_cards_and_charts(app_env: Settings) -> None:
     }
     assert values == {"Total runs": "5", "Completed": "2 (40%)", "Blocked": "1 (20%)",
                       "Failed": "1 (20%)", "Rejected by human": "1 (20%)"}  # fmt: skip
-    # Failed runs need attention: the card turns amber; a clean N01 rate does not.
+    # Failed runs miss their target: an orange line; a clean N01 rate has none.
     assert "Needs attention" in cards["Failed"].delta and cards["Failed"].color == 3  # ORANGE
     assert "Needs attention" not in cards["N01 failure rate"].delta
+    # Cards with a target: orange when missed, green when met, neutral without data
+    # (no replay has run, so the replay card is in neither).
+    assert tinted_cards(app.main, "missed") == ["Failed"]
+    assert tinted_cards(app.main, "met") == ["N01 failure rate"]
+    assert cards["Replay match rate"].body == "n/a"
     # Two plans reviewed in the app: one approved, one rejected; the headless run is left out.
     assert cards["Approval rate"].body == "50%"
     assert cards["Approval rate"].delta == "1 approved · 1 rejected · 0 abandoned"

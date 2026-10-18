@@ -58,12 +58,13 @@ EVENT_TYPES = (
 # The stages that call an LLM (keys of stage_tokens), and their names in the cost table.
 COST_STAGES = {"planning": "planner", "narration": "narrator"}
 
-# When a card on the Monitoring page needs attention (it turns amber): metric ->
-# (direction, threshold). Kept in one place so the limits are easy to review.
-ATTENTION_THRESHOLDS = {
-    "replay_match_rate": ("below", 1.0),  # every replay must reproduce its run exactly
-    "n01_failure_rate": ("above", 0.0),  # no narrative should quote an unchecked number
-    "failed": ("above", 0),  # a failed run (not a block) is an error to investigate
+# The Monitoring cards with a known correct value: metric -> target. A card is green
+# when its value equals the target, orange when it does not, neutral without data
+# (see target_status). Kept in one place so the targets are easy to review.
+KPI_TARGETS = {
+    "replay_match_rate": 1.0,  # every replay must reproduce its run exactly
+    "n01_failure_rate": 0.0,  # no narrative should quote an unchecked number
+    "failed": 0,  # a failed run (not a block) is an error to investigate
 }
 
 
@@ -138,25 +139,31 @@ def read_events(path: Path) -> list[dict[str, Any]]:
 # ---------------------------------------------------------------------------
 
 
-def needs_attention(metric: str, value: float | None) -> bool:
-    """Whether a metric's value crosses its threshold in ATTENTION_THRESHOLDS.
+def target_status(metric: str, value: float | None) -> str:
+    """Whether a metric meets its target in KPI_TARGETS.
+
+    The comparison is exact: rates are unrounded (see share), so 9,999 matching
+    replays out of 10,000 miss a 100% target. A metric without data is never "met".
 
     Args:
-        metric: a key of ATTENTION_THRESHOLDS (any other metric never needs attention).
-        value: the metric's value (None, no data, never needs attention).
+        metric: a key of KPI_TARGETS.
+        value: the metric's value, or None when there is no data yet (e.g. no replays).
 
     Returns:
-        True if the card should turn amber.
+        "met", "missed" or "no_data".
     """
-    if value is None or metric not in ATTENTION_THRESHOLDS:
-        return False
-    direction, threshold = ATTENTION_THRESHOLDS[metric]
-    return value < threshold if direction == "below" else value > threshold
+    if value is None:
+        return "no_data"
+    return "met" if value == KPI_TARGETS[metric] else "missed"
 
 
 def share(count: int, total: int) -> float | None:
-    """count / total rounded to 4 decimals, or None when there is nothing to divide by."""
-    return round(count / total, 4) if total else None
+    """count / total, or None when there is nothing to divide by.
+
+    Not rounded: a rounded 99,999 / 100,000 would read as exactly 1.0 and meet a 100%
+    target it misses. The page formats rates for display.
+    """
+    return count / total if total else None
 
 
 def mean_and_p95(values: list[float]) -> tuple[float | None, float | None]:

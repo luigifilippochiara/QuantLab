@@ -15,6 +15,7 @@ from quantlab.guardrails import Action
 from quantlab.lineage import load_runs
 from quantlab.monitoring import (
     COST_STAGES,
+    KPI_TARGETS,
     activity,
     cache_savings,
     capability_counts,
@@ -23,12 +24,12 @@ from quantlab.monitoring import (
     guardrail_counts,
     latency_table,
     narrative_failures,
-    needs_attention,
     planner_refusals,
     read_events,
     recent_failures,
     replay_results,
     review_outcomes,
+    target_status,
 )
 
 import ui
@@ -47,12 +48,28 @@ TOKEN_COLUMNS = [
     "Output tokens (p95)",
 ]
 COST_COLUMNS = ["Cost, US$ (mean)", "Cost, US$ (p95)"]
+# A card with a target (monitoring.target_status) sits in a container keyed
+# "kpi-met-..." or "kpi-missed-...", whose CSS class these rules tint. Translucent tints,
+# like Streamlit's own success and warning alerts, keep the theme's text colour, so the
+# text stays readable in light and dark mode. No data keeps the neutral card.
+STATUS_CSS = """
+<style>
+[class*="st-key-kpi-met-"] [data-testid="stMetric"] {
+  background-color: rgba(33, 195, 84, 0.14); border-color: rgba(33, 195, 84, 0.45);
+}
+[class*="st-key-kpi-missed-"] [data-testid="stMetric"] {
+  background-color: rgba(255, 164, 33, 0.16); border-color: rgba(255, 164, 33, 0.5);
+}
+</style>
+"""
 
 settings = ui.get_settings()
+st.html(STATUS_CSS)  # style only: applied without taking space on the page
 st.title("Monitoring")
 st.caption(
     f"Computed from the run records in `{settings.runs_dir}` and the event log "
-    f"`{settings.events_path.name}`. A card turns amber when it needs attention."
+    f"`{settings.events_path.name}`. Cards with a target are green when it is met and "
+    "orange when it is not."
 )
 
 runs = load_runs(settings.runs_dir)
@@ -104,29 +121,33 @@ def number_table(frame: pd.DataFrame, formats: dict[str, str]) -> None:
     st.table(styled.set_table_styles(NUMBERS_RIGHT))
 
 
-def card(label: str, value: Any, note: str = "", attention: bool = False, help: str = "") -> None:
-    """A KPI card with an optional grey note under the value; amber when it needs attention."""
-    if attention:
-        st.metric(
-            label,
-            value,
-            delta=f"Needs attention{' · ' + note if note else ''}",
-            delta_color="orange",
-            delta_arrow="off",
-            icon=":material/warning:",
-            border=True,
-            help=help or None,
-        )
+def card(label: str, value: Any, note: str = "", status: str | None = None, help: str = "") -> None:
+    """A KPI card with an optional grey note under the value.
+
+    Args:
+        label: the card's title.
+        value: the value shown.
+        note: a short grey line under the value.
+        status: for a card with a target, monitoring.target_status: "met" tints it green;
+            "missed" tints it orange and adds "Needs attention" and a warning icon, so
+            colour is never the only cue; "no_data" or None keeps the neutral card.
+        help: the tooltip next to the label.
+    """
+    missed = status == "missed"
+    metric = {
+        "delta": f"Needs attention{' · ' + note if note else ''}" if missed else note or None,
+        "delta_color": "orange" if missed else "gray",
+        "delta_arrow": "off",
+        "icon": ":material/warning:" if missed else None,
+        "border": True,
+        "help": help or None,
+    }
+    if status in ("met", "missed"):
+        # The key gives the container the CSS class that STATUS_CSS tints.
+        with st.container(key=f"kpi-{status}-{label.lower().replace(' ', '-')}"):
+            st.metric(label, value, **metric)
     else:
-        st.metric(
-            label,
-            value,
-            delta=note or None,
-            delta_color="gray",
-            delta_arrow="off",
-            border=True,
-            help=help or None,
-        )
+        st.metric(label, value, **metric)
 
 
 def guardrail_chart(rows: list[dict[str, Any]], title: str, key: str) -> None:
@@ -156,7 +177,7 @@ with st.container(horizontal=True):
         card(
             label,
             f"{counts[outcome]:,} ({percent(counts[f'{outcome}_share'])})",
-            attention=needs_attention(outcome, counts[outcome]),
+            status=target_status(outcome, counts[outcome]) if outcome in KPI_TARGETS else None,
         )
 if counts["awaiting"]:
     st.caption(
@@ -184,7 +205,7 @@ with st.container(horizontal=True):
         "Replay match rate",
         percent(replays["replay_match_rate"]),
         f"{replays['replays']} replays",
-        attention=needs_attention("replay_match_rate", replays["replay_match_rate"]),
+        status=target_status("replay_match_rate", replays["replay_match_rate"]),
         help="Share of replays whose every output hash matched the original run.",
     )
     card(
@@ -203,7 +224,7 @@ with st.container(horizontal=True):
         "N01 failure rate",
         percent(narratives["n01_failure_rate"]),
         f"of {narratives['narratives']} narratives",
-        attention=needs_attention("n01_failure_rate", narratives["n01_failure_rate"]),
+        status=target_status("n01_failure_rate", narratives["n01_failure_rate"]),
         help="Share of narratives that failed the grounding check (N01 UNGROUNDED_NARRATIVE).",
     )
     card(

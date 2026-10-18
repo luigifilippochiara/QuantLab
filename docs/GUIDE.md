@@ -69,8 +69,9 @@ the activity (runs completed, blocked, failed and rejected, each with its share)
 quality and governance (approval rate, replay match rate, edit rate, approval
 time, N01 failure rate, P01 refusal rate), the guardrails that fired (all of them
 in an expander), every capability's count, tokens and cost per stage, latency per
-pipeline stage and the recent errors, with a card turning amber when it needs
-attention; **Capability registry** lists every approved capability with its code, inputs, parameters and
+pipeline stage and the recent errors; the cards with a target (replay match 100%,
+N01 failures 0%, failed runs 0) are green when it is met, orange when it is not and
+neutral without data; **Capability registry** lists every approved capability with its code, inputs, parameters and
 assumptions; **Guardrails** lists every guardrail with its action, who enforces
 it, its category and what it prevents.
 
