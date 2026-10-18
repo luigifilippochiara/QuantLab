@@ -592,7 +592,9 @@ def test_monitoring_page_sections_cards_and_charts(app_env: Settings) -> None:
     headless_replayed_run(app_env)
     now = utc_now()
     save_run(RunRecord(run_id=new_run_id(), created_at=now, status="failed", request="x",
-                       error="boom", stage_timings_ms={"planning": 5.0}, interactive=True),
+                       error="boom", stage_timings_ms={"planning": 5.0}, interactive=True,
+                       llm=LLMInfo(provider="mock", model="mock", prompt_version="canned",
+                                   mode="mock")),
              {}, app_env.runs_dir)  # fmt: skip
     luna = {"model": "gpt-6-luna"}
     save_run(RunRecord(run_id=new_run_id() + "x", created_at=now, status="completed",
@@ -618,14 +620,22 @@ def test_monitoring_page_sections_cards_and_charts(app_env: Settings) -> None:
     # The undecided and headless runs are left out, so the shares add up to 100%.
     assert values == {"Total runs": "5", "Completed": "2 (40%)", "Blocked": "1 (20%)",
                       "Failed": "1 (20%)", "Rejected by human": "1 (20%)"}  # fmt: skip
+    # Every card says what its number is out of; Total runs splits by LLM mode.
+    assert cards["Total runs"].delta == "1 live · 0 cached · 4 mock"
+    assert cards["Completed"].delta == "of 5 runs"
+    assert cards["Failed"].delta == "Needs attention · of 5 runs"
     # One approved, one rejected: approved / (approved + rejected).
-    assert cards["Approval rate"].body == "50%"
-    assert cards["Approval rate"].delta == "1 approved · 1 rejected"
-    assert cards["Grounded narrative (N01)"].body == "100%"
-    assert cards["Planner refused (P01)"].body == "0 (0%)"
+    assert (cards["Approval rate"].body, cards["Approval rate"].delta) == (
+        "50%", "of 2 plans reviewed")  # fmt: skip
+    assert cards["Edit rate"].delta == "of 1 plan approved"
+    assert cards["Approval time (median)"].delta == "over 1 plan approved"
+    assert (cards["Grounded narrative (N01)"].body, cards["Grounded narrative (N01)"].delta) == (
+        "100%", "of 1 narrative")  # fmt: skip
+    assert (cards["Planner refused (P01)"].body, cards["Planner refused (P01)"].delta) == (
+        "0 (0%)", "of 5 runs")  # fmt: skip
     # The replay of the headless run counts: replays come from every source.
     assert (cards["Replay match rate"].body, cards["Replay match rate"].delta) == (
-        "100%", "1 replays")  # fmt: skip
+        "100%", "of 1 replay")  # fmt: skip
     # Cards with a target: orange when missed, green when met.
     assert "Needs attention" in cards["Failed"].delta and cards["Failed"].color == 3  # ORANGE
     assert tinted_cards(app.main, "missed") == ["Failed"]
@@ -636,7 +646,7 @@ def test_monitoring_page_sections_cards_and_charts(app_env: Settings) -> None:
     events = monitored_events(read_events(app_env.events_path), runs)
     fired = guardrail_counts(events, include_unused=False)
     assert {r["code"] for r in fired} == {"V10", "V08"}  # not the undecided plan's or the CLI's
-    assert chart_bars(app) == [len(REGISTRY), len(fired), 2, 2 * 5]
+    assert chart_bars(app) == [len(REGISTRY), len(fired), 2, 2 * 4]
     # The unused guardrails: a compact table sorted by code, no chart.
     unused = next(e for e in app.expander if e.label == "Show unused guardrails")
     assert not unused.get("plotly_chart")
@@ -645,7 +655,7 @@ def test_monitoring_page_sections_cards_and_charts(app_env: Settings) -> None:
     assert cost.loc["planner", "Cost, US$ (mean)"] == pytest.approx(0.00035)
     assert cost.loc["total", "Input tokens (mean)"] == 2500
     assert latency.index.tolist() == [
-        "Request check", "Planner", "Validator", "Approval", "Executor", "Narrator"]  # fmt: skip
+        "Request check", "Planner", "Validator", "Executor", "Narrator"]  # fmt: skip
     assert pd.isna(latency.loc["Request check", "Mean (ms)"])  # not timed: shown as a dash
     # Dollar signs in a caption are escaped, or a pair of them would render as LaTeX.
     (prices,) = [c.value for c in app.caption if c.value.startswith("Per run")]
@@ -662,7 +672,8 @@ def test_monitoring_page_with_no_counted_run_still_shows_replays(app_env: Settin
     cards = {m.proto.label: m.proto for m in app.metric}
     assert cards["Total runs"].body == "0" and cards["Completed"].body == "0 (n/a)"
     assert (cards["Replay match rate"].body, cards["Replay match rate"].delta) == (
-        "100%", "1 replays")  # fmt: skip
+        "100%", "of 1 replay")  # fmt: skip
+    assert cards["Total runs"].delta == "0 live · 0 cached · 0 mock"
     # No counted run: the Failed card has no data, so it is not green.
     assert tinted_cards(app.main, "met") == ["Replay match rate"]
     assert tinted_cards(app.main, "missed") == []

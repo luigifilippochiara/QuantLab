@@ -1561,3 +1561,29 @@ refuses (P01) is also correct. **The golden snapshot** keeps its frozen records:
 migration's new `replaced` field says that the older records no longer vouch for
 example 4 and its eval case, and a new record, `simulated_injection`, holds their
 current results.
+
+## Monitoring cards: denominators, LLM modes, machine-only latency, aligned layout
+
+**Every KPI card says what its number is out of**, in the same grey caption: "of N
+runs" (the activity cards and Planner refused, whose share uses the same total), "of N
+plans reviewed" (approval rate: approved + rejected), "of N plans approved" (edit rate,
+whose actual denominator is the approved plans), "over N plans approved" (approval
+time, the median over the approved plans with timestamps; its p95 moved to the
+tooltip), "of N narratives", "of N replays", "of N planner calls" and "over N cache
+hits" (the cache cards; the input/output split of the saved tokens moved to the
+tooltip). Nouns agree with the count ("of 1 run"). **Total runs** instead shows the
+runs per LLM mode ("1 live · 0 cached · 4 mock", `mode_counts`, read from the run
+record's `llm.mode`, which every saved run has): every mode is listed, a mode without
+runs as 0, and the counts add up to the total. Planner refused counts P01 refusals
+only; Blocked counts every blocked run, whichever stage blocked it (R01, P01, a V code
+including V01 when the planner returns nothing usable, or E01/E02 at run time), so
+the two can differ.
+
+**Latency shows machine stages only** (request check, planner, validator, executor,
+narrator). The time a person takes to approve a plan stays in the Approval time card;
+there is no total or end-to-end latency figure on the page. **Layout**: the KPI cards
+sit in ratio columns so every label and caption fits on one line at a laptop width
+(Quality and governance as two rows of three: its six labels need about 1,260 px in
+one row); in Cost and Latency a small gap under the section header and a smaller
+chart top margin (34 px instead of 50) line the chart's top up with the table's, and
+the latency legend moved to the top right so it does not cover the title.

@@ -29,6 +29,7 @@ from typing import TYPE_CHECKING, Any
 
 import numpy as np
 
+from quantlab.config import LLM_MODES
 from quantlab.guardrails import ENFORCERS, GUARDRAILS, Action
 from quantlab.registry import REGISTRY
 from quantlab.types import TokenUsage
@@ -295,6 +296,26 @@ def activity(records: list["RunRecord"]) -> dict[str, Any]:
         for outcome in ("completed", "blocked", "failed", "rejected")
     }
     return counts | shares
+
+
+def mode_counts(records: list["RunRecord"]) -> dict[str, int]:
+    """How many runs used each LLM mode, read from the run record (llm.mode).
+
+    The mode is the one the run was started in: a cached-mode run counts as cached
+    whether or not its plan came from the cache (the cache card counts the hits).
+
+    Args:
+        records: run records.
+
+    Returns:
+        live, cached and mock -> count, every mode listed (0 without runs), adding up
+        to len(records); plus "unknown" only if some record names no mode (never one
+        the page counts: every run saved by the engine records its LLM mode).
+    """
+    counts = Counter(r.llm.mode if r.llm else None for r in records)
+    by_mode = {mode: counts[mode] for mode in LLM_MODES}
+    unknown = len(records) - sum(by_mode.values())
+    return by_mode | ({"unknown": unknown} if unknown else {})
 
 
 # ---------------------------------------------------------------------------
@@ -566,22 +587,22 @@ def cache_savings(
 # ---------------------------------------------------------------------------
 
 
-# The pipeline stages in order, with the stage_timings_ms key that times each.
+# The machine stages of the pipeline in order, with the stage_timings_ms key that
+# times each. Human approval is not a machine stage: its time is in review_outcomes.
 LATENCY_STAGES = {
     "Request check": None,  # not timed in the run record (a word and character count)
     "Planner": "planning",
     "Validator": "validation",
-    "Approval": "approval",  # not a stage_timings_ms key: see approval_waits
     "Executor": "execution",
     "Narrator": "narration",
 }
 
 
 def latency_table(records: list["RunRecord"]) -> list[dict[str, Any]]:
-    """Mean and 95th-percentile latency of each pipeline stage, in pipeline order.
+    """Mean and 95th-percentile latency of each machine stage, in pipeline order.
 
-    Each stage counts the runs that reached it; approval counts plans approved on the
-    Analysis page (approval_waits), the time a person took to decide.
+    Each stage counts the runs that reached it. The time a person took to approve a
+    plan is not included (it is the Approval time card: review_outcomes).
 
     Args:
         records: run records.
@@ -593,12 +614,7 @@ def latency_table(records: list["RunRecord"]) -> list[dict[str, Any]]:
     """
     rows = []
     for stage, key in LATENCY_STAGES.items():
-        if key is None:
-            values = []
-        elif key == "approval":
-            values = [seconds * 1000 for seconds in approval_waits(records)]
-        else:
-            values = [r.stage_timings_ms[key] for r in records if key in r.stage_timings_ms]
+        values = [r.stage_timings_ms[key] for r in records if key and key in r.stage_timings_ms]
         mean, p95 = mean_and_p95(values)
         rows.append(
             {

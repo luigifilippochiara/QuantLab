@@ -345,6 +345,7 @@ def bar_figure(
     title: str,
     text: list[str] | None = None,
     height: int | None = None,
+    top_margin: int = 50,
 ) -> go.Figure:
     """Horizontal bar chart of one measure, each bar labelled with its value.
 
@@ -358,6 +359,7 @@ def bar_figure(
         text: the bar labels, if the values need their own format (e.g. dollars).
         height: the chart height in pixels (default: grows with the number of bars), to
             line a chart up with what stands beside it.
+        top_margin: the space above the plot, which holds the title, in pixels.
 
     Returns:
         A plotly Figure.
@@ -377,7 +379,7 @@ def bar_figure(
     figure.update_layout(
         title=title,
         height=height or max(220, 32 * len(labels) + 90),
-        margin={"l": 10, "r": 40, "t": 50, "b": 10},
+        margin={"l": 10, "r": 40, "t": top_margin, "b": 10},
         xaxis={"visible": False},
         yaxis={"autorange": "reversed"},
         bargap=0.3,
@@ -391,6 +393,7 @@ def grouped_bar_figure(
     title: str,
     value_title: str,
     height: int = 320,
+    top_margin: int = 50,
 ) -> go.Figure:
     """Vertical grouped bars for up to two measures in the same unit (e.g. mean and p95 ms).
 
@@ -400,6 +403,7 @@ def grouped_bar_figure(
         title: chart title.
         value_title: y-axis title (the shared unit).
         height: the chart height in pixels, to line it up with what stands beside it.
+        top_margin: the space above the plot, which holds the title and legend, in pixels.
 
     Returns:
         A plotly Figure with a legend and value labels.
@@ -423,9 +427,10 @@ def grouped_bar_figure(
         bargap=0.3,
         bargroupgap=0.08,
         height=height,
-        margin={"l": 10, "r": 10, "t": 50, "b": 10},
+        margin={"l": 10, "r": 10, "t": top_margin, "b": 10},
         yaxis_title=value_title,
-        legend={"orientation": "h", "y": 1.12, "x": 0},
+        # Top right, just above the plot: the title holds the top left.
+        legend={"orientation": "h", "x": 1, "xanchor": "right", "y": 1.0, "yanchor": "bottom"},
     )
     return figure
 

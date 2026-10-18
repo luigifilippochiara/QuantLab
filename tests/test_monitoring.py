@@ -20,6 +20,7 @@ from quantlab.monitoring import (
     guardrail_counts,
     latency_table,
     log_event,
+    mode_counts,
     monitored_events,
     monitored_runs,
     planner_refusals,
@@ -172,6 +173,16 @@ def test_activity_counts_and_shares_add_up() -> None:
     assert sum(v for k, v in counts.items() if k.endswith("_share")) == 1.0
     empty = activity([])
     assert empty["total"] == 0 and empty["completed_share"] is None
+
+
+def test_mode_counts_add_up_to_the_runs() -> None:
+    runs = [record("a"), record("b"), record("c", mode="cached"), record("d", mode="live")]
+    counts = mode_counts(runs)
+    assert counts == {"live": 3, "cached": 1, "mock": 0}  # a mode without runs is 0, listed
+    assert sum(counts.values()) == len(runs)
+    no_llm = record("e").model_copy(update={"llm": None})
+    assert mode_counts([*runs, no_llm]) == {"live": 3, "cached": 1, "mock": 0, "unknown": 1}
+    assert mode_counts([]) == {"live": 0, "cached": 0, "mock": 0}
 
 
 def test_review_outcomes_approval_rate_counts_decisions_only() -> None:
@@ -327,13 +338,13 @@ def test_latency_table_follows_the_pipeline() -> None:
                decided_at="2026-10-01T10:00:02.500Z"),
     ]  # fmt: skip
     rows = latency_table(runs)
+    # Machine stages only: the 2.5 s r2 took to be approved is not a latency stage.
     assert [r["stage"] for r in rows] == [
-        "Request check", "Planner", "Validator", "Approval", "Executor", "Narrator"]  # fmt: skip
+        "Request check", "Planner", "Validator", "Executor", "Narrator"]  # fmt: skip
     by_stage = {r["stage"]: r for r in rows}
     assert by_stage["Planner"] == {"stage": "Planner", "runs": 2, "mean_ms": 200.0,
                                    "p95_ms": pytest.approx(290.0), "recorded": True}  # fmt: skip
-    # Approval: plan shown to approved, for plans approved in the app.
-    assert (by_stage["Approval"]["runs"], by_stage["Approval"]["mean_ms"]) == (1, 2500.0)
+    assert approval_waits(runs) == [2.5]  # it stays in the Approval time card
     # The request check is not timed in the run record; a stage no run reached has no data.
     assert by_stage["Request check"] == {"stage": "Request check", "runs": 0, "mean_ms": None,
                                          "p95_ms": None, "recorded": False}  # fmt: skip
