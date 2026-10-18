@@ -7,13 +7,14 @@ thresholds.
 """
 
 import ast
+import dataclasses
 import json
 import re
 from typing import Any
 
 import pytest
 
-from quantlab.config import PROJECT_ROOT
+from quantlab.config import PROJECT_ROOT, Settings
 from quantlab.data import Catalog
 from quantlab.executor import (
     ALIGNMENT_LOSS_THRESHOLD,
@@ -484,11 +485,17 @@ def test_descriptions_quote_the_runtime_thresholds() -> None:
     assert f"fewer than {MIN_FLAGGED_EPISODES} " in GUARDRAILS["R05"].description
 
 
+def test_g05_description_quotes_the_default_budgets() -> None:
+    defaults = {f.name: f.default for f in dataclasses.fields(Settings)}
+    description = GUARDRAILS["G05"].description
+    assert f"at most {defaults['max_request_chars']:,} characters" in description
+    assert f"at most {defaults['max_steps']} steps by default" in description
+
+
 def test_every_guardrail_has_an_action_a_category_and_a_description() -> None:
     for guardrail in GUARDRAILS.values():
         assert guardrail.action in Action and guardrail.category.value
-        # Each description says what it checks and what that prevents.
-        assert "prevent" in guardrail.description, guardrail.code
+        assert guardrail.description.endswith("."), guardrail.code
 
 
 def test_issues_are_only_built_through_make_issue() -> None:

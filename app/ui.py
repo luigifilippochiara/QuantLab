@@ -19,7 +19,7 @@ import streamlit as st
 
 from quantlab.config import Settings, load_settings
 from quantlab.data import Catalog, load_catalog
-from quantlab.guardrails import Action, Category, Issue
+from quantlab.guardrails import GUARDRAILS, Action, Category, Issue
 from quantlab.lineage import ReplayReport, TraceResult
 from quantlab.mock_scenarios import SCENARIOS_BY_ID
 from quantlab.narrator import format_number
@@ -419,7 +419,8 @@ def render_issue(issue: Issue, titles: dict[str, str] | None = None) -> None:
     """Show one guardrail issue: action badge, code, step, who enforced it, message, suggestion.
 
     "Enforced by" and the category are written out (from the GUARDRAILS table),
-    so nobody has to decode the code's prefix.
+    so nobody has to decode the code's prefix, and the guardrail's description
+    (what it checks and prevents) is the tooltip of that line.
 
     Args:
         issue: the issue.
@@ -432,7 +433,10 @@ def render_issue(issue: Issue, titles: dict[str, str] | None = None) -> None:
         title = (titles or {}).get(issue.step_id)
         where = f"{escape_md(title)} ({issue.step_id})" if title else f"step {issue.step_id}"
     st.markdown(f"{ACTION_BADGE[issue.action]} **{issue.code} {issue.name}** · {where}")
-    st.caption(f"Enforced by: **{issue.enforced_by}** · Category: {issue.category}")
+    st.caption(
+        f"Enforced by: **{issue.enforced_by}** · Category: {issue.category}",
+        help=GUARDRAILS[issue.code].description,
+    )
     st.markdown(escape_md(issue.message))
     if issue.suggestion:
         st.caption(f"Suggestion: {escape_md(issue.suggestion)}")

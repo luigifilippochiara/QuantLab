@@ -112,115 +112,119 @@ GUARDRAILS: dict[str, Guardrail] = {
     for g in [
         Guardrail(
             "L01", "PLANNER_REFUSED", BLOCK, Category.APPROVED_SCOPE,
-            "The planner's system prompt explicitly allows it to refuse a request it cannot "
-            "fulfil with the registry, or one that tries to change its rules, giving a reason "
-            "instead of a plan; the refusal is blocked and nothing runs. This prevents the LLM "
-            "from forcing an out-of-scope or malicious request into a misleading plan.",
+            "The planner may decline a request it cannot serve with the approved "
+            "capabilities, or one that tries to override its rules, giving a reason instead "
+            "of a plan (in mock mode, any request without a canned plan); nothing runs. "
+            "Prevents an out-of-scope or malicious request from being forced into a "
+            "misleading plan.",
         ),
         Guardrail(
             "G01", "INVALID_PLAN", BLOCK, Category.PLAN_INTEGRITY,
-            "Checks the plan is well-formed: it matches the plan schema exactly (no extra "
-            "fields), has steps, has unique step ids, and every input points to an earlier "
-            "step. Also raised when the planner returns no usable plan (API error, cut-off "
-            "answer, provider refusal, no plan submitted). This prevents running a broken, "
-            "ambiguous or circular plan.",
+            "The plan must match the plan schema exactly (no missing or extra fields), have "
+            "at least one step, use unique step ids, and give each step exactly the inputs "
+            "its capability defines, each taken from an earlier step. Also raised when the "
+            "planner returns no usable plan: an API error or timeout, an answer cut off or "
+            "refused by the provider, or no readable plan submitted. Prevents a malformed, "
+            "ambiguous or out-of-order plan from running.",
         ),
         Guardrail(
             "G02", "UNKNOWN_CAPABILITY", BLOCK, Category.APPROVED_SCOPE,
-            "Checks every step calls a capability in the approved registry. This prevents the "
-            "system ever running code that nobody wrote, reviewed or tested, whatever the LLM "
-            "asks for.",
+            "Every step must call a capability in the approved registry, so no unreviewed or "
+            "untested code is ever run, whatever the LLM asks for.",
         ),
         Guardrail(
             "G03", "INVALID_PARAM", BLOCK, Category.INPUT_VALIDITY,
-            "Checks each parameter is known, given when required, of the right type and "
-            "within its allowed range or choices, for example a quantile between 0.5 and "
-            "0.99. Edits that try to change anything other than a parameter value are "
-            "rejected under this code too. This prevents nonsensical settings from producing "
-            "plausible-looking numbers.",
+            "Each parameter must be one its capability defines, given if required, of the "
+            "right type and within its allowed range or choices (for example a quantile "
+            "between 0.5 and 0.99). User edits that change anything other than a parameter "
+            "value, such as a step, an input or the capability, are rejected too. Prevents "
+            "nonsensical settings from producing plausible-looking numbers.",
         ),
         Guardrail(
             "G04", "TYPE_MISMATCH", BLOCK, Category.INPUT_VALIDITY,
-            "Checks each step receives the kind of series it expects, for example volatility "
-            "computed on returns, not on prices, and a significance test on returns, not on "
-            "a price level. This prevents statistically meaningless calculations.",
+            "Each input must be the data type and kind of series its capability accepts: for "
+            "example returns, not prices, for a volatility, and returns, not a price or rate "
+            "level, for the significance test. Prevents statistically meaningless "
+            "calculations.",
         ),
         Guardrail(
             "G05", "BUDGET_EXCEEDED", BLOCK, Category.PLAN_INTEGRITY,
-            "Checks the request length, before the planner is called (so an oversized "
-            "request costs no LLM call) and again with every plan, and the number of steps "
-            "in the plan. This prevents oversized requests and runaway plans too long for a "
-            "human to review.",
+            "The request must be at most 2,000 characters, checked before the planner is "
+            "called (so an oversized request costs no LLM call) and again with every plan; "
+            "the plan may have at most 15 steps by default (QUANTLAB_MAX_STEPS). Prevents "
+            "oversized prompts and runaway plans too long for a human to review.",
         ),
         Guardrail(
             "G06", "UNKNOWN_DATASET", BLOCK, Category.APPROVED_SCOPE,
-            "Checks every dataset the plan names or loads is in the approved, hash-versioned "
-            "catalog. This prevents the use of unverified or invented data.",
+            "Every dataset the plan names or loads must be in the approved catalog. Prevents "
+            "analysis of invented or unapproved data.",
         ),
         Guardrail(
             "G07", "RETURNS_ON_RATES", BLOCK, Category.METHODOLOGY,
-            "Checks that returns aren't computed on interest rates, which call for "
-            "differences instead. This prevents economically wrong results, such as "
-            "percentage changes of a yield near zero.",
+            "Returns cannot be computed on an interest rate or yield: rates are differenced "
+            "instead (changes in percentage points). Prevents meaningless results, such as a "
+            "move from 1% to 2% reported as +100%.",
         ),
         Guardrail(
             "G08", "FREQUENCY_MISMATCH", BLOCK, Category.METHODOLOGY,
-            "Checks that series combined in one step (a spread, a comparison, a test) share "
-            "the same frequency. This prevents silently comparing weekly values with daily "
-            "ones.",
+            "Series combined in one step (a spread, a comparison or the significance test) "
+            "must have the same frequency. Prevents silently matching weekly values with "
+            "daily ones on the few dates they share.",
         ),
         Guardrail(
             "G09", "LOOK_AHEAD", APPROVE, Category.METHODOLOGY,
-            "Detects thresholds built from the full sample, including future data, and asks "
-            "for approval. This prevents a result that looks predictive only because it used "
-            "information unavailable at the time.",
+            "A flag threshold computed from the full sample, which includes data from after "
+            "each flagged date, needs explicit approval. Prevents results that look better "
+            "than anything achievable in real time from passing unnoticed.",
         ),
         Guardrail(
             "G10", "MATERIAL_ASSUMPTION", APPROVE, Category.METHODOLOGY,
-            "Asks for human approval when a choice changes the answer, today the return "
-            "method (log versus simple returns). This prevents important assumptions being "
-            "made silently.",
+            "Choices that change the answer need explicit approval: today, the return method "
+            "(log or simple) of compute_returns and forward_return. Prevents the LLM from "
+            "making material assumptions silently.",
         ),
         Guardrail(
             "G11", "FORWARD_DATA_AS_SIGNAL", BLOCK, Category.METHODOLOGY,
-            "Checks forward returns are used only as outcomes, never to build a flag or "
-            "signal. This prevents the future leaking into the explanation of the future.",
+            "Forward returns may only be the outcome of a comparison or of the significance "
+            "test, never the input to a volatility, a flag or any other step. Prevents future "
+            "information from leaking into a signal.",
         ),
         Guardrail(
             "R01", "DATASET_HASH_MISMATCH", BLOCK, Category.DATA_QUALITY,
-            "Checks each loaded snapshot matches the hash recorded in the catalog. This "
-            "prevents the analysis running on altered or different data.",
+            "Each snapshot file must match the hash recorded in the catalog before it is "
+            "loaded. Prevents analysis of altered or different data.",
         ),
         Guardrail(
             "R02", "INSUFFICIENT_DATA", BLOCK, Category.DATA_QUALITY,
-            "Checks each step has enough observations for its calculation, for example "
-            "three times the rolling window. This prevents statistics computed on too "
-            "little data.",
+            "Each step needs its capability's minimum number of observations, for example "
+            "three times the window for a rolling volatility and 30 shared dates for the "
+            "significance test. Prevents statistics computed on too little data.",
         ),
         Guardrail(
             "R03", "MISSING_DATA", WARN, Category.DATA_QUALITY,
             "Warns when more than 5% of a loaded series' values are missing (they are "
-            "dropped). This prevents gaps silently distorting the results.",
+            "dropped). Prevents gaps from silently distorting the results.",
         ),
         Guardrail(
             "R04", "ALIGNMENT_LOSS", WARN, Category.DATA_QUALITY,
             "Warns when aligning two series on their common dates drops more than 10% of "
-            "either. This prevents hidden sample shrinkage.",
+            "either. Prevents a silently shrunken sample.",
         ),
         Guardrail(
             "R05", "LOW_EFFECTIVE_SAMPLE", WARN, Category.METHODOLOGY,
-            "Warns when the flagged periods of a comparison or test come from fewer than 5 "
-            "distinct episodes. This prevents overconfidence in a result that looks large "
-            "but rests on few real events.",
+            "Warns when the flagged periods of a comparison or of the significance test form "
+            "fewer than 5 distinct episodes (runs of consecutive flags). Prevents "
+            "overconfidence in a result that rests on a handful of real events.",
         ),
         Guardrail(
             "N01", "UNGROUNDED_NARRATIVE", WARN, Category.OUTPUT_GROUNDING,
-            "Checks deterministically that every number and date in the written summary is "
-            "a correct rounding of a value the run computed (the facts sheet) or used (plan "
-            "parameters, the request, warnings, dataset titles). An LLM summary that fails "
-            "is withheld and the deterministic summary shown instead, with the failing "
-            "numbers listed. This prevents the narrative from inventing or misquoting "
-            "numbers, so every figure can be traced back to data, functions and parameters.",
+            "Every number in the written summary must be a correct rounding of a value the "
+            "run computed or used: results, parameters, the request, warnings, dataset "
+            "titles, annualisation factors and, when a test ran, the 5% and 95% levels. "
+            "Dates must be dates of the results (a year on its own, within their range). A "
+            "failing LLM summary is withheld and the deterministic one, checked the same "
+            "way, is shown instead, with the failing numbers listed. Prevents invented or "
+            "misquoted figures.",
         ),
     ]
 }  # fmt: skip

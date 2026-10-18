@@ -197,7 +197,9 @@ def test_every_issue_shows_who_enforces_it(
     app.sidebar.button(key=f"scenario-{scenario_id}").click().run()
     button(app, "Generate plan").click().run()
     shown = f"Enforced by: **{enforcer}** · Category: {category}"
-    assert shown in [c.value for c in app.caption]
+    caption = next(c for c in app.caption if c.value == shown)
+    # The guardrail's description is the line's tooltip, from the same GUARDRAILS table.
+    assert caption.proto.help in {g.description for g in GUARDRAILS.values()}
 
 
 def test_ungrounded_llm_narrative_is_withheld_with_an_n01_issue(app_env: Settings) -> None:
@@ -247,23 +249,86 @@ def test_capability_count_comes_from_the_registry(app_env: Settings) -> None:
     assert not app.table and [h.value for h in app.subheader] == []
 
 
-def test_guardrails_page_counts_and_table_come_from_the_code(app_env: Settings) -> None:
+def guardrail_codes(app: AppTest) -> list[str]:
+    """Codes of the rows the Guardrails page's table shows ([] when no row matches)."""
+    return list(app.table[0].value.index) if app.table else []
+
+
+def showing(app: AppTest) -> str:
+    """The "Showing n of N guardrails" count above the table."""
+    return next(c.value for c in app.caption if c.value.startswith("Showing "))
+
+
+def test_guardrails_page_intro_and_table_come_from_the_code(app_env: Settings) -> None:
     app = open_page("guardrails.py")
     assert app.title[0].value == "Guardrails"
     intro = app.caption[0].value
-    for enforcer in ENFORCERS.values():
-        count = sum(g.enforced_by == enforcer for g in GUARDRAILS.values())
-        assert f"{count} enforced by the {enforcer}" in intro
     for action in Action:
         assert f"**{action.value}**" in intro  # what each action means
+    for enforcer in ENFORCERS.values():  # who enforces them, e.g. "the validator (...)"
+        assert f"the {enforcer.split(' (')[0].lower()} (" in intro
     table = app.table[0].value
     assert list(table.index) == list(GUARDRAILS)
     assert list(table.columns) == ["Name", "Action", "Enforced by", "Category", "Description"]
     g09 = table.loc["G09"]
     assert (g09["Action"], g09["Enforced by"], g09["Category"]) == (
         "APPROVE", "Validator (deterministic)", "Methodology")  # fmt: skip
-    assert table.loc["L01", "Enforced by"] == "Planner (LLM)"
-    assert table.loc["N01", "Enforced by"] == "Narrator check (deterministic)"
+    assert table.loc["G02", "Description"] == GUARDRAILS["G02"].description
+    assert showing(app) == f"Showing {len(GUARDRAILS)} of {len(GUARDRAILS)} guardrails"
+    assert button(app, "Clear filters").disabled  # nothing to clear yet
+
+
+def test_guardrail_filter_options_come_from_the_table(app_env: Settings) -> None:
+    app = open_page("guardrails.py")
+    guardrails = list(GUARDRAILS.values())
+    options = {m.key: m.options for m in app.multiselect}
+    assert options["guardrail_action"] == list(dict.fromkeys(g.action.value for g in guardrails))
+    assert options["guardrail_enforcer"] == list(dict.fromkeys(g.enforced_by for g in guardrails))
+    assert set(options["guardrail_category"]) == {g.category.value for g in guardrails}
+
+
+@pytest.mark.parametrize(
+    ("search", "expected"),
+    [
+        ("G0", [f"G0{i}" for i in range(1, 10)]),  # partial code
+        ("look", ["G09"]),  # partial name, any case
+        ("l01", ["L01"]),  # code, any case
+        ("  data ", ["G06", "G11", "R01", "R02", "R03"]),  # names with "DATA", spaces ignored
+        ("zzz", []),
+    ],
+)
+def test_guardrail_search_matches_code_or_name(
+    search: str, expected: list[str], app_env: Settings
+) -> None:
+    app = open_page("guardrails.py")
+    app.text_input(key="guardrail_search").input(search).run()
+    assert guardrail_codes(app) == expected
+    assert showing(app) == f"Showing {len(expected)} of {len(GUARDRAILS)} guardrails"
+    if not expected:
+        assert app.info[0].value == "No guardrail matches these filters."
+
+
+def test_guardrail_filters_combine_and_clear(app_env: Settings) -> None:
+    app = open_page("guardrails.py")
+    app.multiselect(key="guardrail_action").select("APPROVE").run()
+    assert guardrail_codes(app) == ["G09", "G10"]
+    app.multiselect(key="guardrail_action").unselect("APPROVE").run()
+    app.multiselect(key="guardrail_enforcer").select("Executor (runtime)").run()
+    assert guardrail_codes(app) == ["R01", "R02", "R03", "R04", "R05"]
+    app.multiselect(key="guardrail_category").select("Methodology").run()  # AND
+    assert guardrail_codes(app) == ["R05"]
+    app.multiselect(key="guardrail_enforcer").select("Planner (LLM)").run()  # OR within one
+    app.multiselect(key="guardrail_category").select("Approved scope").run()
+    assert guardrail_codes(app) == ["L01", "R05"]
+    app.text_input(key="guardrail_search").input("r0").run()
+    assert guardrail_codes(app) == ["R05"]
+    assert showing(app) == f"Showing 1 of {len(GUARDRAILS)} guardrails"
+
+    button(app, "Clear filters").click().run()
+    assert guardrail_codes(app) == list(GUARDRAILS)
+    assert app.text_input(key="guardrail_search").value == ""
+    assert all(m.value == [] for m in app.multiselect)
+    assert button(app, "Clear filters").disabled
 
 
 def test_sidebar_title_sits_above_the_page_menu(app_env: Settings) -> None:

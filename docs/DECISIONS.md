@@ -1292,3 +1292,26 @@ finding confirmed by hand, found nothing to remove in the tracked code: the name
 vulture reports are used by a framework (Pydantic `model_config` and record fields,
 Streamlit session-state keys, pytest fixtures requested for their side effects).
 `eval/run_eval.py` duplicates `cli eval` but is documented and kept.
+
+## Guardrails page: shorter texts and filters
+
+**Descriptions rewritten in the one table the app reads.** Each `GUARDRAILS`
+description now says what is required and what that prevents, in as few words as
+the cases allow, and covers every case the code maps to the code: G01 lists the
+schema, empty-plan, duplicate-id and input-reference checks and the planner failures;
+G03 the parameter checks and rejected structure edits; G05 both the request length
+(2,000 characters, before the planner and again with every plan) and the step budget
+(15 by default, `QUANTLAB_MAX_STEPS`); L01 also the mock planner's refusal of a
+request it has no canned plan for; N01 every kind of value the grounding check
+accepts. A test checks that the numbers G05 and the R descriptions quote equal the
+settings and the executor's thresholds. Issues shown during a run carry their own
+specific message; the guardrail's description is the tooltip of their "Enforced by"
+line, from the same table, rather than a second paragraph under every issue.
+
+**Filters on the Guardrails page.** A search box (code or name, case-insensitive,
+partial) and multiselects for action, enforcer and category, combined with AND (an
+empty filter shows all), a "Showing n of N guardrails" count and a button that clears
+them. The options are read from the table, in the order of the `Action` and `Category`
+enums and of `ENFORCERS`, so a new guardrail or category appears without a code change.
+The intro says what guardrails are, what each action does and who enforces them; the
+per-enforcer counts were dropped, since the filters and the table show them.
