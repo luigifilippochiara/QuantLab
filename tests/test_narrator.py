@@ -19,18 +19,13 @@ from quantlab.narrator import (
 from quantlab.plan import Plan
 from quantlab.types import Artifact, ArtifactMeta, DataType, Frequency
 
-from conftest import SPREAD_PLAN, as_plan, canned_plan, raw_plan
+from conftest import SPREAD_PLAN, as_plan, raw_plan
 from fakes import FakeAnthropicClient, FakeOpenAIClient, openai_text_response, text_response
 
-SCENARIO_1 = raw_plan("volatility_flag_success")
-HORIZON_4 = raw_plan("volatility_flag_success")
-HORIZON_4["steps"][5]["params"]["horizon"] = 4  # 4-week forward returns: G11 warns
 PLANS = {
-    "scenario_1": SCENARIO_1,
+    "scenario_1": raw_plan("volatility_flag_success"),
+    "lookahead": raw_plan("volatility_flag_lookahead"),
     "spread": SPREAD_PLAN,
-    "horizon_4": HORIZON_4,
-    "volatility_peak_since_2020": canned_plan("nasdaq_volatility_peak_since_2020"),
-    "vix_extremes": canned_plan("vix_extremes"),
 }
 
 
@@ -63,9 +58,9 @@ def test_format_number(value: float | int | str, expected: str) -> None:
 def test_facts_sheet_covers_tables_flags_and_series(catalog: Catalog) -> None:
     plan, result, _ = run_scenario("spread", catalog)
     facts = {f.fact_id: f for f in build_facts_sheet(plan, result.artifacts)}
-    for fact_id in ["s1.start", "s1.end", "s3.last_value", "s4.mean", "s4.std", "s4.count"]:
+    for fact_id in ["s1.start", "s1.end", "s3.last_value", "s4.last_value", "s4.n_obs"]:
         assert fact_id in facts
-    assert facts["s4.mean"].value == result.artifacts["s4"].value["mean"]
+    assert facts["s3.last_value"].value == result.artifacts["s3"].value.iloc[-1]
 
     plan, result, _ = run_scenario("scenario_1", catalog)
     facts = {f.fact_id: f for f in build_facts_sheet(plan, result.artifacts)}
@@ -79,20 +74,6 @@ def test_facts_sheet_covers_tables_flags_and_series(catalog: Catalog) -> None:
         assert facts[f"s8.{key}"].value == value
 
 
-def test_facts_sheet_has_extreme_dates_values_and_the_resolved_period(catalog: Catalog) -> None:
-    plan, result, _ = run_scenario("volatility_peak_since_2020", catalog)
-    facts = {f.fact_id: f for f in build_facts_sheet(plan, result.artifacts)}
-    peak = result.artifacts["s6"].value["max"]
-    assert facts["s6.max_date"].value == peak["date"]  # the date is a fact...
-    assert facts["s6.max_value"].value == peak["value"]  # ...and so is the value
-    assert facts["s6.max_tie_count"].value == peak["tie_count"]
-    assert (facts["s5.period_start"].value, facts["s5.period_end"].value) == (
-        "2020-01-01",
-        result.artifacts["s5"].meta.end,
-    )
-    assert "s4.period_start" not in facts  # only filter_period has a resolved period
-
-
 # --- grounding ---------------------------------------------------------------------
 
 FACTS = [
@@ -101,7 +82,7 @@ FACTS = [
     Fact(fact_id="s4.n_flagged", label="n", value=2832, display="2,832"),
     Fact(fact_id="s1.start", label="start", value="1971-02-05", display="1971-02-05"),
     Fact(fact_id="s1.end", label="end", value="2026-10-13", display="2026-10-13"),
-    Fact(fact_id="s5.max_date", label="max date", value="2021-11-19", display="2021-11-19"),
+    Fact(fact_id="s5.end", label="end", value="2021-11-19", display="2021-11-19"),
 ]
 PLAN = Plan(
     plan_id="p",
@@ -188,34 +169,36 @@ def test_llm_narrative_with_invented_number_is_flagged(
 ) -> None:
     plan, result, issues = run_scenario("spread", catalog)
     facts = build_facts_sheet(plan, result.artifacts)
-    mean = next(f.display for f in facts if f.fact_id == "s4.mean")
+    latest = next(f.display for f in facts if f.fact_id == "s3.last_value")
     client = FakeAnthropicClient(
-        text_response(f"The average spread is {mean}; the half-life is 7.77.")
+        text_response(f"The latest spread is {latest}; the half-life is 7.77.")
     )
     narrative = narrate(plan.request, plan, result.artifacts, issues, "live", settings,
                         client=client)  # fmt: skip
     assert narrative.source == "llm" and narrative.model == "claude-sonnet-5-5"
     assert narrative.grounding.ungrounded == ["7.77"]
     prompt = client.calls[0]["messages"][0]["content"]
-    assert "FACTS SHEET" in prompt and mean in prompt
+    assert "FACTS SHEET" in prompt and latest in prompt
     assert "temperature" not in client.calls[0]
 
 
 def test_llm_narrative_with_a_wrong_date_fails_grounding(
     settings: Settings, catalog: Catalog
 ) -> None:
-    plan, result, issues = run_scenario("volatility_peak_since_2020", catalog)
+    plan, result, issues = run_scenario("scenario_1", catalog)
     facts = {f.fact_id: f.display for f in build_facts_sheet(plan, result.artifacts)}
-    value, peak = facts["s6.max_value"], facts["s6.max_date"]
-    wrong = "2020-03-20" if peak != "2020-03-20" else "2020-03-27"  # inside the period
+    value, latest = facts["s4.last_value"], facts["s4.end"]
+    # A week inside the data that is no date of the facts sheet.
+    weeks = [f"{d:%Y-%m-%d}" for d in result.artifacts["s4"].value.index]
+    wrong = next(week for week in weeks[100:] if week not in facts.values())
 
     def narrated(text: str):
         client = FakeAnthropicClient(text_response(text))
         return narrate(plan.request, plan, result.artifacts, issues, "live", settings,
                        client=client).grounding  # fmt: skip
 
-    assert narrated(f"Volatility peaked at {value} on {peak}.").grounded
-    assert narrated(f"Volatility peaked at {value} on {wrong}.").ungrounded == [wrong]
+    assert narrated(f"Volatility was {value} on {latest}.").grounded
+    assert narrated(f"Volatility was {value} on {wrong}.").ungrounded == [wrong]
 
 
 def test_llm_narrative_with_a_wrong_p_value_fails_grounding(
@@ -246,7 +229,7 @@ def hac_artifacts(p_value: float) -> tuple[Plan, dict[str, Artifact]]:
              "horizon": 1, "start": "1996-12-27", "end": "2025-11-14"}  # fmt: skip
     meta = ArtifactMeta(None, Frequency.W, ["NASDAQCOM"], 1500, "1996-12-27", "2025-11-14")
     step = {"id": "s8", "capability": "hac_mean_difference",
-            "inputs": {"outcome": "s6", "flags": "s5"}, "params": {"maxlags": None}}  # fmt: skip
+            "inputs": {"outcome": "s6", "flags": "s5"}, "params": {}}  # fmt: skip
     plan = Plan(plan_id="p", request="r", steps=[step])
     return plan, {"s8": Artifact(table, DataType.TABLE, meta)}
 
@@ -284,8 +267,8 @@ def test_llm_failure_falls_back_to_the_template(settings: Settings, catalog: Cat
 def test_openai_narrative_path(settings: Settings, catalog: Catalog) -> None:
     plan, result, issues = run_scenario("spread", catalog)
     facts = build_facts_sheet(plan, result.artifacts)
-    mean = next(f.display for f in facts if f.fact_id == "s4.mean")
-    client = FakeOpenAIClient(openai_text_response(f"The average spread is {mean}."))
+    latest = next(f.display for f in facts if f.fact_id == "s3.last_value")
+    client = FakeOpenAIClient(openai_text_response(f"The latest spread is {latest}."))
     openai_settings = dataclasses.replace(settings, llm_provider="openai")
     narrative = narrate(plan.request, plan, result.artifacts, issues, "live", openai_settings,
                         client=client)  # fmt: skip

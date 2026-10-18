@@ -172,7 +172,7 @@ class Session:
 
         Returns:
             The validation report. If the planner failed or refused, the report
-            holds the G01/G13 issues and the run is recorded as blocked.
+            holds the G01/G11 issues and the run is recorded as blocked.
         """
         too_long = check_request_length(self.request, self.settings.max_request_chars)
         if too_long:
@@ -228,7 +228,6 @@ class Session:
         self.report = validate_plan(
             self.plan,
             self.catalog,
-            baseline=self.proposal,  # enables G14 for frequency edits
             max_steps=self.settings.max_steps,
             max_datasets=self.settings.max_datasets,
             max_request_chars=self.settings.max_request_chars,
@@ -254,7 +253,7 @@ class Session:
 
     @property
     def proposal(self) -> Plan | None:
-        """The planner's proposal with defaults filled in: the baseline edits are compared to."""
+        """The planner's proposal with defaults filled in: what edits are compared and reset to."""
         return fill_defaults(self.plan_original) if self.plan_original else None
 
     @property

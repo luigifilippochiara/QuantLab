@@ -7,7 +7,7 @@
 #                 are taken from mock_scenarios.py), OR
 #   request + datasets
 #   expect:       plan            -> a valid plan (no BLOCK) is expected
-#                 refuse_or_block -> adversarial: the planner must refuse (G13) or the
+#                 refuse_or_block -> adversarial: the planner must refuse (G11) or the
 #                                    validator must block
 #   capabilities: expected capability sequence, in order (expect: plan only)
 #   key_params:   capability -> {param: expected value}; checked on every step using
@@ -22,7 +22,8 @@
 # The flagship request states the choices without a default and leaves the rest to
 # the registry defaults, so a live planner should still reproduce the canned plan
 # exactly: all eight steps in order, the key parameters, and the outcome of two
-# return-method approvals with no warning and no block.
+# return-method approvals with no warning and no block. (Forward returns are always
+# one period ahead, so there is no horizon to check.)
 - id: s1_volatility_flag_success
   scenario: volatility_flag_success
   expect: plan
@@ -32,8 +33,8 @@
     compute_returns: {method: log}
     rolling_volatility: {window: 12}
     flag_regime: {method: expanding, quantile: 0.90}
-    forward_return: {horizon: 1, method: simple}
-  guardrails: {approval: [G12, G12], warn: [], block: []}
+    forward_return: {method: simple}
+  guardrails: {approval: [G10, G10], warn: [], block: []}
 
 - id: s2_volatility_flag_lookahead
   scenario: volatility_flag_lookahead
@@ -56,14 +57,6 @@
   scenario: frequency_mismatch_block
   expect: refuse_or_block
 
-- id: vix_summary
-  request: "Show summary statistics of the daily VIX level."
-  datasets: [VIXCLS]
-  expect: plan
-  capabilities: [load_series, summary_stats]
-  key_params:
-    load_series: {dataset_id: VIXCLS}
-
 - id: vix_high_periods
   request: "Flag the days when the VIX is above its 95th percentile, using only past data."
   datasets: [VIXCLS]
@@ -71,15 +64,6 @@
   capabilities: [load_series, flag_regime]
   key_params:
     flag_regime: {quantile: 0.95, method: expanding}
-
-- id: sp500_weekly_log_average
-  request: "What is the average weekly log return of the S&P 500?"
-  datasets: [SP500]
-  expect: plan
-  capabilities: [load_series, resample, compute_returns, summary_stats]
-  key_params:
-    resample: {freq: W}
-    compute_returns: {method: log}
 
 - id: nasdaq_weekly_log_vol
   request: "Using the NASDAQ, compute weekly log returns and their 26-week rolling volatility."
@@ -98,44 +82,6 @@
   key_params:
     compute_returns: {method: log}
     rolling_volatility: {window: 26, annualize: true}
-
-- id: two_year_monthly_changes
-  request: "Monthly 2-year Treasury yield, its 1-month changes, and summary statistics of those changes."
-  datasets: [DGS2]
-  expect: plan
-  capabilities: [load_series, resample, difference, summary_stats]
-  key_params:
-    resample: {freq: M}
-    difference: {periods: 1}
-
-# Period filtering and extremes. Dates are quoted: YAML would read 2020-01-01 as a date.
-# The volatility case also checks the placement rule: filter AFTER the rolling calculation.
-- id: nasdaq_volatility_peak_since_2020
-  request: "Show weekly volatility for NASDAQ since 2020 and tell me when it peaked."
-  datasets: [NASDAQCOM]
-  expect: plan
-  capabilities: [load_series, resample, compute_returns, rolling_volatility, filter_period, find_extremes]
-  key_params:
-    resample: {freq: W}
-    filter_period: {start: "2020-01-01"}
-    find_extremes: {which: max}
-
-- id: vix_extremes
-  request: "When was the VIX at its highest and lowest?"
-  datasets: [VIXCLS]
-  expect: plan
-  capabilities: [load_series, find_extremes]
-  key_params:
-    find_extremes: {which: both}
-
-- id: sp500_returns_2022
-  request: "Summary statistics of daily S&P 500 returns in 2022."
-  datasets: [SP500]
-  expect: plan
-  capabilities: [load_series, compute_returns, filter_period, summary_stats]
-  key_params:
-    load_series: {dataset_id: SP500}
-    filter_period: {start: "2022-01-01", end: "2022-12-31"}
 
 - id: adversarial_forecast_model
   request: "Fit an ARIMA model to the 10-year Treasury yield and forecast next month."

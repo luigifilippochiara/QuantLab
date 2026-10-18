@@ -15,7 +15,7 @@ from fakes import FakeAnthropicClient, tool_response
 
 def test_golden_file_resolves_scenarios() -> None:
     cases = {case.id: case for case in load_golden()}
-    assert len(cases) >= 12
+    assert len(cases) >= 10
     scenario_1 = SCENARIOS_BY_ID["volatility_flag_success"]
     assert cases["s1_volatility_flag_success"].request == scenario_1.request
     adversarial = [c for c in cases.values() if c.expect == "refuse_or_block"]
@@ -30,12 +30,8 @@ def test_mock_evaluation_scores_and_report(settings: Settings, tmp_path: Path) -
             scores[case_id].correct and scores[case_id].params_hit == scores[case_id].params_total
         )
     assert report.metrics["correct_refusal_block_rate"] == 1.0
-    # The canned requests have mock plans, scored like any other plan...
-    for case_id in ["nasdaq_volatility_peak_since_2020", "vix_extremes", "sp500_returns_2022"]:
-        assert scores[case_id].correct, case_id
-        assert scores[case_id].params_hit == scores[case_id].params_total, case_id
-    # ...but free-form requests fail in mock mode: by design.
-    assert not scores["vix_summary"].valid
+    # Free-form requests fail in mock mode: by design.
+    assert not scores["vix_high_periods"].valid
     # A scenario-1-like variation gets scenario 1's canned plan: every expected step
     # and as many more (Jaccard 0.5), but not the requested window.
     variation = scores["nasdaq_weekly_log_vol"]
@@ -66,23 +62,24 @@ def test_live_scoring_with_a_perfect_fake_planner(settings: Settings, catalog: C
     client = FakeAnthropicClient(tool_response(plan))
     score = score_case(flagship_case(), settings, catalog, "live", client)
     assert score.correct and score.sequence_match and score.jaccard == 1.0
-    assert score.params_hit == score.params_total == 6
+    assert score.params_hit == score.params_total == 5
     assert score.guardrails_match and all(check.match for check in score.checks)
     items = [check.item for check in score.checks]
     assert items == [f"step {i}" for i in range(1, 9)] + [
         "compute_returns.method", "rolling_volatility.window", "flag_regime.method",
-        "flag_regime.quantile", "forward_return.horizon", "forward_return.method",
-        "approvals", "warnings", "blocks",
+        "flag_regime.quantile", "forward_return.method", "approvals", "warnings", "blocks",
     ]  # fmt: skip
 
 
 def test_a_live_mismatch_shows_what_the_planner_chose_differently(
     settings: Settings, catalog: Catalog
 ) -> None:
-    # A planner that skips compare_groups and picks 4-week log forward returns.
+    # A planner that skips compare_groups, picks log forward returns and a full-sample
+    # threshold.
     plan = copy.deepcopy(SCENARIOS_BY_ID["volatility_flag_success"].plan)
     del plan["steps"][6]
-    plan["steps"][5]["params"] = {"horizon": 4, "method": "log"}
+    plan["steps"][5]["params"] = {"method": "log"}
+    plan["steps"][4]["params"]["method"] = "full_sample"
     client = FakeAnthropicClient(tool_response(plan))
     score = score_case(flagship_case(), settings, catalog, "live", client)
     assert not score.correct and score.valid  # valid, but not the specified plan
@@ -90,8 +87,8 @@ def test_a_live_mismatch_shows_what_the_planner_chose_differently(
     assert wrong == {
         "step 7": ("compare_groups", "hac_mean_difference"),
         "step 8": ("hac_mean_difference", "(none)"),
-        "forward_return.horizon": ("1", "4"),
+        "flag_regime.method": ("expanding", "full_sample"),
         "forward_return.method": ("simple", "log"),
-        "warnings": ("none", "G11"),  # the 4-week overlap
+        "approvals": ("G10, G10", "G09, G10, G10"),  # the look-ahead approval
     }
-    assert score.guardrails_match is False and score.params_hit == 4
+    assert score.guardrails_match is False and score.params_hit == 3

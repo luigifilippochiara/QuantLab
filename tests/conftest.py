@@ -19,7 +19,7 @@ import pytest
 from quantlab.config import Settings
 from quantlab.data import Catalog, file_sha256, load_catalog, read_fred_csv
 from quantlab.guardrails import fill_defaults
-from quantlab.mock_scenarios import CANNED_REQUESTS_BY_ID, SCENARIOS_BY_ID
+from quantlab.mock_scenarios import SCENARIOS_BY_ID
 from quantlab.plan import Plan
 
 # 30 years of business days: long enough for every scenario and for weekly and
@@ -165,15 +165,20 @@ def catalog(settings: Settings) -> Catalog:
 # Plans used by tests, written exactly as the planner LLM would write them
 # ---------------------------------------------------------------------------
 
-# A clean rates analysis (no approvals needed): the 10y-2y spread and its summary
-# statistics. Useful for R03/R04, determinism and replay tests.
+# A clean rates analysis (no approvals needed): the 10y-2y spread and its daily
+# changes. Useful for R03/R04, determinism and replay tests.
 SPREAD_PLAN: dict[str, Any] = {
     "dataset_ids": ["DGS10", "DGS2"],
     "steps": [
         {"id": "s1", "capability": "load_series", "params": {"dataset_id": "DGS10"}},
         {"id": "s2", "capability": "load_series", "params": {"dataset_id": "DGS2"}},
         {"id": "s3", "capability": "spread", "inputs": {"a": "s1", "b": "s2"}},
-        {"id": "s4", "capability": "summary_stats", "inputs": {"series": "s3"}},
+        {
+            "id": "s4",
+            "capability": "difference",
+            "inputs": {"series": "s3"},
+            "params": {"periods": 1},
+        },
     ],
     "cannot_fulfill": False,
 }
@@ -194,43 +199,16 @@ ARIMA_PLAN: dict[str, Any] = {
     "cannot_fulfill": False,
 }
 
-# A period filter on the daily NASDAQ, then its peak (no approvals needed). Tests
-# change filter_period's dates (s2) to exercise the period rules.
-PERIOD_PLAN: dict[str, Any] = {
-    "dataset_ids": ["NASDAQCOM"],
-    "steps": [
-        {"id": "s1", "capability": "load_series", "params": {"dataset_id": "NASDAQCOM"}},
-        {
-            "id": "s2",
-            "capability": "filter_period",
-            "inputs": {"series": "s1"},
-            "params": {"start": "2021-01-01"},
-        },
-        {
-            "id": "s3",
-            "capability": "find_extremes",
-            "inputs": {"series": "s2"},
-            "params": {"which": "max"},
-        },
-    ],
-    "cannot_fulfill": False,
-}
-
 # The approvals scenario 1 needs: the return-method assumption of compute_returns
 # (s3, also scenario 2's) and of forward_return (s6).
-RETURN_METHOD_APPROVAL = "G12:s3:return_method"
-FORWARD_METHOD_APPROVAL = "G12:s6:return_method"
+RETURN_METHOD_APPROVAL = "G10:s3:return_method"
+FORWARD_METHOD_APPROVAL = "G10:s6:return_method"
 SCENARIO_1_APPROVALS = [RETURN_METHOD_APPROVAL, FORWARD_METHOD_APPROVAL]
 
 
 def raw_plan(scenario_id: str) -> dict[str, Any]:
     """A deep copy of a demo scenario's canned plan, as a dict a test may mutate."""
     return copy.deepcopy(SCENARIOS_BY_ID[scenario_id].plan)
-
-
-def canned_plan(request_id: str) -> dict[str, Any]:
-    """A deep copy of a canned request's plan (filter_period, find_extremes), to mutate."""
-    return copy.deepcopy(CANNED_REQUESTS_BY_ID[request_id].plan)
 
 
 def as_plan(raw: dict[str, Any], request: str = "test request") -> Plan:

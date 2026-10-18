@@ -1,12 +1,10 @@
 """Static guardrails (G codes): each triggers on a crafted plan and stays silent on a clean one.
 
-Also covers filter_period's interval rules (G03): at least one date, start
-before end, valid dates, and a period that overlaps the data; and checks that the
-GUARDRAILS table (shown on the Guardrails page) lists exactly the implemented checks.
+Also checks that the GUARDRAILS table (shown on the Guardrails page) lists
+exactly the implemented checks.
 """
 
 import ast
-import copy
 import json
 from typing import Any
 
@@ -27,11 +25,9 @@ from quantlab.plan import Plan, plan_tool_schema
 
 from conftest import (
     ARIMA_PLAN,
-    PERIOD_PLAN,
     RETURN_METHOD_APPROVAL,
     SCENARIO_1_APPROVALS,
     SPREAD_PLAN,
-    canned_plan,
     raw_plan,
 )
 
@@ -56,7 +52,7 @@ def step(raw: dict[str, Any], step_id: str) -> dict[str, Any]:
 def test_clean_plan_triggers_nothing(code: str, catalog: Catalog) -> None:
     # The spread plan is fully clean; scenario 1 only needs the return-method approvals.
     assert code not in validate(SPREAD_PLAN, catalog).codes()
-    if code != "G12":
+    if code != "G10":
         assert code not in validate(raw_plan(SUCCESS), catalog).codes()
 
 
@@ -67,7 +63,7 @@ def test_scenario_1_needs_only_the_return_method_approvals(catalog: Catalog) -> 
     assert [i.issue_id for i in report.approvals_required] == SCENARIO_1_APPROVALS
 
 
-# --- G01 SCHEMA_INVALID ---------------------------------------------------------
+# --- G01 INVALID_PLAN: schema, empty plan, step references -----------------------
 
 
 def test_g01_extra_fields_are_rejected() -> None:
@@ -90,6 +86,30 @@ def test_g01_empty_plan(catalog: Catalog) -> None:
     raw = raw_plan(SUCCESS)
     raw["steps"] = []
     assert "G01" in validate(raw, catalog).codes()
+
+
+@pytest.mark.parametrize(
+    "inputs",
+    [
+        {},  # missing input
+        {"series": "s99"},  # unknown step
+        {"series": "s5"},  # later step
+        {"series": "s4"},  # itself
+        {"series": "s3", "other": "s2"},  # unknown input name
+    ],
+)
+def test_g01_bad_references(inputs: dict[str, str], catalog: Catalog) -> None:
+    raw = raw_plan(SUCCESS)
+    step(raw, "s4")["inputs"] = inputs
+    report = validate(raw, catalog)
+    assert "G01" in report.codes() and report.is_blocked
+    assert any(i.issue_id.startswith("G01:s4:") for i in report.blocks)
+
+
+def test_g01_duplicate_step_ids(catalog: Catalog) -> None:
+    raw = raw_plan(SUCCESS)
+    step(raw, "s5")["id"] = "s4"
+    assert "G01:s4:duplicate" in [i.issue_id for i in validate(raw, catalog).blocks]
 
 
 # --- G02 UNKNOWN_CAPABILITY -----------------------------------------------------
@@ -116,10 +136,9 @@ def test_g02_a_planner_that_invents_a_model_is_still_blocked(catalog: Catalog) -
         ("s5", {"quantile": float("nan")}),  # NaN
         ("s3", {"method": "arithmetic"}),  # not in choices
         ("s4", {"window": 12, "annualize": "yes"}),  # wrong type for bool
-        ("s6", {"method": "log", "horizon": 14}),  # forward horizon above 13
-        ("s6", {"method": "log", "horizon": 0}),  # forward horizon below 1
-        ("s8", {"maxlags": 53}),  # HAC lags above 52
-        ("s8", {"maxlags": -1}),  # HAC lags below 0
+        ("s4", {"window": None}),  # null is never a valid value
+        ("s6", {"method": "log", "horizon": 4}),  # forward returns are always one period
+        ("s8", {"maxlags": 4}),  # the Newey-West lag is always set by its rule
     ],
 )
 def test_g03_invalid_params(step_id: str, params: dict[str, Any], catalog: Catalog) -> None:
@@ -137,137 +156,81 @@ def test_defaults_are_filled_in() -> None:
     assert unknown.steps[1].params == ARIMA_PLAN["steps"][1]["params"]  # left untouched
 
 
-# --- G03 for filter_period: the period must be well defined and inside the data ---
-# Synthetic data runs from 1996-01-01 to 2025-11-21 (conftest).
+# --- G04 TYPE_MISMATCH ----------------------------------------------------------
 
 
-def test_period_plans_are_clean(catalog: Catalog) -> None:
-    assert validate(PERIOD_PLAN, catalog).issues == []
-    since_2020 = validate(canned_plan("nasdaq_volatility_peak_since_2020"), catalog)
-    assert since_2020.codes() == ["G12"]
-
-
-@pytest.mark.parametrize(
-    ("params", "issue_id"),
-    [
-        pytest.param({}, "G03:s2:period", id="neither"),
-        pytest.param({"start": "2021-01-01", "end": "2020-01-01"}, "G03:s2:period",
-                     id="start after end"),
-        pytest.param({"start": "2020/01/01"}, "G03:s2:start", id="not ISO"),
-        pytest.param({"start": "2021-02-30"}, "G03:s2:start", id="no such day"),
-        pytest.param({"start": "2031-01-01"}, "G03:s2:coverage", id="after the data"),
-        pytest.param({"end": "1990-12-31"}, "G03:s2:coverage", id="before the data"),
-    ],
-)  # fmt: skip
-def test_g03_invalid_periods(params: dict[str, Any], issue_id: str, catalog: Catalog) -> None:
-    raw = copy.deepcopy(PERIOD_PLAN)
-    step(raw, "s2")["params"] = params
-    report = validate(raw, catalog)
-    assert issue_id in [i.issue_id for i in report.blocks]
-    assert report.codes() == ["G03"]
-
-
-def test_a_partly_covered_period_passes(catalog: Catalog) -> None:
-    raw = copy.deepcopy(PERIOD_PLAN)
-    step(raw, "s2")["params"] = {"start": "1990-01-01", "end": "1997-06-30"}
-    assert validate(raw, catalog).issues == []  # too few rows left would be R02, at run time
-
-
-def test_null_is_accepted_only_for_nullable_params(catalog: Catalog) -> None:
-    raw = copy.deepcopy(PERIOD_PLAN)
-    step(raw, "s2")["params"] = {"start": "2021-01-01", "end": None}
-    assert validate(raw, catalog).issues == []
-    raw = raw_plan(SUCCESS)
-    step(raw, "s4")["params"] = {"window": None}
-    assert "G03:s4:window" in [i.issue_id for i in validate(raw, catalog).blocks]
-
-
-# --- G04 BAD_REFERENCE ----------------------------------------------------------
-
-
-@pytest.mark.parametrize(
-    "inputs",
-    [
-        {},  # missing input
-        {"series": "s99"},  # unknown step
-        {"series": "s5"},  # later step
-        {"series": "s4"},  # itself
-        {"series": "s3", "other": "s2"},  # unknown input name
-    ],
-)
-def test_g04_bad_references(inputs: dict[str, str], catalog: Catalog) -> None:
-    raw = raw_plan(SUCCESS)
-    step(raw, "s4")["inputs"] = inputs
-    assert "G04" in validate(raw, catalog).codes()
-
-
-def test_g04_duplicate_step_ids(catalog: Catalog) -> None:
-    raw = raw_plan(SUCCESS)
-    step(raw, "s5")["id"] = "s4"
-    assert "G04" in validate(raw, catalog).codes()
-
-
-# --- G05 TYPE_MISMATCH ----------------------------------------------------------
-
-
-def test_g05_volatility_of_a_price_level(catalog: Catalog) -> None:
+def test_g04_volatility_of_a_price_level(catalog: Catalog) -> None:
     raw = raw_plan(SUCCESS)
     step(raw, "s4")["inputs"] = {"series": "s2"}  # weekly prices, not returns
     report = validate(raw, catalog)
-    assert "G05" in report.codes()
+    assert "G04" in report.codes()
     assert "Compute returns" in report.blocks[0].suggestion
 
 
-def test_g05_summary_statistics_of_flags(catalog: Catalog) -> None:
+def test_g04_flags_are_not_a_series(catalog: Catalog) -> None:
     raw = raw_plan(SUCCESS)
-    raw["steps"].append({"id": "s9", "capability": "summary_stats", "inputs": {"series": "s5"}})
-    assert "G05" in validate(raw, catalog).codes()
+    raw["steps"].append({"id": "s9", "capability": "difference", "inputs": {"series": "s5"},
+                         "params": {"periods": 1}})  # fmt: skip
+    assert "G04:s9:series" in [i.issue_id for i in validate(raw, catalog).blocks]
 
 
-def test_g05_compare_groups_needs_flags(catalog: Catalog) -> None:
+def test_g04_compare_groups_needs_flags(catalog: Catalog) -> None:
     raw = raw_plan(SUCCESS)
     raw["steps"].append(
         {"id": "s9", "capability": "compare_groups", "inputs": {"values": "s3", "flags": "s4"}}
     )  # s4 is a volatility series, not flags
-    assert "G05" in validate(raw, catalog).codes()
+    assert "G04" in validate(raw, catalog).codes()
 
 
-# --- G06 BUDGET_EXCEEDED --------------------------------------------------------
+@pytest.mark.parametrize(("outcome", "kind"), [("s2", "price_level"), ("s4", "volatility")])
+def test_g04_the_test_needs_a_return_outcome(outcome: str, kind: str, catalog: Catalog) -> None:
+    raw = raw_plan(SUCCESS)
+    step(raw, "s8")["inputs"]["outcome"] = outcome  # a weekly price level or the volatility
+    report = validate(raw, catalog)
+    assert [i.issue_id for i in report.blocks] == ["G04:s8:outcome"]
+    assert f"kind '{kind}'" in report.blocks[0].message
+    assert "non-stationary, which makes the test invalid" in report.blocks[0].message
+    assert "forward returns (forward_return)" in report.blocks[0].suggestion
+    # Plain returns are a valid outcome too (the same-week comparison).
+    step(raw, "s8")["inputs"]["outcome"] = "s3"
+    assert "G04" not in validate(raw, catalog).codes()
 
 
-def test_g06_too_many_steps(catalog: Catalog) -> None:
+# --- G05 BUDGET_EXCEEDED --------------------------------------------------------
+
+
+def test_g05_too_many_steps(catalog: Catalog) -> None:
     raw = raw_plan(SUCCESS)
     for i in range(9, 17):
-        raw["steps"].append(
-            {"id": f"s{i}", "capability": "summary_stats", "inputs": {"series": "s3"}}
-        )
+        raw["steps"].append({"id": f"s{i}", "capability": "difference",
+                             "inputs": {"series": "s2"}, "params": {"periods": 1}})  # fmt: skip
     assert len(raw["steps"]) == 16
-    assert "G06" in validate(raw, catalog).codes()
-    assert "G06" not in validate(raw, catalog, max_steps=20).codes()
+    assert "G05" in validate(raw, catalog).codes()
+    assert "G05" not in validate(raw, catalog, max_steps=20).codes()
 
 
-def test_g06_too_many_datasets_and_long_request(catalog: Catalog) -> None:
-    assert "G06" in validate(SPREAD_PLAN, catalog, max_datasets=1).codes()
+def test_g05_too_many_datasets_and_long_request(catalog: Catalog) -> None:
+    assert "G05" in validate(SPREAD_PLAN, catalog, max_datasets=1).codes()
     plan = Plan(plan_id="p", request="x" * 3000, **SPREAD_PLAN)
-    assert "G06" in validate_plan(fill_defaults(plan), catalog).codes()
+    assert "G05" in validate_plan(fill_defaults(plan), catalog).codes()
 
 
-# --- G07 UNKNOWN_DATASET --------------------------------------------------------
+# --- G06 UNKNOWN_DATASET --------------------------------------------------------
 
 
-def test_g07_unknown_dataset(catalog: Catalog) -> None:
+def test_g06_unknown_dataset(catalog: Catalog) -> None:
     raw = raw_plan(SUCCESS)
     step(raw, "s1")["params"] = {"dataset_id": "BITCOIN"}
-    assert "G07" in validate(raw, catalog).codes()
+    assert "G06" in validate(raw, catalog).codes()
     raw = raw_plan(SUCCESS)
     raw["dataset_ids"].append("BITCOIN")
-    assert "G07" in validate(raw, catalog).codes()
+    assert "G06" in validate(raw, catalog).codes()
 
 
-# --- G08 RETURNS_ON_RATES -------------------------------------------------------
+# --- G07 RETURNS_ON_RATES -------------------------------------------------------
 
 
-def test_g08_returns_on_rates_replaces_generic_type_error(catalog: Catalog) -> None:
+def test_g07_returns_on_rates_replaces_generic_type_error(catalog: Catalog) -> None:
     raw = {
         "dataset_ids": ["DGS10"],
         "steps": [
@@ -281,83 +244,76 @@ def test_g08_returns_on_rates_replaces_generic_type_error(catalog: Catalog) -> N
         ],  # fmt: skip
     }
     report = validate(raw, catalog)
-    assert "G08" in report.codes() and report.is_blocked
-    assert "G05" not in report.codes()  # the specific guardrail wins
-    g08 = next(i for i in report.issues if i.code == "G08")
-    assert "difference" in g08.suggestion
+    assert "G07" in report.codes() and report.is_blocked
+    assert "G04" not in report.codes()  # the specific guardrail wins
+    g07 = next(i for i in report.issues if i.code == "G07")
+    assert "difference" in g07.suggestion
 
 
-# --- G09 FREQUENCY_MISMATCH -----------------------------------------------------
+# --- G08 FREQUENCY_MISMATCH -----------------------------------------------------
 
 
-def test_g09_daily_vix_flags_against_weekly_returns(catalog: Catalog) -> None:
+def test_g08_daily_vix_flags_against_weekly_returns(catalog: Catalog) -> None:
     report = validate(raw_plan("frequency_mismatch_block"), catalog)
-    assert report.is_blocked and report.codes() == ["G09", "G12"]
-    g09 = next(i for i in report.issues if i.code == "G09")
-    assert g09.step_id == "s6"  # the compare_groups step
-    assert "'flags' is daily" in g09.message
-    assert "Resample VIXCLS to weekly" in g09.suggestion
+    assert report.is_blocked and report.codes() == ["G08", "G10"]
+    g08 = next(i for i in report.issues if i.code == "G08")
+    assert g08.step_id == "s6"  # the compare_groups step
+    assert "'flags' is daily" in g08.message
+    assert "Resample VIXCLS to weekly" in g08.suggestion
 
 
-def test_g09_spread_of_weekly_and_daily_series(catalog: Catalog) -> None:
+def test_g08_spread_of_weekly_and_daily_series(catalog: Catalog) -> None:
     raw = {"dataset_ids": ["DGS10", "DGS2"], "steps": [dict(s) for s in SPREAD_PLAN["steps"]]}
     raw["steps"].insert(2, {"id": "s1w", "capability": "resample", "inputs": {"series": "s1"},
                             "params": {"freq": "W"}})  # fmt: skip
     step(raw, "s3")["inputs"] = {"a": "s1w", "b": "s2"}  # weekly 10y minus daily 2y
-    assert "G09" in validate(raw, catalog).codes()
+    assert "G08" in validate(raw, catalog).codes()
 
 
-# --- G10 LOOK_AHEAD, G12 MATERIAL_ASSUMPTION ------------------------------------
+# --- G09 LOOK_AHEAD, G10 MATERIAL_ASSUMPTION ------------------------------------
 
 
-def test_g10_full_sample_threshold_needs_approval_and_explains_why(catalog: Catalog) -> None:
+def test_g09_full_sample_threshold_needs_approval_and_explains_why(catalog: Catalog) -> None:
     report = validate(raw_plan("volatility_flag_lookahead"), catalog)
     assert not report.is_blocked
-    assert [i.issue_id for i in report.approvals_required] == [RETURN_METHOD_APPROVAL, "G10:s5"]
-    g10 = report.approvals_required[1]
-    assert "judges past weeks using information from the future" in g10.message
-    assert "expanding" in g10.suggestion
+    assert [i.issue_id for i in report.approvals_required] == [RETURN_METHOD_APPROVAL, "G09:s5"]
+    g09 = report.approvals_required[1]
+    assert "judges past weeks using information from the future" in g09.message
+    assert "expanding" in g09.suggestion
 
 
-def test_g10_says_when_it_also_invalidates_the_significance_test(catalog: Catalog) -> None:
+def test_g09_says_when_it_also_invalidates_the_significance_test(catalog: Catalog) -> None:
     # The flagship demo edit: scenario 1's flags switched to a full-sample threshold.
     raw = raw_plan(SUCCESS)
     step(raw, "s5")["params"]["method"] = "full_sample"
     report = validate(raw, catalog)
     assert not report.is_blocked
-    g10 = next(i for i in report.approvals_required if i.code == "G10")
-    assert g10.issue_id == "G10:s5"  # unchanged id: the message is extra, the approval the same
-    assert "It also invalidates the significance test in s8" in g10.message
-    assert "would not have been" in g10.message
+    g09 = next(i for i in report.approvals_required if i.code == "G09")
+    assert g09.issue_id == "G09:s5"  # unchanged id: the message is extra, the approval the same
+    assert "It also invalidates the significance test in s8" in g09.message
+    assert "would not have been" in g09.message
     # Without a test downstream (scenario 2), the message does not mention one.
     plain = validate(raw_plan("volatility_flag_lookahead"), catalog).approvals_required[1]
     assert "significance test" not in plain.message
 
 
-def test_g12_message_names_the_chosen_value(catalog: Catalog) -> None:
+def test_g10_message_names_the_chosen_value(catalog: Catalog) -> None:
     issues = validate(raw_plan(SUCCESS), catalog).approvals_required
-    assert [i.code for i in issues] == ["G12", "G12"]
+    assert [i.code for i in issues] == ["G10", "G10"]
     assert "method='log'" in issues[0].message  # compute_returns, for the volatility
-    assert "method='simple'" in issues[1].message  # forward_return applies G12 the same way
+    assert "method='simple'" in issues[1].message  # forward_return applies G10 the same way
 
 
-# --- G11 OVERLAPPING_OBSERVATIONS -------------------------------------------------
+# --- G11 PLANNER_REFUSED --------------------------------------------------------
 
 
-def test_g11_warns_on_multi_period_forward_returns(catalog: Catalog) -> None:
-    # The flagship demo edit: next-4-week forward returns instead of next-week ones.
-    raw = raw_plan(SUCCESS)
-    step(raw, "s6")["params"]["horizon"] = 4
-    report = validate(raw, catalog)
-    assert not report.is_blocked
-    assert [i.issue_id for i in report.warnings] == ["G11:s6"]
-    assert "4-week forward returns are computed every week" in report.warnings[0].message
-    assert "share 3 weeks" in report.warnings[0].message
-    # One-period forward returns do not overlap (scenario 1 as written).
-    assert "G11" not in validate(raw_plan(SUCCESS), catalog).codes()
+@pytest.mark.parametrize("scenario_id", ["arima_forecast_block", "prompt_injection_block"])
+def test_g11_refusal(scenario_id: str, catalog: Catalog) -> None:
+    report = validate(raw_plan(scenario_id), catalog)
+    assert report.codes() == ["G11"] and report.is_blocked
 
 
-# --- G15 FORWARD_DATA_AS_SIGNAL ---------------------------------------------------
+# --- G12 FORWARD_DATA_AS_SIGNAL ---------------------------------------------------
 
 
 @pytest.mark.parametrize(
@@ -368,13 +324,12 @@ def test_g11_warns_on_multi_period_forward_returns(catalog: Catalog) -> None:
         ("compute_returns", {"series": "s6"}, {"method": "log"}),
         ("difference", {"series": "s6"}, {"periods": 1}),
         ("spread", {"a": "s6", "b": "s3"}, {}),
-        ("summary_stats", {"series": "s6"}, {}),
-        ("filter_period", {"series": "s6"}, {"start": "2020-01-01"}),
+        ("resample", {"series": "s6"}, {"freq": "M"}),
         ("compare_groups", {"values": "s3", "flags": "s6"}, {}),
         ("hac_mean_difference", {"outcome": "s3", "flags": "s6"}, {}),
     ],
 )
-def test_g15_forward_returns_are_only_an_outcome(
+def test_g12_forward_returns_are_only_an_outcome(
     capability: str, inputs: dict[str, str], params: dict[str, Any], catalog: Catalog
 ) -> None:
     raw = raw_plan(SUCCESS)
@@ -382,91 +337,9 @@ def test_g15_forward_returns_are_only_an_outcome(
                          "params": params})  # fmt: skip
     report = validate(raw, catalog)
     forward_input = next(name for name, ref in inputs.items() if ref == "s6")
-    assert [i.issue_id for i in report.blocks] == [f"G15:s9:{forward_input}"]
+    assert [i.issue_id for i in report.blocks] == [f"G12:s9:{forward_input}"]
     assert "can only be used as an outcome, never to build a signal" in report.blocks[0].message
-    assert "G05" not in report.codes()  # the specific guardrail replaces the generic one
-
-
-# --- G16 NONSTATIONARY_OUTCOME ----------------------------------------------------
-
-
-@pytest.mark.parametrize(("outcome", "kind"), [("s2", "price_level"), ("s4", "volatility")])
-def test_g16_the_test_needs_a_return_outcome(outcome: str, kind: str, catalog: Catalog) -> None:
-    raw = raw_plan(SUCCESS)
-    step(raw, "s8")["inputs"]["outcome"] = outcome  # a weekly price level or the volatility
-    report = validate(raw, catalog)
-    assert [i.issue_id for i in report.blocks] == ["G16:s8"]
-    assert f"kind '{kind}'" in report.blocks[0].message
-    assert "non-stationary" in report.blocks[0].message
-    assert "G05" not in report.codes()
-    # Plain returns are a valid outcome too (the same-week comparison).
-    step(raw, "s8")["inputs"]["outcome"] = "s3"
-    assert "G16" not in validate(raw, catalog).codes()
-
-
-# --- G17 HAC_LAG_TOO_SHORT --------------------------------------------------------
-
-
-@pytest.mark.parametrize(
-    ("horizon", "maxlags", "warns"),
-    [(4, 1, True), (4, 2, True), (4, 3, False), (4, None, False), (1, 0, False)],
-)
-def test_g17_lags_below_the_overlap_warn(
-    horizon: int, maxlags: int | None, warns: bool, catalog: Catalog
-) -> None:
-    raw = raw_plan(SUCCESS)
-    step(raw, "s6")["params"]["horizon"] = horizon
-    step(raw, "s8")["params"] = {"maxlags": maxlags}
-    report = validate(raw, catalog)
-    g17 = [i for i in report.issues if i.code == "G17"]
-    assert [i.issue_id for i in g17] == (["G17:s8"] if warns else [])
-    if warns:
-        assert g17[0].severity == Severity.WARN and not report.is_blocked
-        assert f"maxlags={maxlags} is below h-1 = 3" in g17[0].message
-        assert "too optimistic" in g17[0].message
-
-
-# --- G13 PLANNER_REFUSED --------------------------------------------------------
-
-
-@pytest.mark.parametrize("scenario_id", ["arima_forecast_block", "prompt_injection_block"])
-def test_g13_refusal(scenario_id: str, catalog: Catalog) -> None:
-    report = validate(raw_plan(scenario_id), catalog)
-    assert report.codes() == ["G13"] and report.is_blocked
-
-
-# --- G14 WINDOW_UNITS_CHANGED ---------------------------------------------------
-
-
-def edited_plan(changes: dict[str, dict[str, Any]]) -> tuple[Plan, Plan]:
-    """(proposal, edited copy) of scenario 1, with `changes` applied to the copy."""
-    proposal = fill_defaults(Plan(plan_id="p", request="r", **raw_plan(SUCCESS)))
-    edited = proposal.model_copy(deep=True)
-    for step in edited.steps:
-        step.params.update(changes.get(step.id, {}))
-    return proposal, edited
-
-
-def test_g14_weekly_to_daily_keeps_windows_in_the_wrong_units(catalog: Catalog) -> None:
-    proposal, edited = edited_plan({"s2": {"freq": "D"}})
-    report = validate_plan(edited, catalog, baseline=proposal)
-    g14 = [i for i in report.issues if i.code == "G14"]
-    # forward_return's horizon is counted in periods too: 1 week becomes 1 trading day.
-    assert [i.issue_id for i in g14] == ["G14:s4:window", "G14:s5:min_periods", "G14:s6:horizon"]
-    assert all(i.severity == Severity.WARN for i in g14) and not report.is_blocked
-    assert g14[0].message == (
-        "Frequency changed from weekly to daily: window 12 now means 12 trading days, not 12 weeks."
-    )
-    assert g14[0].suggestion == "Consider 60 for roughly 12 weeks."
-    assert report.dry_run["s4"]["frequency"] == "D"  # the dry run follows the edit
-
-
-def test_g14_is_silent_when_the_window_is_adjusted_or_there_is_no_edit(catalog: Catalog) -> None:
-    proposal, edited = edited_plan({"s2": {"freq": "D"}, "s4": {"window": 60}})
-    codes = [i.issue_id for i in validate_plan(edited, catalog, baseline=proposal).issues]
-    assert "G14:s4:window" not in codes and "G14:s5:min_periods" in codes
-    assert "G14" not in validate_plan(edited, catalog).codes()  # no baseline: fresh plan
-    assert "G14" not in validate_plan(proposal, catalog, baseline=proposal).codes()
+    assert "G04" not in report.codes()  # the specific guardrail replaces the generic one
 
 
 # --- dry run and tool schema ----------------------------------------------------
@@ -482,10 +355,6 @@ def test_dry_run_propagates_metadata(catalog: Catalog) -> None:
     mismatch = validate(raw_plan("frequency_mismatch_block"), catalog).dry_run
     assert mismatch["s6"]["data_type"] == "table"
     assert mismatch["s6"]["dataset_ids"] == ["NASDAQCOM", "VIXCLS"]
-    # filter_period keeps its input's kind and frequency; find_extremes gives a table.
-    period = validate(canned_plan("nasdaq_volatility_peak_since_2020"), catalog).dry_run
-    assert (period["s5"]["kind"], period["s5"]["frequency"]) == ("volatility", "W")
-    assert period["s6"]["data_type"] == "table" and period["s6"]["kind"] is None
 
 
 def test_tool_schema_excludes_system_fields_and_has_no_refs() -> None:

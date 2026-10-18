@@ -100,7 +100,7 @@ class Approval(BaseModel):
     """A user's approval of one APPROVAL issue.
 
     Fields:
-        issue_id: the approved issue's id, e.g. "G12:s2:return_method".
+        issue_id: the approved issue's id, e.g. "G10:s2:return_method".
         code: guardrail code.
         step_id: step concerned.
         message: the exact issue text that was approved.

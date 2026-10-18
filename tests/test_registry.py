@@ -11,9 +11,10 @@ import re
 from quantlab import capabilities
 from quantlab.registry import REGISTRY, capability_code, llm_summary, registry_version
 
-# Every capability code ever assigned. Codes are permanent: a code is never
-# renumbered or reused. Add a new capability's code here; when a capability is
-# retired, move its entry to RETIRED_CODES instead of deleting it.
+# Every capability code assigned since the codes were renumbered with the registry
+# simplification (docs/DECISIONS.md lists the earlier ones). From then on codes are
+# permanent: a code is never renumbered or reused. Add a new capability's code here;
+# when a capability is retired, move its entry to RETIRED_CODES instead of deleting it.
 ASSIGNED_CODES = {
     "C01": "load_series",
     "C02": "resample",
@@ -22,12 +23,9 @@ ASSIGNED_CODES = {
     "C05": "spread",
     "C06": "rolling_volatility",
     "C07": "flag_regime",
-    "C08": "summary_stats",
+    "C08": "forward_return",
     "C09": "compare_groups",
-    "C10": "filter_period",
-    "C11": "find_extremes",
-    "C12": "forward_return",
-    "C13": "hac_mean_difference",
+    "C10": "hac_mean_difference",
 }
 RETIRED_CODES: dict[str, str] = {}
 
@@ -92,11 +90,19 @@ def test_llm_summary_is_complete_and_hides_internals() -> None:
     returns = by_name["compute_returns"]
     assert returns["params"][0]["choices"] == ["simple", "log"]
     assert returns["inputs"][0]["kinds"] == ["price_level", "index_level"]
-    period = by_name["filter_period"]
-    assert [(p["name"], p["type"], p.get("nullable")) for p in period["params"]] == [
-        ("start", "date", True),
-        ("end", "date", True),
-    ]
+
+
+def test_window_parameters_state_their_unit() -> None:
+    """A window counts periods of the input's frequency: weeks on weekly data, days on daily."""
+    by_name = {c["name"]: c for c in json.loads(llm_summary())}
+    window = by_name["rolling_volatility"]["params"][0]
+    min_periods = by_name["flag_regime"]["params"][2]
+    assert (window["name"], min_periods["name"]) == ("window", "min_periods")
+    for p in (window, min_periods):
+        assert p["unit"] == "periods of the input frequency"
+        assert "counted in periods of the input's frequency" in p["description"]
+    assert "(12 = 12 weeks on weekly data, 12 trading days on daily data)" in window["description"]
+    assert "52 trading days on daily data" in min_periods["description"]
 
 
 def test_registry_version_is_a_stable_hash() -> None:

@@ -99,7 +99,7 @@ def cmd_demo(args: argparse.Namespace, settings: Settings) -> int:
     mock mode the plans are the canned ones, so both the status and the issue
     codes must match. With a real LLM (live/cached) only the status is checked:
     the LLM may legitimately block for a different reason, e.g. refuse scenario 5
-    outright (G13) instead of proposing a plan that the validator blocks (G09).
+    outright (G11) instead of proposing a plan that the validator blocks (G08).
     Running it in live mode also fills the plan cache for later cached-mode sessions.
     """
     rows = []

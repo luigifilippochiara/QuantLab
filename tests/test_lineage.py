@@ -5,7 +5,6 @@ import json
 
 from quantlab.config import Settings
 from quantlab.data import Catalog
-from quantlab.engine import run_request
 from quantlab.executor import StepRecord, execute_plan
 from quantlab.guardrails import validate_plan
 from quantlab.lineage import (
@@ -21,7 +20,6 @@ from quantlab.lineage import (
     step_capability_code,
     trace,
 )
-from quantlab.mock_scenarios import CANNED_REQUESTS_BY_ID
 from quantlab.monitoring import read_events
 from quantlab.registry import REGISTRY, registry_version
 
@@ -90,7 +88,7 @@ def test_replay_detects_changed_data(settings: Settings, catalog: Catalog) -> No
 def test_trace_walks_back_to_the_source_file(settings: Settings, catalog: Catalog) -> None:
     record = run_and_save(SPREAD_PLAN, settings, catalog)
     result = trace(record, "s3")  # the spread
-    # s3 <- s1, s2 (load); s4 (summary statistics) comes later, so it is not an ancestor.
+    # s3 <- s1, s2 (load); s4 (the daily changes) comes later, so it is not an ancestor.
     assert [step.step_id for step in result.chain] == ["s3", "s2", "s1"]
     assert {source.dataset_id for source in result.sources} == {"DGS10", "DGS2"}
     dgs10 = next(source for source in result.sources if source.dataset_id == "DGS10")
@@ -134,25 +132,6 @@ def test_scenario_6_trace_from_the_test_back_to_the_nasdaq_file(
     assert source.start and source.end and source.rows_used
 
 
-def test_replay_of_a_period_and_extremes_run_matches(settings: Settings) -> None:
-    """Both new capabilities replay identically; the manifest keeps the resolved period."""
-    canned = CANNED_REQUESTS_BY_ID["nasdaq_volatility_peak_since_2020"]
-    session = run_request(canned.request, list(canned.dataset_ids), "mock", approve=True,
-                          settings=settings)  # fmt: skip
-    assert session.status == "completed"
-
-    record = load_run(session.run_id, settings.runs_dir)
-    period = next(step for step in record.steps if step.capability == "filter_period")
-    assert period.meta["period_start"] == "2020-01-01"
-    assert period.meta["period_end"] == period.end  # the last weekly observation
-    extremes = settings.runs_dir / session.run_id / "outputs" / "s6_find_extremes.json"
-    assert json.loads(extremes.read_text())["max"]["tie_count"] == 1
-
-    report = replay(session.run_id, settings)
-    assert report.all_match, report.message
-    assert [s.capability for s in report.steps][-2:] == ["filter_period", "find_extremes"]
-
-
 def test_manifest_records_each_steps_capability_code(settings: Settings, catalog: Catalog) -> None:
     record = run_and_save(SCENARIO_1, settings, catalog)
     manifest = json.loads((settings.runs_dir / record.run_id / "manifest.json").read_text())
@@ -168,8 +147,9 @@ def test_manifest_records_the_forward_horizon_and_method(
     manifest = json.loads((settings.runs_dir / record.run_id / "manifest.json").read_text())
     forward = manifest["steps"][5]
     assert forward["capability"] == "forward_return"
-    assert forward["params"] == {"method": "simple", "horizon": 1}
+    assert forward["params"] == {"method": "simple"}  # no horizon parameter: always one week
     assert (forward["meta"]["horizon"], forward["meta"]["return_method"]) == (1, "simple")
+    assert manifest["steps"][7]["params"] == {}  # the lag is always set by the rule
     assert manifest["steps"][7]["meta"]["horizon"] == 1  # inherited by the test's table
     test = settings.runs_dir / record.run_id / "outputs" / "s8_hac_mean_difference.json"
     assert {"p_value", "se_hac", "maxlags_used", "n_episodes_flagged"} <= set(
@@ -194,7 +174,7 @@ def test_manifests_from_before_codes_still_replay_and_trace(
     report = replay(record.run_id, settings)
     assert report.all_match, report.message
     assert [step.capability_code for step in report.steps] == [
-        "C01", "C02", "C03", "C06", "C07", "C12", "C09", "C13"
+        "C01", "C02", "C03", "C06", "C07", "C08", "C09", "C10"
     ]  # fmt: skip
     chain = trace(old, "s5").chain
     assert [step.capability_code for step in chain] == ["C07", "C06", "C03", "C02", "C01"]

@@ -92,8 +92,8 @@ class Fact(BaseModel):
     """One computed number (or date) the narrator may use.
 
     Fields:
-        fact_id: stable id, e.g. "s3.mean".
-        label: what it is, e.g. "s3 summary_stats mean".
+        fact_id: stable id, e.g. "s7.mean_flagged".
+        label: what it is, e.g. "s7 compare_groups mean flagged".
         value: the exact computed value.
         display: the rounded text the narrator must use, e.g. "0.0005631".
     """
@@ -205,22 +205,15 @@ def build_facts_sheet(plan: Plan, artifacts: dict[str, Artifact]) -> list[Fact]:
             add(step.id, cap, "start", meta.start)
             add(step.id, cap, "end", meta.end)
             add(step.id, cap, "last_value", float(artifact.value.iloc[-1]))
-            if meta.period_start is not None:  # filter_period: the resolved interval
-                add(step.id, cap, "period_start", meta.period_start)
-                add(step.id, cap, "period_end", meta.period_end)
         elif artifact.data_type == DataType.FLAGS:
             flags = artifact.value
             add(step.id, cap, "n_obs", meta.n_obs)
             add(step.id, cap, "n_flagged", int(flags.sum()))
             add(step.id, cap, "share_flagged", float(flags.mean()))
             add(step.id, cap, "n_episodes", count_episodes(flags))
-        else:  # TABLE: named scalars, or named rows such as find_extremes' "max"
+        else:  # TABLE: named scalars
             for key, value in artifact.value.items():
-                if isinstance(value, dict):  # e.g. "max_date", "max_value", "max_tie_count"
-                    for column, cell in value.items():
-                        add(step.id, cap, f"{key}_{column}", cell)
-                else:
-                    add(step.id, cap, key, value)
+                add(step.id, cap, key, value)
     return facts
 
 
@@ -356,13 +349,6 @@ def check_grounding(
 # ---------------------------------------------------------------------------
 
 
-def _input_name(step: Any, artifacts: dict[str, Artifact]) -> str:
-    """Name the series a step summarised, e.g. "the returns series (s2)"."""
-    source = step.inputs.get("series", "")
-    kind = artifacts[source].meta.kind if source in artifacts else None
-    return f"the {kind} series ({source})" if kind else f"the series ({source})"
-
-
 def template_narrative(
     plan: Plan, artifacts: dict[str, Artifact], facts: list[Fact], issues: list[Issue]
 ) -> str:
@@ -392,7 +378,7 @@ def template_narrative(
         if step.id not in artifacts:
             continue
         sid, cap = step.id, step.capability
-        # d: this step's facts by short name, e.g. d["mean"] == "0.0005631".
+        # d: this step's facts by short name, e.g. d["mean_flagged"] == "0.002093".
         d = {
             fact.fact_id.removeprefix(f"{sid}."): fact.display
             for fact in facts
@@ -437,28 +423,6 @@ def template_narrative(
                 "distinct episodes, the real measure of independent evidence because flagged "
                 "periods cluster; the test describes an association in this sample, not a "
                 "cause or a forecast."
-            )
-        elif cap == "filter_period":
-            sentences.append(
-                f"The selected period ({sid}) runs from {d['period_start']} to "
-                f"{d['period_end']} and holds {d['n_obs']} observations."
-            )
-        elif cap == "find_extremes":
-            parts = []
-            for extreme, word in (("max", "maximum"), ("min", "minimum")):
-                if f"{extreme}_date" not in d:
-                    continue
-                part = f"its {word} was {d[extreme + '_value']} on {d[extreme + '_date']}"
-                if artifacts[sid].value[extreme]["tie_count"] > 1:
-                    part += f" (the earliest of {d[extreme + '_tie_count']} dates with that value)"
-                parts.append(part)
-            sentences.append(f"For {_input_name(step, artifacts)}, {' and '.join(parts)}.")
-        elif cap == "summary_stats":
-            what = _input_name(step, artifacts)
-            sentences.append(
-                f"Over {d['count']} observations, {what} has mean {d['mean']}, "
-                f"standard deviation {d['std']}, minimum {d['min']} and maximum {d['max']} "
-                f"(skew {d['skew']}, excess kurtosis {d['excess_kurtosis']})."
             )
 
     warnings = [i for i in issues if i.severity == "WARN"]

@@ -4,7 +4,6 @@ The UI only offers widgets for registered parameters, but every rule is enforced
 here, in the engine, so a crafted call cannot bypass it.
 """
 
-import copy
 from typing import Any
 
 import pytest
@@ -13,10 +12,8 @@ from quantlab.config import Settings
 from quantlab.engine import ExecutionRefusedError, Session
 from quantlab.lineage import Approval, load_run, replay
 from quantlab.mock_scenarios import SCENARIOS_BY_ID
-from quantlab.narrator import build_facts_sheet, narrate
 
-from conftest import PERIOD_PLAN, RETURN_METHOD_APPROVAL, SCENARIO_1_APPROVALS, canned_plan
-from fakes import FakeAnthropicClient, text_response, tool_response
+from conftest import RETURN_METHOD_APPROVAL, SCENARIO_1_APPROVALS
 
 
 def start(settings: Settings, scenario_id: str = "volatility_flag_success") -> Session:
@@ -67,47 +64,29 @@ def test_out_of_range_value_is_blocked_by_the_validator(settings: Settings) -> N
 # --- re-validation through the same validator ------------------------------------
 
 
-def test_switching_to_full_sample_raises_g10_and_switching_back_clears_it(
+def test_switching_to_full_sample_raises_g09_and_switching_back_clears_it(
     settings: Settings,
 ) -> None:
     session = start(settings)
     report = session.apply_param_edits({"s5": {"method": "full_sample"}})
-    assert "G10" in report.codes()
+    assert "G09" in report.codes()
     report = session.apply_param_edits({"s5": {"method": "expanding"}})
-    assert "G10" not in report.codes()
+    assert "G09" not in report.codes()
 
 
-def test_weekly_to_daily_warns_g14_and_runs_after_re_approval(settings: Settings) -> None:
+def test_weekly_to_daily_is_re_validated_and_runs_after_re_approval(settings: Settings) -> None:
+    # The windows keep their values, now counted in trading days instead of weeks
+    # (the registry describes them as periods of the input's frequency).
     session = start(settings)
     report = session.apply_param_edits({"s2": {"freq": "D"}})
-    assert [i.issue_id for i in report.warnings] == [
-        "G14:s4:window", "G14:s5:min_periods", "G14:s6:horizon"
-    ]  # fmt: skip
+    assert report.warnings == [] and not report.is_blocked
+    assert [i.issue_id for i in report.approvals_required] == SCENARIO_1_APPROVALS
+    assert report.dry_run["s4"]["frequency"] == "D"
     session.approve(SCENARIO_1_APPROVALS)
     assert session.execute().status == "completed"
-    assert session.execution.artifacts["s4"].meta.frequency == "D"
-    assert session.execution.artifacts["s4"].meta.notes[0].endswith("sqrt(252)")
-
-
-def test_editing_filter_period_dates(settings: Settings) -> None:
-    """Date edits go through the same validator; no date at all, or start after end, is a G03."""
-    client = FakeAnthropicClient(tool_response(copy.deepcopy(PERIOD_PLAN)))
-    session = Session.start("NASDAQ peak since 2021", ["NASDAQCOM"], "live", settings,
-                            client=client)  # fmt: skip
-    session.create_plan()
-    report = session.apply_param_edits({"s2": {"start": None}})  # neither start nor end
-    assert [i.issue_id for i in report.blocks] == ["G03:s2:period"]
-    report = session.apply_param_edits({"s2": {"start": "2020-01-01", "end": "2019-12-31"}})
-    assert [i.issue_id for i in report.blocks] == ["G03:s2:period"]
-    report = session.apply_param_edits({"s2": {"end": "2020-13-01"}})  # no 13th month
-    assert [i.issue_id for i in report.blocks] == ["G03:s2:end"]
-    session.apply_param_edits({"s2": {"end": "2022-12-31"}})
-    assert session.execute().status == "completed"
-    record = session.build_record()
-    assert {(c.param, c.original, c.final) for c in record.param_diff} == {
-        ("start", "2021-01-01", "2020-01-01"),
-        ("end", None, "2022-12-31"),
-    }
+    volatility = session.execution.artifacts["s4"].meta
+    assert volatility.frequency == "D" and volatility.notes[0].endswith("sqrt(252)")
+    assert "over 12 observations" in volatility.notes[0]  # 12 trading days
 
 
 # --- approvals belong to one plan version ----------------------------------------
@@ -126,7 +105,7 @@ def test_any_edit_resets_approvals_and_approvals_record_the_plan_hash(settings: 
 
 def test_an_approval_for_another_plan_version_does_not_count(settings: Settings) -> None:
     session = start(settings)
-    stale = Approval(issue_id=RETURN_METHOD_APPROVAL, code="G12", step_id="s3",
+    stale = Approval(issue_id=RETURN_METHOD_APPROVAL, code="G10", step_id="s3",
                      message="m", approved_at="t", plan_hash="another-version")  # fmt: skip
     session.approvals.append(stale)
     assert [i.issue_id for i in session.unresolved_approvals()] == SCENARIO_1_APPROVALS
@@ -141,7 +120,7 @@ def test_reset_to_the_planners_proposal(settings: Settings) -> None:
     session.reset_to_proposal()
     assert session.plan.steps == proposal.steps
     assert session.build_record().param_diff == []
-    assert "G14" not in session.report.codes()
+    assert session.report.codes() == ["G10"]  # the return-method approvals again
 
 
 # --- lineage of edits ------------------------------------------------------------
@@ -170,66 +149,4 @@ def test_edited_run_records_the_diff_traces_it_and_replays_identically(
     assert chain["s3"].edited == {}  # planner-proposed values only
 
     report = replay(session.run_id, settings)  # replays plan_final, without the LLM
-    assert report.all_match, report.message
-
-
-# --- find_extremes: the result has one row per extreme, whatever `which` becomes ---
-
-EXTREME_ROWS = {"max": ["max"], "min": ["min"], "both": ["max", "min"]}
-
-
-@pytest.mark.parametrize(
-    ("proposed", "edited"),
-    [("max", "both"), ("both", "max"), ("max", "min"), ("min", "max"), ("min", "both"),
-     ("both", "min"), ("both", None)],  # None: the planner proposed it, no edit
-)  # fmt: skip
-def test_find_extremes_which_edit_end_to_end(
-    proposed: str, edited: str | None, settings: Settings
-) -> None:
-    """Edit find_extremes.which, then validate, execute, narrate, check, save and replay."""
-    raw = canned_plan("nasdaq_volatility_peak_since_2020")  # needs the G12 approval too
-    raw["steps"][5]["params"]["which"] = proposed
-    request = "Show me the maximum and minimum of NASDAQ weekly volatility since 2020."
-    session = Session.start(request, ["NASDAQCOM"], "live", settings,
-                            client=FakeAnthropicClient(tool_response(raw)))  # fmt: skip
-    session.create_plan()
-    session.approve([RETURN_METHOD_APPROVAL])
-    if edited is not None:
-        first_version = session.plan_hash
-        report = session.apply_param_edits({"s6": {"which": edited}})
-        assert report.codes() == ["G12"] and not report.is_blocked  # same validator
-        assert session.approvals == [] and session.plan_hash != first_version
-        session.approve([RETURN_METHOD_APPROVAL])
-    final = edited or proposed
-
-    result = session.execute()
-    assert result.status == "completed", result.error
-    assert list(result.artifacts["s6"].value) == EXTREME_ROWS[final]
-    facts = {f.fact_id: f.display for f in build_facts_sheet(session.plan, result.artifacts)}
-    assert sorted(k for k in facts if k.startswith("s6.")) == sorted(
-        f"s6.{row}_{column}" for row in EXTREME_ROWS[final]
-        for column in ("date", "value", "tie_count")
-    )  # fmt: skip
-
-    session.mode = "mock"  # the template narrative names every extreme, all grounded
-    narrative = session.narrate()
-    assert narrative.grounding.grounded, narrative.grounding.ungrounded
-    for row in EXTREME_ROWS[final]:
-        assert f"{facts[f's6.{row}_value']} on {facts[f's6.{row}_date']}" in narrative.text
-    llm_text = " ".join(
-        f"The {row} volatility was {facts[f's6.{row}_value']} on {facts[f's6.{row}_date']}."
-        for row in EXTREME_ROWS[final]
-    )
-    llm = narrate(request, session.plan, result.artifacts, [], "live", settings,
-                  client=FakeAnthropicClient(text_response(llm_text)))  # fmt: skip
-    assert llm.source == "llm" and llm.grounding.grounded, llm.grounding.ungrounded
-
-    session.save_record()
-    record = load_run(session.run_id, settings.runs_dir)
-    assert record.plan_original["steps"][5]["params"]["which"] == proposed
-    assert record.plan_final["steps"][5]["params"]["which"] == final
-    changes = [(c.step_id, c.param, c.original, c.final) for c in record.param_diff]
-    assert changes == ([("s6", "which", proposed, edited)] if edited else [])
-    assert record.approvals[0].plan_hash == record.plan_hash
-    report = replay(session.run_id, settings)
     assert report.all_match, report.message

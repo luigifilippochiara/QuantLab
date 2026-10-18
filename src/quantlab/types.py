@@ -25,9 +25,7 @@ class DataType(StrEnum):
 
     SERIES = "series"  # float time series: pd.Series with a DatetimeIndex
     FLAGS = "flags"  # boolean time series: pd.Series of bool with a DatetimeIndex
-    TABLE = "table"
-    # dict of named scalars (e.g. summary statistics), or of named rows that are
-    # dicts of scalars (e.g. find_extremes: {"max": {"date": ..., "value": ...}})
+    TABLE = "table"  # dict of named scalars (e.g. a group comparison or a test's statistics)
 
 
 class SeriesKind(StrEnum):
@@ -37,7 +35,7 @@ class SeriesKind(StrEnum):
     INDEX_LEVEL = "index_level"  # an index that is a level, not an investable price (e.g. VIX)
     RATE_LEVEL = "rate_level"  # an interest rate or yield in percent (use changes, not returns)
     RETURNS = "returns"  # period-on-period returns of a price
-    # The return from t to t+h, stamped at t: future information, so only ever an outcome
+    # The return from t to t+1, stamped at t: future information, so only ever an outcome
     FORWARD_RETURNS = "forward_returns"
     CHANGES = "changes"  # period-on-period differences (the right transform for rates)
     VOLATILITY = "volatility"  # a rolling volatility estimate
@@ -71,12 +69,10 @@ class ArtifactMeta:
         end: last date as ISO string.
         return_method: "simple" or "log" for returns and anything derived from them.
         periods: the lag used by compute_returns / difference (1 = one-period changes).
-        horizon: forward_return's h, the number of periods ahead (also inherited by
+        horizon: forward_return's horizon, always 1 period ahead (also inherited by
             the tables computed from forward returns).
         n_dropped_missing: load_series only, missing values dropped from the raw file.
         notes: human-readable assumptions recorded at run time (e.g. annualisation factor).
-        period_start: filter_period only, first date of the resolved interval (inclusive).
-        period_end: filter_period only, last date of the resolved interval (inclusive).
     """
 
     kind: SeriesKind | None
@@ -90,8 +86,6 @@ class ArtifactMeta:
     horizon: int | None = None
     n_dropped_missing: int | None = None
     notes: list[str] = field(default_factory=list)
-    period_start: str | None = None
-    period_end: str | None = None
 
 
 @dataclass

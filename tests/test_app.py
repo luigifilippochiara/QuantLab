@@ -6,7 +6,6 @@ header, mock-only example workflows and full dataset names on hover.
 """
 
 import dataclasses
-import datetime
 
 import pytest
 from streamlit.testing.v1 import AppTest
@@ -14,7 +13,7 @@ from streamlit.testing.v1 import AppTest
 from quantlab.config import PROJECT_ROOT, Settings
 from quantlab.data import load_catalog
 from quantlab.guardrails import GUARDRAILS, Severity
-from quantlab.mock_scenarios import CANNED_REQUESTS_BY_ID, FLAGSHIP_REQUEST, SCENARIOS_BY_ID
+from quantlab.mock_scenarios import FLAGSHIP_REQUEST, SCENARIOS_BY_ID
 from quantlab.plan import Step
 from quantlab.registry import REGISTRY
 
@@ -62,7 +61,7 @@ def test_scenario_1_full_flow(app_env: Settings) -> None:
     button(app, "Generate plan").click().run()
     assert not app.exception, app.exception
 
-    assert button(app, "Execute").disabled  # the G12 approvals are not ticked yet
+    assert button(app, "Execute").disabled  # the G10 approvals are not ticked yet
     approve_all(app)
     button(app, "Execute").click().run()
     assert not app.exception, app.exception
@@ -72,7 +71,7 @@ def test_scenario_1_full_flow(app_env: Settings) -> None:
     # Results and trace name each capability by code and name.
     results = [e.label for e in app.expander if e.label.startswith("s")]
     assert results[3].startswith("s4 · C06 · rolling_volatility · completed")
-    assert results[7].startswith("s8 · C13 · hac_mean_difference · completed")
+    assert results[7].startswith("s8 · C10 · hac_mean_difference · completed")
     # The significance test's table, every number formatted as in the facts sheet.
     test = next(
         d.value for d in app.dataframe
@@ -82,11 +81,11 @@ def test_scenario_1_full_flow(app_env: Settings) -> None:
         assert statistic in test["statistic"].tolist()
     # The trace starts at the final result, the test with its p-value.
     picker = next(b for b in app.selectbox if b.label == "Step to trace")
-    assert picker.value == "s8" and picker.options[-1] == "s8 · C13 · hac_mean_difference"
+    assert picker.value == "s8" and picker.options[-1] == "s8 · C10 · hac_mean_difference"
     trace = next(d.value for d in app.dataframe if "library call" in d.value.columns)
     assert trace[["step", "code", "capability"]].values.tolist()[:3] == [
-        ["s8", "C13", "hac_mean_difference"],
-        ["s6", "C12", "forward_return"],
+        ["s8", "C10", "hac_mean_difference"],
+        ["s6", "C08", "forward_return"],
         ["s5", "C07", "flag_regime"],
     ]
     subheaders = [h.value for h in app.subheader]
@@ -236,7 +235,7 @@ def plan_scenario_1(app_env: Settings) -> AppTest:
     return app
 
 
-def test_weekly_to_daily_edit_warns_and_runs_after_re_approval(app_env: Settings) -> None:
+def test_weekly_to_daily_edit_re_validates_and_runs_after_re_approval(app_env: Settings) -> None:
     app = plan_scenario_1(app_env)
     assert any("adjust parameters below" in i.value for i in app.info)
     window = next(n for n in app.number_input if n.key.endswith("-s4-window"))
@@ -247,7 +246,7 @@ def test_weekly_to_daily_edit_warns_and_runs_after_re_approval(app_env: Settings
     assert any(c.value == "Apply or reset your parameter changes to continue." for c in app.caption)
 
     button(app, "Apply changes").click().run()
-    assert issue_codes(app) == {"G12", "G14"}
+    assert issue_codes(app) == {"G10"}  # the return-method approvals again, nothing else
     assert any("Approvals were reset" in i.value for i in app.info)
     assert any("edited (was W)" in c.value for c in app.caption)
 
@@ -260,71 +259,13 @@ def test_weekly_to_daily_edit_warns_and_runs_after_re_approval(app_env: Settings
     assert "(edited" not in params["s4"]  # planner-proposed values are not marked
 
 
-def test_full_sample_edit_raises_g10_and_reset_clears_it(app_env: Settings) -> None:
+def test_full_sample_edit_raises_g09_and_reset_clears_it(app_env: Settings) -> None:
     app = plan_scenario_1(app_env)
     next(s for s in app.selectbox if s.key.endswith("-s5-method")).select("full_sample").run()
     button(app, "Apply changes").click().run()
-    assert issue_codes(app) == {"G10", "G12"}
+    assert issue_codes(app) == {"G09", "G10"}
     button(app, "Reset to planner").click().run()
-    assert issue_codes(app) == {"G12"}
-
-
-def test_period_editing_with_date_widgets_and_extremes_table(app_env: Settings) -> None:
-    app = open_page("analysis.py")
-    request = CANNED_REQUESTS_BY_ID["nasdaq_volatility_peak_since_2020"].request
-    app.text_area(key="request_text").input(request).run()
-    button(app, "Generate plan").click().run()
-    # Nullable dates: a "Set" checkbox, then a date input.
-    assert [(c.label, c.value) for c in app.checkbox if c.key.endswith("-set")] == [
-        ("Set start", True), ("Set end", False),
-    ]  # fmt: skip
-    (start,) = app.date_input
-    assert start.label == "start" and start.value == datetime.date(2020, 1, 1)
-
-    next(c for c in app.checkbox if c.key.endswith("end-set")).check().run()
-    next(d for d in app.date_input if d.key.endswith("-end")).set_value(
-        datetime.date(2019, 6, 30)
-    ).run()
-    button(app, "Apply changes").click().run()
-    assert issue_codes(app) == {"G03", "G12"}  # the end is before the start
-
-    next(c for c in app.checkbox if c.key.endswith("end-set")).uncheck().run()
-    next(d for d in app.date_input if d.key.endswith("-start")).set_value(
-        datetime.date(2021, 1, 1)
-    ).run()
-    button(app, "Apply changes").click().run()
-    assert issue_codes(app) == {"G12"}
-
-    app.checkbox(key=next(c.key for c in app.checkbox if c.key.startswith("approve-"))).check()
-    app.run()
-    button(app, "Execute").click().run()
-    assert not app.exception, app.exception
-    table = next(d.value for d in app.dataframe if "extreme" in d.value.columns)
-    assert list(table.columns) == ["extreme", "date", "value", "tie_count"]
-    assert table["extreme"].tolist() == ["max"] and table["date"].iloc[0] >= "2021-01-01"
-    trace = next(d.value for d in app.dataframe if "library call" in d.value.columns)
-    params = dict(zip(trace["step"], trace["params"], strict=True))
-    assert "start=2021-01-01 (edited, was 2020-01-01)" in params["s5"]
-
-
-@pytest.mark.parametrize(("edited", "rows"), [("both", ["max", "min"]), ("min", ["min"])])
-def test_find_extremes_which_edit_in_the_editor(
-    edited: str, rows: list[str], app_env: Settings
-) -> None:
-    app = open_page("analysis.py")
-    # Its plan ends in find_extremes(which="max") at s6, after a G12 approval.
-    request = CANNED_REQUESTS_BY_ID["nasdaq_volatility_peak_since_2020"].request
-    app.text_area(key="request_text").input(request).run()
-    button(app, "Generate plan").click().run()
-    next(s for s in app.selectbox if s.key.endswith("-s6-which")).select(edited).run()
-    button(app, "Apply changes").click().run()
-    app.checkbox(key=next(c.key for c in app.checkbox if c.key.startswith("approve-"))).check()
-    app.run()
-    button(app, "Execute").click().run()
-    assert not app.exception, app.exception
-    table = next(d.value for d in app.dataframe if "extreme" in d.value.columns)
-    assert table["extreme"].tolist() == rows
-    assert any("numbers verified" in s.value for s in app.success)
+    assert issue_codes(app) == {"G10"}
 
 
 def step_headers(app: AppTest) -> list[tuple[str, bool]]:
@@ -335,39 +276,36 @@ def step_headers(app: AppTest) -> list[tuple[str, bool]]:
 def test_plan_steps_are_collapsed_and_approvals_stay_in_validation(app_env: Settings) -> None:
     app = plan_scenario_1(app_env)
     headers = step_headers(app)
-    assert [is_open for _, is_open in headers] == [False] * 8  # the G12 steps too
+    assert [is_open for _, is_open in headers] == [False] * 8  # the G10 steps too
     assert headers[0][0] == "Step 1 · C01 · Load series · NASDAQCOM — Synthetic equity index"
     assert headers[2][0] == "Step 3 · C03 · Compute returns · method: log, periods: 1"  # no badge
     assert headers[3][0] == "Step 4 · C06 · Rolling volatility · window: 12 weeks, annualize: yes"
-    assert headers[5][0] == "Step 6 · C12 · Forward return · horizon: 1 week, method: simple"
-    assert headers[7][0] == "Step 8 · C13 · HAC mean difference"  # maxlags unset: no summary
-    # The G12 approvals are still required, in the Validation section, naming their steps.
-    g12 = [m.value for m in app.markdown if "**G12 MATERIAL_ASSUMPTION**" in m.value]
-    assert g12[0].endswith("· Step 3 · C03 · Compute returns (s3)")
-    assert g12[1].endswith("· Step 6 · C12 · Forward return (s6)")
+    assert headers[5][0] == "Step 6 · C08 · Forward return · method: simple"
+    assert headers[7][0] == "Step 8 · C10 · HAC mean difference"  # no parameters: no summary
+    # The G10 approvals are still required, in the Validation section, naming their steps.
+    g10 = [m.value for m in app.markdown if "**G10 MATERIAL_ASSUMPTION**" in m.value]
+    assert g10[0].endswith("· Step 3 · C03 · Compute returns (s3)")
+    assert g10[1].endswith("· Step 6 · C08 · Forward return (s6)")
     assert len([c for c in app.checkbox if c.key.startswith("approve-")]) == 2
     assert button(app, "Execute").disabled
     # Collapsing is visual only: the editor still runs.
     assert next(n for n in app.number_input if n.key.endswith("-s4-window")).value == 12
 
 
-def test_edits_are_marked_and_steps_with_new_findings_open(app_env: Settings) -> None:
+def test_edits_are_marked_and_window_units_follow_the_frequency(app_env: Settings) -> None:
     app = plan_scenario_1(app_env)
     next(s for s in app.selectbox if s.key.endswith("-s2-freq")).select("D").run()
     button(app, "Apply changes").click().run()
     headers = step_headers(app)
     assert headers[1] == ("Step 2 · C02 · Resample · freq: D, how: last :blue-badge[:material/"
                           "edit: edited]", False)  # fmt: skip
-    # Window 12 now counts trading days: G14 warns on both steps, which open.
-    assert headers[3][1] and headers[3][0].startswith(
-        "Step 4 · C06 · Rolling volatility · window: 12 trading days, annualize: yes"
+    # Window 12 now counts trading days: the summary says so, and nothing warns.
+    assert headers[3] == (
+        "Step 4 · C06 · Rolling volatility · window: 12 trading days, annualize: yes",
+        False,
     )
-    assert headers[4][1] and "Warning]" in headers[3][0] and "Warning]" in headers[4][0]
-    # The forward horizon is counted in periods too: 1 week became 1 trading day.
-    assert headers[5][1] and headers[5][0].startswith(
-        "Step 6 · C12 · Forward return · horizon: 1 trading day, method: simple"
-    )
-    # The new G12 approvals of this plan version open nothing and add no badge.
+    assert not any("Warning]" in label for label, _ in headers)
+    # The new G10 approvals of this plan version open nothing and add no badge.
     assert headers[2] == ("Step 3 · C03 · Compute returns · method: log, periods: 1", False)
 
 

@@ -1,6 +1,6 @@
 """Capability functions: the pre-written, tested quantitative building blocks.
 
-Role in the architecture: these 11 functions are the ONLY code that calls
+Role in the architecture: these functions are the ONLY code that calls
 pandas / numpy / statsmodels for analysis. A plan can only *name* one of them
 (via the registry in registry.py); it can never supply code. Each function:
 
@@ -12,8 +12,8 @@ pandas / numpy / statsmodels for analysis. A plan can only *name* one of them
 
 Conventions:
 - SERIES and FLAGS artifacts never contain NaN. Warm-up periods (e.g. the first
-  window-1 points of a rolling statistic) and forward_return's last h points
-  (no future price yet) are dropped, so `n_obs` is always the number of usable
+  window-1 points of a rolling statistic) and forward_return's last point (no
+  future price yet) are dropped, so `n_obs` is always the number of usable
   values and joins are plain inner joins.
 - Observation-count rules (min_obs) are enforced by the executor before a
   function is called; functions only raise ValueError for inputs that make the
@@ -62,16 +62,14 @@ def derive_meta(base: ArtifactMeta, value: pd.Series | None, **changes: Any) -> 
         **changes: fields to override, e.g. kind=SeriesKind.RETURNS.
 
     Returns:
-        A new ArtifactMeta. Notes and the filter_period interval are NOT inherited:
-        each artifact describes only the step that produced it (the trace shows
-        the chain).
+        A new ArtifactMeta. Notes are NOT inherited: each artifact describes only
+        the step that produced it (the trace shows the chain).
     """
     span: dict[str, Any] = {}
     if value is not None:
         n_obs, start, end = date_span(value)
         span = {"n_obs": n_obs, "start": start, "end": end}
-    step_only = {"notes": [], "period_start": None, "period_end": None}
-    return replace(base, **{**step_only, **span, **changes})
+    return replace(base, **{"notes": [], **span, **changes})
 
 
 def inner_join(left: pd.Series, right: pd.Series, names: tuple[str, str]) -> pd.DataFrame:
@@ -221,7 +219,7 @@ def compute_returns(series: Artifact, method: str, periods: int = 1) -> Artifact
         raise ValueError("returns need strictly positive levels.")
     ratio = prices / prices.shift(periods)
     # Simple returns compound multiplicatively and aggregate across assets;
-    # log returns add up over time. The choice changes results, hence approval (G12).
+    # log returns add up over time. The choice changes results, hence approval (G10).
     returns = ratio - 1 if method == "simple" else np.log(ratio)
     # The first `periods` values have no earlier price to compare with.
     returns = returns.dropna()
@@ -373,7 +371,7 @@ def flag_regime(
         )
     else:
         # One number computed from ALL observations, including those after t:
-        # look-ahead bias. Allowed only with explicit approval (G10).
+        # look-ahead bias. Allowed only with explicit approval (G09).
         threshold = pd.Series(x.quantile(quantile), index=x.index)
         note = f"flag = value > full-sample {quantile:g} quantile (uses future data)"
 
@@ -384,37 +382,60 @@ def flag_regime(
 
 
 # ---------------------------------------------------------------------------
-# 8. summary_stats
+# 8. forward_return
 # ---------------------------------------------------------------------------
 
+# forward_return always looks one period ahead (the following week on weekly
+# data). Recorded as the horizon in the metadata of the forward returns and of
+# the tables computed from them.
+FORWARD_HORIZON = 1
 
-def summary_stats(series: Artifact) -> Artifact:
-    """Descriptive statistics of a series.
+
+def forward_return(series: Artifact, method: str) -> Artifact:
+    """Return over the NEXT period, stamped at the date it starts from.
+
+    Value at t = the return from the close of t to the close of t+1:
+    ln(P_{t+1} / P_t) for "log", P_{t+1} / P_t - 1 for "simple" (the same
+    semantics as compute_returns, pointed forward). One period of the input's
+    frequency: the following week on weekly data, the next trading day on daily data.
+
+    Why it starts at the close of t: a flag dated t uses data up to the close of t
+    (e.g. the volatility of returns ending at t). The forward return begins exactly
+    there, so "flag at t -> what happens next" never reuses the data behind the
+    flag. It is future information at t, so it is only ever an OUTCOME (G12).
 
     Args:
-        series: SERIES artifact.
+        series: SERIES artifact of kind price_level or index_level.
+        method: "simple" or "log".
 
     Returns:
-        TABLE artifact: count, mean, std, min, max, skew, excess_kurtosis, start, end.
+        SERIES artifact of kind forward_returns, recording the method and
+        horizon=1. The last date has no next price yet: it is dropped, never filled.
+
+    Raises:
+        ValueError: if any level is zero or negative (returns are undefined).
     """
-    x = series.value
-    n_obs, start, end = date_span(x)
-    table = {
-        "count": n_obs,
-        "mean": float(x.mean()),
-        # Sample standard deviation (ddof=1), consistent with rolling_volatility.
-        "std": float(x.std(ddof=1)),
-        "min": float(x.min()),
-        "max": float(x.max()),
-        # pandas skew/kurt are the bias-adjusted sample estimators; kurt is EXCESS
-        # kurtosis (normal distribution = 0), so fat tails show up as > 0.
-        "skew": float(x.skew()),
-        "excess_kurtosis": float(x.kurt()),
-        "start": start,
-        "end": end,
-    }
-    meta = derive_meta(series.meta, x, kind=None, notes=["std with ddof=1; excess kurtosis"])
-    return Artifact(value=table, data_type=DataType.TABLE, meta=meta)
+    prices = series.value
+    if (prices <= 0).any():
+        raise ValueError("returns need strictly positive levels.")
+    # shift(-1) brings the NEXT period's price back onto date t, so the ratio at t
+    # is P_{t+1} / P_t. The last date has nothing to bring back (NaN).
+    ratio = prices.shift(-FORWARD_HORIZON) / prices
+    forward = ratio - 1 if method == "simple" else np.log(ratio)
+    # Drop, never fill: any filled value would be an invented future price.
+    forward = forward.dropna()
+    meta = derive_meta(
+        series.meta,
+        forward,
+        kind=SeriesKind.FORWARD_RETURNS,
+        return_method=method,
+        horizon=FORWARD_HORIZON,
+        notes=[
+            f"{method} return from the close of t to the close of t+1, stamped at t; "
+            "the last observation dropped (no future price yet)"
+        ],
+    )
+    return Artifact(value=forward, data_type=DataType.SERIES, meta=meta)
 
 
 # ---------------------------------------------------------------------------
@@ -456,8 +477,8 @@ def compare_groups(values: Artifact, flags: Artifact) -> Artifact:
         "mean_flagged": float(flagged.mean()),
         "mean_normal": float(normal.mean()),
         "diff_means": float(flagged.mean() - normal.mean()),
-        # Sample standard deviation (ddof=1), consistent with summary_stats and
-        # rolling_volatility; flagged periods are expected to be more dispersed.
+        # Sample standard deviation (ddof=1), consistent with rolling_volatility;
+        # flagged periods are expected to be more dispersed.
         "std_flagged": float(flagged.std(ddof=1)),
         "std_normal": float(normal.std(ddof=1)),
         "start": start,
@@ -478,148 +499,7 @@ def compare_groups(values: Artifact, flags: Artifact) -> Artifact:
 
 
 # ---------------------------------------------------------------------------
-# 10. filter_period
-# ---------------------------------------------------------------------------
-
-
-def filter_period(series: Artifact, start: str | None = None, end: str | None = None) -> Artifact:
-    """Restrict a series to a time interval between explicit dates.
-
-    At least one of start and end must be given (the validator enforces it with
-    G03 before anything runs; the check here is a second line of defence).
-
-    Args:
-        series: SERIES artifact.
-        start: first date to keep, "YYYY-MM-DD", inclusive (None = from the first observation).
-        end: last date to keep, "YYYY-MM-DD", inclusive (None = up to the last observation).
-
-    Returns:
-        SERIES artifact with the same kind and frequency. meta.period_start and
-        meta.period_end record the resolved interval (inclusive). It may be
-        empty; the executor then stops the run with R02.
-
-    Raises:
-        ValueError: if neither start nor end is given, if start is not before
-            end, or if the input series is empty.
-    """
-    x = series.value
-    if start is None and end is None:
-        raise ValueError("give start and/or end.")
-    if start is not None and end is not None and start >= end:
-        raise ValueError(f"start {start} must be before end {end}.")
-    if x.empty:
-        raise ValueError("cannot filter an empty series.")
-
-    first = pd.Timestamp(start) if start is not None else x.index[0]
-    last = pd.Timestamp(end) if end is not None else x.index[-1]
-    kept = x[(x.index >= first) & (x.index <= last)]
-    meta = derive_meta(
-        series.meta,
-        kept,
-        period_start=f"{first:%Y-%m-%d}",
-        period_end=f"{last:%Y-%m-%d}",
-        notes=[f"kept {first:%Y-%m-%d} to {last:%Y-%m-%d} inclusive (explicit dates)"],
-    )
-    return Artifact(value=kept, data_type=DataType.SERIES, meta=meta)
-
-
-# ---------------------------------------------------------------------------
-# 11. find_extremes
-# ---------------------------------------------------------------------------
-
-
-def find_extremes(series: Artifact, which: str = "both") -> Artifact:
-    """When a series reached its maximum and/or minimum, and the value there.
-
-    Args:
-        series: SERIES artifact of any kind (a level, returns, a volatility...).
-        which: "max", "min" or "both".
-
-    Returns:
-        TABLE artifact with one row per extreme, e.g.
-        {"max": {"date": "2021-11-19", "value": 16057.44, "tie_count": 1}}.
-        tie_count is the number of dates on which the extreme value occurs
-        (1 = unique); on a tie the EARLIEST of those dates is reported.
-
-    Raises:
-        ValueError: if the series has no non-missing values.
-    """
-    # A missing value is not an observation, so it can never be an extreme.
-    x = series.value.dropna()
-    if x.empty:
-        raise ValueError("the series has no observations.")
-    table = {}
-    for extreme in ("max", "min") if which == "both" else (which,):
-        value = x.max() if extreme == "max" else x.min()
-        # Every date with exactly the extreme value. Exact equality on purpose: a tie
-        # means the same recorded value. The index is in time order, so the first
-        # date is the earliest, and the count keeps a tie from being silently hidden.
-        dates = x.index[x == value]
-        table[extreme] = {
-            "date": f"{dates[0]:%Y-%m-%d}",
-            "value": float(value),
-            "tie_count": len(dates),
-        }
-    note = "missing values ignored; on a tie the earliest date is reported (see tie_count)"
-    meta = derive_meta(series.meta, x, kind=None, notes=[note])
-    return Artifact(value=table, data_type=DataType.TABLE, meta=meta)
-
-
-# ---------------------------------------------------------------------------
-# 12. forward_return
-# ---------------------------------------------------------------------------
-
-
-def forward_return(series: Artifact, method: str, horizon: int = 1) -> Artifact:
-    """Return over the NEXT `horizon` periods, stamped at the date it starts from.
-
-    Value at t = the return from the close of t to the close of t+h:
-    ln(P_{t+h} / P_t) for "log", P_{t+h} / P_t - 1 for "simple" (the same
-    semantics as compute_returns, pointed forward).
-
-    Why it starts at the close of t: a flag dated t uses data up to the close of t
-    (e.g. the volatility of returns ending at t). The forward return begins exactly
-    there, so "flag at t -> what happens next" never reuses the data behind the
-    flag. It is future information at t, so it is only ever an OUTCOME (G15).
-
-    Args:
-        series: SERIES artifact of kind price_level or index_level.
-        method: "simple" or "log".
-        horizon: h, the number of periods ahead, in periods of the input's frequency.
-
-    Returns:
-        SERIES artifact of kind forward_returns, recording the method and horizon.
-        The last h dates have no price h periods later yet: they are dropped,
-        never filled.
-
-    Raises:
-        ValueError: if any level is zero or negative (returns are undefined).
-    """
-    prices = series.value
-    if (prices <= 0).any():
-        raise ValueError("returns need strictly positive levels.")
-    # shift(-h) brings the price h periods LATER back onto date t, so the ratio at t
-    # is P_{t+h} / P_t. The last h dates have nothing to bring back (NaN).
-    ratio = prices.shift(-horizon) / prices
-    forward = ratio - 1 if method == "simple" else np.log(ratio)
-    # Drop, never fill: any filled value would be an invented future price.
-    forward = forward.dropna()
-    meta = derive_meta(
-        series.meta,
-        forward,
-        kind=SeriesKind.FORWARD_RETURNS,
-        return_method=method,
-        horizon=horizon,
-        notes=[
-            f"{method} return from the close of t to the close of t+{horizon}, stamped at t; "
-            f"the last {horizon} observation(s) dropped (no future price yet)"
-        ],
-    )
-    return Artifact(value=forward, data_type=DataType.SERIES, meta=meta)
-
-
-# ---------------------------------------------------------------------------
-# 13. hac_mean_difference
+# 10. hac_mean_difference
 # ---------------------------------------------------------------------------
 
 
@@ -638,7 +518,7 @@ def newey_west_lags(n_obs: int) -> int:
     return math.floor(4 * (n_obs / 100) ** (2 / 9))
 
 
-def hac_mean_difference(outcome: Artifact, flags: Artifact, maxlags: int | None = None) -> Artifact:
+def hac_mean_difference(outcome: Artifact, flags: Artifact) -> Artifact:
     """Test whether the mean outcome differs between flagged and normal periods.
 
     Method: OLS regression outcome_t = a + b * flag_t + e_t, with Newey-West
@@ -650,12 +530,14 @@ def hac_mean_difference(outcome: Artifact, flags: Artifact, maxlags: int | None 
     so b = mean(flagged) - mean(normal). The regression adds a standard error for
     that difference.
 
-    Why HAC: ordinary standard errors assume every week is an independent draw.
-    Here weeks are not independent: volatility clusters (flagged weeks come in
-    runs, and so does the spread of returns), and h-period forward returns
-    overlap (consecutive values share h-1 periods). Ordinary errors then overstate
-    the confidence. Newey-West errors allow for autocorrelation up to `maxlags`
-    periods, weighted down linearly (Bartlett kernel), and for unequal variances.
+    Why HAC: ordinary standard errors assume every week is an independent draw
+    with the same variance, and neither holds here. Heteroskedasticity: flagged
+    weeks are the high-volatility ones, so their outcomes vary much more than
+    those of normal weeks. Autocorrelation: volatility clusters, so flagged weeks
+    come in runs and neighbouring weeks are not independent. Ordinary errors then
+    overstate the confidence. Newey-West errors allow for unequal variances and
+    for autocorrelation up to L lags, weighted down linearly (Bartlett kernel),
+    with L always set by the rule floor(4 * (T/100)^(2/9)).
 
     Assumptions of the test: the outcome is stationary (returns, not levels); the
     sample is large enough for the normal approximation (validity is asymptotic);
@@ -666,13 +548,11 @@ def hac_mean_difference(outcome: Artifact, flags: Artifact, maxlags: int | None 
     Args:
         outcome: SERIES artifact of kind returns or forward_returns.
         flags: FLAGS artifact with the same frequency.
-        maxlags: Newey-West lag truncation; None means floor(4 * (T/100)^(2/9)),
-            raised to at least h-1 for h-period forward returns.
 
     Returns:
         TABLE artifact: diff_means (b), mean_normal (a), se_hac, t_stat, p_value
         (two-sided), ci_low, ci_high (95%), n_obs, n_flagged, n_normal,
-        n_episodes_flagged, maxlags_used, horizon (forward returns only), start, end.
+        n_episodes_flagged, maxlags_used (L), horizon (forward returns only), start, end.
 
     Raises:
         ValueError: if either group is empty (no difference to estimate).
@@ -684,27 +564,14 @@ def hac_mean_difference(outcome: Artifact, flags: Artifact, maxlags: int | None 
     if n_flagged == 0 or n_normal == 0:
         raise ValueError(f"both groups need observations: {n_flagged} flagged, {n_normal} normal.")
 
-    is_forward = outcome.meta.kind == SeriesKind.FORWARD_RETURNS
-    horizon = outcome.meta.horizon if is_forward else None
-    if maxlags is not None:
-        maxlags_used = maxlags
-        lag_note = f"maxlags={maxlags} (set in the plan)"
-    else:
-        rule = newey_west_lags(len(joined))
-        maxlags_used = rule
-        lag_note = f"maxlags={rule} (rule floor(4*(T/100)^(2/9)) with T={len(joined)})"
-        if horizon is not None and horizon - 1 > rule:
-            # Overlapping h-period forward returns share h-1 periods with their
-            # neighbours, so they are autocorrelated up to lag h-1 even if nothing
-            # is predictable. Fewer lags than h-1 would ignore part of that overlap.
-            maxlags_used = horizon - 1
-            lag_note = f"maxlags={maxlags_used} (h-1 for {horizon}-period forward returns)"
+    maxlags_used = newey_west_lags(len(joined))
+    lag_note = f"maxlags={maxlags_used} (rule floor(4*(T/100)^(2/9)) with T={len(joined)})"
 
     # Explicit design matrix: a constant column (gives a) and the 0/1 flag (gives b).
     design = pd.DataFrame({"const": 1.0, "flag": is_flagged.astype(float)}, index=joined.index)
     fit = OLS(joined["outcome"], design).fit(
         cov_type="HAC",
-        # Bartlett weights (1 - lag / (maxlags + 1)) keep the variance estimate
+        # Bartlett weights (1 - lag / (L + 1)) keep the variance estimate
         # positive; no small-sample correction (statsmodels' default).
         cov_kwds={"maxlags": maxlags_used, "kernel": "bartlett", "use_correction": False},
         # Normal (not Student t) p-values and interval: HAC inference is asymptotic.
@@ -727,8 +594,8 @@ def hac_mean_difference(outcome: Artifact, flags: Artifact, maxlags: int | None 
         "n_episodes_flagged": count_episodes(is_flagged),
         "maxlags_used": maxlags_used,
     }
-    if horizon is not None:
-        table["horizon"] = horizon
+    if outcome.meta.kind == SeriesKind.FORWARD_RETURNS:
+        table["horizon"] = outcome.meta.horizon
     table["start"] = start
     table["end"] = end
     meta = derive_meta(

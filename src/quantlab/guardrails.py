@@ -16,27 +16,22 @@ a yield, take the spread of a daily and a weekly series, or build a flag from
 forward returns.
 
 The same `validate_plan` function is used for the planner's plan, for every
-user edit, by the executor (defence in depth) and by replay. For an edited plan
-the engine also passes the planner's proposal as `baseline`, which enables G14
-(an edit changed a frequency but left the windows measured in its periods).
-`check_edits` locks the plan's structure: users may change parameter values only.
+user edit, by the executor (defence in depth) and by replay. `check_edits`
+locks the plan's structure: users may change parameter values only.
 
 The runtime guardrails (R codes, which need data) live in executor.py, but all
 guardrail codes are described in the single GUARDRAILS table below. Codes are
-permanent: a code is never renumbered or given a different meaning, so the issue
-ids recorded in older run records keep their meaning. (G11 and R05 were retired
-with the first statistical tests and came back, with the same meanings, with the
-significance test.)
+permanent from this version on: a code is never renumbered or given a different
+meaning, so the issue ids recorded in run records keep their meaning.
 """
 
-import re
 from dataclasses import asdict, dataclass, field
-from datetime import date
 from enum import StrEnum
 from typing import Any
 
 from pydantic import BaseModel, Field, ValidationError
 
+from quantlab.capabilities import FORWARD_HORIZON
 from quantlab.data import Catalog
 from quantlab.plan import Plan, Step
 from quantlab.registry import FROM_CATALOG, REGISTRY, SAME_AS_INPUT, CapabilitySpec, ParamSpec
@@ -56,7 +51,7 @@ class Guardrail:
     """Description of one guardrail (used for issues, the README and the UI).
 
     Fields:
-        code: e.g. "G08".
+        code: e.g. "G07".
         name: e.g. "RETURNS_ON_RATES".
         severity: severity of the issues it raises.
         stage: "static" (before execution, no data) or "runtime" (during execution).
@@ -81,9 +76,10 @@ GUARDRAILS: dict[str, Guardrail] = {
     g.code: g
     for g in [
         Guardrail(
-            "G01", "SCHEMA_INVALID", BLOCK, "static",
-            "Malformed or partial planner output would have to be guessed at, and "
-            "extra fields (e.g. 'code') could slip through.",
+            "G01", "INVALID_PLAN", BLOCK, "static",
+            "Malformed, partial or empty planner output would have to be guessed at, "
+            "extra fields (e.g. 'code') could slip through, and steps could read missing "
+            "outputs or outputs of later steps, leaving the order of computation undefined.",
         ),
         Guardrail(
             "G02", "UNKNOWN_CAPABILITY", BLOCK, "static",
@@ -96,73 +92,49 @@ GUARDRAILS: dict[str, Guardrail] = {
             "or silently produce nonsense.",
         ),
         Guardrail(
-            "G04", "BAD_REFERENCE", BLOCK, "static",
-            "Steps could read missing outputs or outputs of later steps, leaving the "
-            "order of computation undefined.",
+            "G04", "TYPE_MISMATCH", BLOCK, "static",
+            "Meaningless chains would run, e.g. the volatility of a price level, or a "
+            "significance test on a non-stationary level (a price, a rate, a volatility), "
+            "where spurious differences look significant.",
         ),
         Guardrail(
-            "G05", "TYPE_MISMATCH", BLOCK, "static",
-            "Meaningless chains would run, e.g. volatility of a price level or summary "
-            "statistics of regime flags.",
-        ),
-        Guardrail(
-            "G06", "BUDGET_EXCEEDED", BLOCK, "static",
+            "G05", "BUDGET_EXCEEDED", BLOCK, "static",
             "Runaway plans could use unbounded compute and become impossible for a "
             "human to review.",
         ),
         Guardrail(
-            "G07", "UNKNOWN_DATASET", BLOCK, "static",
+            "G06", "UNKNOWN_DATASET", BLOCK, "static",
             "The LLM could invent a dataset id or reach for data outside the approved catalog.",
         ),
         Guardrail(
-            "G08", "RETURNS_ON_RATES", BLOCK, "static",
+            "G07", "RETURNS_ON_RATES", BLOCK, "static",
             "'Returns' of a yield are meaningless (1% -> 2% is not +100%); rates must "
             "be differenced.",
         ),
         Guardrail(
-            "G09", "FREQUENCY_MISMATCH", BLOCK, "static",
+            "G08", "FREQUENCY_MISMATCH", BLOCK, "static",
             "Combining a daily with a weekly series silently keeps only the dates they "
             "share and mixes frequencies.",
         ),
         Guardrail(
-            "G10", "LOOK_AHEAD", APPROVAL, "static",
+            "G09", "LOOK_AHEAD", APPROVAL, "static",
             "Full-sample thresholds use future data, so results look better than "
             "anything achievable in real time.",
         ),
         Guardrail(
-            "G11", "OVERLAPPING_OBSERVATIONS", WARN, "static",
-            "Overlapping multi-period forward returns are autocorrelated by construction; "
-            "treated as independent, they overstate the evidence.",
-        ),
-        Guardrail(
-            "G12", "MATERIAL_ASSUMPTION", APPROVAL, "static",
+            "G10", "MATERIAL_ASSUMPTION", APPROVAL, "static",
             "Material modelling choices (simple vs log returns) would be made by the "
             "LLM without a human noticing.",
         ),
         Guardrail(
-            "G13", "PLANNER_REFUSED", BLOCK, "static",
+            "G11", "PLANNER_REFUSED", BLOCK, "static",
             "Without an explicit refusal path the LLM is pushed to invent capabilities "
             "to satisfy any request.",
         ),
         Guardrail(
-            "G14", "WINDOW_UNITS_CHANGED", WARN, "static",
-            "After a frequency edit, an unchanged window silently changes its span "
-            "(12 weeks becomes 12 trading days).",
-        ),
-        Guardrail(
-            "G15", "FORWARD_DATA_AS_SIGNAL", BLOCK, "static",
+            "G12", "FORWARD_DATA_AS_SIGNAL", BLOCK, "static",
             "Forward returns contain future information; used to build a signal (a "
             "volatility, a flag) they make results look predictive when nothing is.",
-        ),
-        Guardrail(
-            "G16", "NONSTATIONARY_OUTCOME", BLOCK, "static",
-            "A significance test on a trending level (a price, a rate, a volatility) is "
-            "invalid: non-stationary series make spurious differences look significant.",
-        ),
-        Guardrail(
-            "G17", "HAC_LAG_TOO_SHORT", WARN, "static",
-            "Newey-West lags shorter than the overlap of forward returns ignore part of "
-            "their autocorrelation, so the p-value looks better than it is.",
         ),
         Guardrail(
             "R01", "DATASET_HASH_MISMATCH", BLOCK, "runtime",
@@ -192,25 +164,21 @@ GUARDRAILS: dict[str, Guardrail] = {
 
 # The input that holds the OUTCOME in the capabilities that compare an outcome
 # between flagged and normal periods. It is the only place forward returns may
-# go (G15), and where R05 counts the flagged episodes.
+# go (G12), and where R05 counts the flagged episodes.
 OUTCOME_INPUTS = {"compare_groups": "values", "hac_mean_difference": "outcome"}
-
-# The outcome kinds hac_mean_difference accepts: returns fluctuate around a stable
-# mean (stationary); levels such as prices, rates or volatility do not (G16).
-STATIONARY_OUTCOME_KINDS = (SeriesKind.RETURNS, SeriesKind.FORWARD_RETURNS)
 
 
 class Issue(BaseModel):
     """One problem found by a guardrail.
 
     Fields:
-        code: guardrail code, e.g. "G08".
+        code: guardrail code, e.g. "G07".
         name: guardrail name, e.g. "RETURNS_ON_RATES".
         severity: BLOCK, APPROVAL or WARN.
         step_id: the step concerned (None for plan-level issues).
         message: what is wrong.
         suggestion: how to fix it.
-        issue_id: stable id used to record approvals, e.g. "G12:s2:return_method".
+        issue_id: stable id used to record approvals, e.g. "G10:s2:return_method".
     """
 
     code: str
@@ -287,7 +255,7 @@ class ValidationReport(BaseModel):
         return [i for i in self.issues if i.severity == Severity.WARN]
 
     def codes(self) -> list[str]:
-        """Sorted, de-duplicated issue codes, e.g. ["G02", "G08"]."""
+        """Sorted, de-duplicated issue codes, e.g. ["G02", "G07"]."""
         return sorted({i.code for i in self.issues})
 
 
@@ -361,26 +329,10 @@ def fill_defaults(plan: Plan) -> Plan:
     return filled
 
 
-# Exactly "YYYY-MM-DD". date.fromisoformat alone would also accept "20200101".
-ISO_DATE = re.compile(r"\d{4}-\d{2}-\d{2}")
-
-
-def parse_date(value: Any) -> date | None:
-    """Return the date a "YYYY-MM-DD" string names, or None if it is not one (e.g. 2021-02-30)."""
-    if not isinstance(value, str) or not ISO_DATE.fullmatch(value):
-        return None
-    try:
-        return date.fromisoformat(value)
-    except ValueError:
-        return None
-
-
 def _has_type(value: Any, expected: str) -> bool:
-    """Strict type check of a parameter value: "int", "float", "str", "bool" or "date"."""
+    """Strict type check of a parameter value: "int", "float", "str" or "bool"."""
     if expected == "bool":
         return isinstance(value, bool)
-    if expected == "date":
-        return parse_date(value) is not None
     # bool is a subclass of int in Python (True == 1); reject it explicitly so
     # `"window": true` cannot silently mean window=1.
     if isinstance(value, bool):
@@ -404,10 +356,7 @@ def param_problem(spec_param: ParamSpec, value: Any) -> str | None:
     """
     name = spec_param.name
     if value is None:
-        # Null means "not set" for nullable parameters (filter_period's options).
-        return None if spec_param.nullable else f"'{name}' must not be null."
-    if spec_param.type == "date" and not _has_type(value, "date"):
-        return f"'{name}' must be a valid date written YYYY-MM-DD, got {value!r}."
+        return f"'{name}' must not be null."
     if not _has_type(value, spec_param.type):
         return f"'{name}' must be {spec_param.type}, got {value!r} ({type(value).__name__})."
     if spec_param.choices is not None and value not in spec_param.choices:
@@ -421,14 +370,10 @@ def param_problem(spec_param: ParamSpec, value: Any) -> str | None:
 def _allowed_values(spec_param: ParamSpec) -> str:
     """Human-readable description of a parameter's allowed values."""
     if spec_param.choices is not None:
-        allowed = f"one of {list(spec_param.choices)}"
-    elif spec_param.min is not None:
-        allowed = f"{spec_param.type} in [{spec_param.min:g}, {spec_param.max:g}]"
-    elif spec_param.type == "date":
-        allowed = "a date written YYYY-MM-DD"
-    else:
-        allowed = spec_param.type
-    return f"{allowed}, or null" if spec_param.nullable else allowed
+        return f"one of {list(spec_param.choices)}"
+    if spec_param.min is not None:
+        return f"{spec_param.type} in [{spec_param.min:g}, {spec_param.max:g}]"
+    return spec_param.type
 
 
 # ---------------------------------------------------------------------------
@@ -437,7 +382,7 @@ def _allowed_values(spec_param: ParamSpec) -> str:
 
 
 def check_schema(raw: Any) -> tuple[Plan | None, list[Issue]]:
-    """G01 SCHEMA_INVALID: parse raw planner output into a Plan.
+    """G01 INVALID_PLAN (schema): parse raw planner output into a Plan.
 
     Without it, malformed or partial LLM output would have to be guessed at, and
     fields the schema does not define (e.g. "code") could slip through unnoticed.
@@ -467,7 +412,7 @@ def check_schema(raw: Any) -> tuple[Plan | None, list[Issue]]:
 
 
 def planner_failure_issue(error: str) -> Issue:
-    """G01 SCHEMA_INVALID raised when the planner produced no usable plan at all.
+    """G01 INVALID_PLAN raised when the planner produced no usable plan at all.
 
     Without it, an API error or a missing tool call would crash the app instead
     of being shown and recorded like any other blocked plan.
@@ -488,7 +433,7 @@ def planner_failure_issue(error: str) -> Issue:
 
 
 def check_planner_refused(plan: Plan) -> list[Issue]:
-    """G13 PLANNER_REFUSED: the planner declared it cannot fulfil the request.
+    """G11 PLANNER_REFUSED: the planner declared it cannot fulfil the request.
 
     Without an explicit refusal path, the LLM is pushed to invent capabilities
     (or misuse existing ones) to satisfy every request.
@@ -497,7 +442,7 @@ def check_planner_refused(plan: Plan) -> list[Issue]:
         return []
     return [
         make_issue(
-            "G13",
+            "G11",
             None,
             f"The planner declined the request: {plan.refusal_reason or 'no reason given'}",
             "Rephrase using the approved capabilities (see the Capability registry page).",
@@ -506,7 +451,7 @@ def check_planner_refused(plan: Plan) -> list[Issue]:
 
 
 def check_request_length(request: str, max_request_chars: int) -> list[Issue]:
-    """G06 BUDGET_EXCEEDED (request size): refuse overly long requests before planning.
+    """G05 BUDGET_EXCEEDED (request size): refuse overly long requests before planning.
 
     Without it, a huge pasted request could blow up prompt size and cost, and
     gives more room for instructions hidden inside it.
@@ -515,7 +460,7 @@ def check_request_length(request: str, max_request_chars: int) -> list[Issue]:
         return []
     return [
         make_issue(
-            "G06",
+            "G05",
             None,
             f"The request has {len(request)} characters; the limit is {max_request_chars}.",
             "Shorten the request.",
@@ -525,7 +470,7 @@ def check_request_length(request: str, max_request_chars: int) -> list[Issue]:
 
 
 def check_budget(plan: Plan, max_steps: int, max_datasets: int) -> list[Issue]:
-    """G06 BUDGET_EXCEEDED: too many steps or too many datasets in one plan.
+    """G05 BUDGET_EXCEEDED: too many steps or too many datasets in one plan.
 
     Without it, a runaway plan could consume unbounded compute and become too
     long for a human to review before approving it.
@@ -534,7 +479,7 @@ def check_budget(plan: Plan, max_steps: int, max_datasets: int) -> list[Issue]:
     if len(plan.steps) > max_steps:
         issues.append(
             make_issue(
-                "G06",
+                "G05",
                 None,
                 f"The plan has {len(plan.steps)} steps; the limit is {max_steps}.",
                 "Split the analysis into smaller requests.",
@@ -550,7 +495,7 @@ def check_budget(plan: Plan, max_steps: int, max_datasets: int) -> list[Issue]:
     if len(datasets) > max_datasets:
         issues.append(
             make_issue(
-                "G06",
+                "G05",
                 None,
                 f"The plan uses {len(datasets)} datasets; the limit is {max_datasets}.",
                 "Use fewer datasets per request.",
@@ -561,14 +506,14 @@ def check_budget(plan: Plan, max_steps: int, max_datasets: int) -> list[Issue]:
 
 
 def check_unknown_datasets(plan: Plan, catalog: Catalog) -> list[Issue]:
-    """G07 UNKNOWN_DATASET: every dataset id must exist in the catalog.
+    """G06 UNKNOWN_DATASET: every dataset id must exist in the catalog.
 
     Without it, the LLM could invent a dataset id or reach for data outside the
     approved, hash-verified catalog.
     """
     suggestion = f"Available datasets: {', '.join(catalog.ids())}."
     issues = [
-        make_issue("G07", None, f"Dataset '{d}' is not in the catalog.", suggestion, key=d)
+        make_issue("G06", None, f"Dataset '{d}' is not in the catalog.", suggestion, key=d)
         for d in plan.dataset_ids
         if catalog.get(d) is None
     ]
@@ -578,14 +523,14 @@ def check_unknown_datasets(plan: Plan, catalog: Catalog) -> list[Issue]:
         if is_load and catalog.get(dataset_id) is None:
             issues.append(
                 make_issue(
-                    "G07", step.id, f"Dataset '{dataset_id}' is not in the catalog.", suggestion
+                    "G06", step.id, f"Dataset '{dataset_id}' is not in the catalog.", suggestion
                 )
             )
     return issues
 
 
 def check_not_empty(plan: Plan) -> list[Issue]:
-    """G01 SCHEMA_INVALID (empty plan): a plan that is not a refusal must have steps.
+    """G01 INVALID_PLAN (empty plan): a plan that is not a refusal must have steps.
 
     Without it, an empty plan would "succeed" with no results, which looks like
     an answer but is not one.
@@ -604,7 +549,7 @@ def check_not_empty(plan: Plan) -> list[Issue]:
 
 
 def check_duplicate_step_ids(plan: Plan) -> list[Issue]:
-    """G04 BAD_REFERENCE (duplicate ids): step ids must be unique.
+    """G01 INVALID_PLAN (duplicate ids): step ids must be unique.
 
     Without it, a reference like "s2" would be ambiguous and the wrong output
     could be fed into a later step.
@@ -615,7 +560,7 @@ def check_duplicate_step_ids(plan: Plan) -> list[Issue]:
         if step.id in seen:
             issues.append(
                 make_issue(
-                    "G04",
+                    "G01",
                     step.id,
                     f"Step id '{step.id}' is used more than once.",
                     "Number steps s1, s2, s3, ...",
@@ -700,7 +645,7 @@ def check_params(step: Step, spec: CapabilitySpec) -> list[Issue]:
 def check_references(
     step: Step, spec: CapabilitySpec, earlier_ids: list[str], all_ids: list[str]
 ) -> list[Issue]:
-    """G04 BAD_REFERENCE: inputs must point to EARLIER steps, and all inputs must be given.
+    """G01 INVALID_PLAN (step references): inputs must point to EARLIER steps, all given.
 
     Without it, a step could read an output that does not exist yet (or ever),
     leaving the order of computation undefined.
@@ -710,7 +655,7 @@ def check_references(
         if spec_input.name not in step.inputs:
             issues.append(
                 make_issue(
-                    "G04",
+                    "G01",
                     step.id,
                     f"{spec.name} needs input '{spec_input.name}', which is not given.",
                     f"Set inputs['{spec_input.name}'] to the id of an earlier step.",
@@ -729,12 +674,12 @@ def check_references(
         else:
             message = f"Input '{name}' refers to unknown step '{ref}'."
             suggestion = f"Earlier steps: {earlier_ids or 'none'}."
-        issues.append(make_issue("G04", step.id, message, suggestion, key=name))
+        issues.append(make_issue("G01", step.id, message, suggestion, key=name))
     return issues
 
 
 def _type_hint(spec: CapabilitySpec, kind: SeriesKind | None) -> str:
-    """A short, specific suggestion for common type mismatches (used by G05)."""
+    """A short, specific suggestion for common type mismatches (used by G04)."""
     if kind in (SeriesKind.RETURNS, SeriesKind.CHANGES) and spec.name in ("resample", "difference"):
         return "Resample or difference the LEVEL series first, then compute returns or changes."
     if spec.name == "rolling_volatility":
@@ -745,24 +690,29 @@ def _type_hint(spec: CapabilitySpec, kind: SeriesKind | None) -> str:
 def check_input_types(
     step: Step, spec: CapabilitySpec, input_metas: dict[str, StaticMeta | None]
 ) -> list[Issue]:
-    """G05 TYPE_MISMATCH: each input's data type and kind must be allowed by the capability.
+    """G04 TYPE_MISMATCH: each input's data type and kind must be allowed by the capability.
 
     Without it, statistically meaningless chains would run without complaint,
-    e.g. the volatility of a price level, or summary statistics of True/False flags.
+    e.g. the volatility of a price level, or True/False flags used as a series.
+    The outcome of hac_mean_difference gets its own message: the test compares
+    means, and levels such as prices, index levels, rates or volatility trend
+    and wander instead of fluctuating around a stable mean (they are
+    non-stationary). The difference would then mostly reflect WHEN the flagged
+    periods happened, and the p-value would be invalid.
     """
     issues = []
     for spec_input in spec.inputs:
         meta = input_metas.get(spec_input.name)
         if meta is None:
-            continue  # missing or broken reference: already reported by G02/G04
+            continue  # missing or broken reference: already reported by G01/G02
         is_outcome = OUTCOME_INPUTS.get(spec.name) == spec_input.name
         if meta.kind == SeriesKind.FORWARD_RETURNS and not is_outcome:
-            continue  # reported by the more specific G15 FORWARD_DATA_AS_SIGNAL
+            continue  # reported by the more specific G12 FORWARD_DATA_AS_SIGNAL
         if meta.data_type not in spec_input.data_types:
             expected = [t.value for t in spec_input.data_types]
             issues.append(
                 make_issue(
-                    "G05",
+                    "G04",
                     step.id,
                     f"Input '{spec_input.name}' of {spec.name} must be {expected}, "
                     f"got {meta.data_type.value}.",
@@ -772,27 +722,32 @@ def check_input_types(
             )
         elif spec_input.kinds is not None and meta.kind not in spec_input.kinds:
             if spec.name == "compute_returns" and meta.kind == SeriesKind.RATE_LEVEL:
-                continue  # reported by the more specific G08 RETURNS_ON_RATES
-            if spec.name == "hac_mean_difference" and is_outcome:
-                continue  # reported by the more specific G16 NONSTATIONARY_OUTCOME
+                continue  # reported by the more specific G07 RETURNS_ON_RATES
             expected = [k.value for k in spec_input.kinds]
-            issues.append(
-                make_issue(
-                    "G05",
-                    step.id,
-                    f"Input '{spec_input.name}' of {spec.name} must be one of {expected}, "
-                    f"got kind '{meta.kind}'.",
-                    _type_hint(spec, meta.kind),
-                    key=spec_input.name,
-                )
+            message = (
+                f"Input '{spec_input.name}' of {spec.name} must be one of {expected}, "
+                f"got kind '{meta.kind}'."
             )
+            suggestion = _type_hint(spec, meta.kind)
+            if spec.name == "hac_mean_difference" and is_outcome:
+                message = (
+                    f"The outcome of hac_mean_difference is a series of kind '{meta.kind}'; "
+                    "it must be returns or forward returns. Levels such as prices, index "
+                    "levels, rates or volatility are non-stationary, which makes the test "
+                    "invalid."
+                )
+                suggestion = (
+                    "Compute returns (compute_returns) or forward returns (forward_return) "
+                    "of the price level, and test those."
+                )
+            issues.append(make_issue("G04", step.id, message, suggestion, key=spec_input.name))
     return issues
 
 
 def check_returns_on_rates(
     step: Step, spec: CapabilitySpec, input_metas: dict[str, StaticMeta | None]
 ) -> list[Issue]:
-    """G08 RETURNS_ON_RATES: compute_returns applied to an interest rate or yield.
+    """G07 RETURNS_ON_RATES: compute_returns applied to an interest rate or yield.
 
     Without it, the system would happily compute "returns" of a yield: a move
     from 1% to 2% would be reported as +100%, which is meaningless. Rates must
@@ -803,7 +758,7 @@ def check_returns_on_rates(
         return []
     return [
         make_issue(
-            "G08",
+            "G07",
             step.id,
             "compute_returns on a rate/yield series: percentage 'returns' of a yield are "
             "meaningless.",
@@ -815,14 +770,14 @@ def check_returns_on_rates(
 def check_frequency_mismatch(
     step: Step, spec: CapabilitySpec, input_metas: dict[str, StaticMeta | None]
 ) -> list[Issue]:
-    """G09 FREQUENCY_MISMATCH: two-input steps whose inputs have different frequencies.
+    """G08 FREQUENCY_MISMATCH: two-input steps whose inputs have different frequencies.
 
     Without it, combining daily with weekly data silently keeps only the dates
     they share (Fridays), mixing two frequencies in one result.
     """
     if len(spec.inputs) < 2:
         return []
-    # Inputs whose frequency is unknown are already reported elsewhere (G03/G04).
+    # Inputs whose frequency is unknown are already reported elsewhere (G01/G03).
     metas = {name: m for name, m in input_metas.items() if m is not None and m.frequency}
     if len({meta.frequency for meta in metas.values()}) <= 1:
         return []
@@ -840,7 +795,7 @@ def check_frequency_mismatch(
         f"{', '.join(repr(name) for name in finer)} input."
     )
     message = f"{spec.name} inputs have different frequencies: {described}."
-    return [make_issue("G09", step.id, message, suggestion)]
+    return [make_issue("G08", step.id, message, suggestion)]
 
 
 def check_look_ahead(
@@ -850,7 +805,7 @@ def check_look_ahead(
     input_metas: dict[str, StaticMeta | None],
     tested_in: list[str],
 ) -> list[Issue]:
-    """G10 LOOK_AHEAD: flag_regime with a full-sample threshold (needs approval).
+    """G09 LOOK_AHEAD: flag_regime with a full-sample threshold (needs approval).
 
     Without it, a threshold computed from the whole sample (including the future)
     would be used silently; flags then use information nobody had at the time,
@@ -878,46 +833,15 @@ def check_look_ahead(
         "Use method='expanding': each threshold then uses only the data before that "
         f"{period}. Keep full_sample only for purely descriptive labelling."
     )
-    return [make_issue("G10", step.id, message, suggestion)]
-
-
-def check_overlapping_observations(
-    step: Step,
-    spec: CapabilitySpec,
-    params: dict[str, Any],
-    input_metas: dict[str, StaticMeta | None],
-) -> list[Issue]:
-    """G11 OVERLAPPING_OBSERVATIONS: forward returns over more than one period.
-
-    Without it, h-period forward returns computed every period would look like
-    independent observations. Consecutive values share h-1 periods, so they are
-    autocorrelated by construction, and treating them as independent overstates
-    the evidence (e.g. naive standard errors or t-statistics).
-    """
-    horizon = params.get("horizon")
-    if spec.name != "forward_return" or not isinstance(horizon, int) or horizon <= 1:
-        return []
-    meta = input_metas.get("series")
-    period = PERIOD_NAMES.get(meta.frequency, "period") if meta else "period"
-    message = (
-        f"{horizon}-{period} forward returns are computed every {period}, so consecutive "
-        f"values share {horizon - 1} {period}s: they are autocorrelated by construction, "
-        "and there are far fewer independent observations than values."
-    )
-    suggestion = (
-        "Test with hac_mean_difference and leave maxlags unset: its default covers the "
-        f"overlap (at least {horizon - 1} lags). Read compare_groups' standard deviations as "
-        "descriptive only, or use horizon=1."
-    )
-    return [make_issue("G11", step.id, message, suggestion)]
+    return [make_issue("G09", step.id, message, suggestion)]
 
 
 def check_forward_data_as_signal(
     step: Step, spec: CapabilitySpec, input_metas: dict[str, StaticMeta | None]
 ) -> list[Issue]:
-    """G15 FORWARD_DATA_AS_SIGNAL: forward returns used anywhere but as an outcome.
+    """G12 FORWARD_DATA_AS_SIGNAL: forward returns used anywhere but as an outcome.
 
-    Without it, a forward return (the return from t to t+h, stamped at t) could
+    Without it, a forward return (the return from t to t+1, stamped at t) could
     feed a volatility, a flag or another transformation. Anything built from it
     uses information nobody had at t, so a "signal" would look predictive by
     construction. Forward returns may only be the outcome input of compare_groups
@@ -931,7 +855,7 @@ def check_forward_data_as_signal(
             continue
         issues.append(
             make_issue(
-                "G15",
+                "G12",
                 step.id,
                 f"Input '{name}' of {spec.name} is a forward return: forward returns contain "
                 "future information and can only be used as an outcome, never to build a "
@@ -945,113 +869,10 @@ def check_forward_data_as_signal(
     return issues
 
 
-def check_nonstationary_outcome(
-    step: Step, spec: CapabilitySpec, input_metas: dict[str, StaticMeta | None]
-) -> list[Issue]:
-    """G16 NONSTATIONARY_OUTCOME: hac_mean_difference on something that is not a return.
-
-    Without it, the test could compare the mean of a price, an index or rate level,
-    or a volatility between groups. Such levels trend and wander instead of
-    fluctuating around a stable mean (they are non-stationary): the difference then
-    mostly reflects WHEN the flagged periods happened, and the p-value is invalid.
-    """
-    meta = input_metas.get("outcome")
-    if spec.name != "hac_mean_difference" or meta is None or meta.data_type != DataType.SERIES:
-        return []
-    if meta.kind in STATIONARY_OUTCOME_KINDS:
-        return []
-    return [
-        make_issue(
-            "G16",
-            step.id,
-            f"The outcome of hac_mean_difference is a series of kind '{meta.kind}'; it must be "
-            "returns or forward returns. Levels such as prices, index levels, rates or "
-            "volatility are non-stationary, which makes the test invalid.",
-            "Compute returns (compute_returns) or forward returns (forward_return) of the "
-            "price level, and test those.",
-        )
-    ]
-
-
-def check_hac_lags(
-    step: Step,
-    spec: CapabilitySpec,
-    params: dict[str, Any],
-    input_metas: dict[str, StaticMeta | None],
-) -> list[Issue]:
-    """G17 HAC_LAG_TOO_SHORT: maxlags set below h-1 for h-period forward returns.
-
-    Without it, a user could set fewer Newey-West lags than the overlap of the
-    forward returns (h-1 periods). The standard errors would then ignore part of
-    the autocorrelation the overlap creates, and the p-value would be too optimistic.
-    """
-    meta = input_metas.get("outcome")
-    maxlags = params.get("maxlags")
-    if spec.name != "hac_mean_difference" or meta is None or meta.horizon is None:
-        return []
-    if not isinstance(maxlags, int) or isinstance(maxlags, bool):
-        return []  # null = the default rule, which covers the overlap; bad types: G03
-    overlap = meta.horizon - 1
-    if maxlags >= overlap:
-        return []
-    message = (
-        f"maxlags={maxlags} is below h-1 = {overlap} for {meta.horizon}-period forward returns: "
-        "the standard errors ignore part of the overlap between consecutive outcomes, so the "
-        "p-value is too optimistic."
-    )
-    suggestion = f"Set maxlags to at least {overlap}, or leave it unset to use the default rule."
-    return [make_issue("G17", step.id, message, suggestion)]
-
-
-def check_period(
-    step: Step,
-    spec: CapabilitySpec,
-    params: dict[str, Any],
-    input_metas: dict[str, StaticMeta | None],
-    catalog: Catalog,
-) -> list[Issue]:
-    """G03 INVALID_PARAM (period): filter_period's interval must be well defined and in the data.
-
-    Without it, a filter with no dates would silently keep everything, a start
-    after the end would give an empty result, and a period entirely outside the
-    data would silently produce nothing. Partly-covered periods pass; if too few
-    observations remain, R02 stops the run.
-    """
-    if spec.name != "filter_period":
-        return []
-    start, end = params.get("start"), params.get("end")
-    if start is None and end is None:
-        message = "filter_period needs start and/or end; neither was given."
-        suggestion = "Give start and/or end dates (YYYY-MM-DD)."
-        return [make_issue("G03", step.id, message, suggestion, key="period")]
-
-    first, last = parse_date(start), parse_date(end)
-    if first is not None and last is not None and first >= last:
-        message = f"filter_period start {start} is not before end {end}."
-        return [make_issue("G03", step.id, message, "Make start earlier than end.", key="period")]
-
-    # Coverage from the catalog: the dates every source dataset of the input has.
-    meta = input_metas.get("series")
-    entries = [catalog.get(d) for d in meta.dataset_ids] if meta else []
-    if not entries or None in entries or (first is None and last is None):
-        return []  # invalid dates (check_params) and unknown inputs are reported elsewhere
-    data_start = max(date.fromisoformat(e.start_date) for e in entries)
-    data_end = min(date.fromisoformat(e.end_date) for e in entries)
-    if (last is not None and last < data_start) or (first is not None and first > data_end):
-        names = ", ".join(e.dataset_id for e in entries)
-        message = (
-            f"The period {start or 'start of data'} to {end or 'end of data'} lies entirely "
-            f"outside the data ({names}: {data_start} to {data_end})."
-        )
-        suggestion = f"Choose dates between {data_start} and {data_end}."
-        return [make_issue("G03", step.id, message, suggestion, key="coverage")]
-    return []
-
-
 def check_material_assumptions(
     step: Step, spec: CapabilitySpec, params: dict[str, Any]
 ) -> list[Issue]:
-    """G12 MATERIAL_ASSUMPTION: a capability assumption that a human must approve.
+    """G10 MATERIAL_ASSUMPTION: a capability assumption that a human must approve.
 
     Without it, material modelling choices (e.g. simple vs log returns) would be
     made by the LLM and could change conclusions without anybody noticing.
@@ -1063,7 +884,7 @@ def check_material_assumptions(
         chosen = f" Chosen: {assumption.param}={params.get(assumption.param)!r}."
         issues.append(
             make_issue(
-                "G12",
+                "G10",
                 step.id,
                 assumption.text + (chosen if assumption.param else ""),
                 "Approve if this choice is intended, or edit the parameter.",
@@ -1074,13 +895,8 @@ def check_material_assumptions(
 
 
 # ---------------------------------------------------------------------------
-# User edits: structure lock and window units (G03, G14)
+# User edits: structure lock (G03)
 # ---------------------------------------------------------------------------
-
-# Approximate trading days per period, to suggest an equivalent window after a
-# frequency change (12 weeks ~ 60 trading days, 1 month ~ 21 trading days).
-TRADING_DAYS_PER_PERIOD = {Frequency.D: 1, Frequency.W: 5, Frequency.M: 21}
-PERIOD_UNITS = {Frequency.D: "trading days", Frequency.W: "weeks", Frequency.M: "months"}
 
 
 def check_edits(plan: Plan, edits: Any) -> list[Issue]:
@@ -1090,7 +906,7 @@ def check_edits(plan: Plan, edits: Any) -> list[Issue]:
     capability or input references, or smuggle in a field that becomes code,
     and the plan the human approved would no longer be the plan the LLM and the
     validator saw. Values themselves are not judged here: they are applied and
-    then checked by the validator (G03 for out-of-range values, G07 for datasets...).
+    then checked by the validator (G03 for out-of-range values, G06 for datasets...).
 
     Args:
         plan: the current plan.
@@ -1123,55 +939,6 @@ def check_edits(plan: Plan, edits: Any) -> list[Issue]:
                 # Covers "capability", "inputs", "id" and any invented field.
                 issues.append(rejected(f"'{name}' is not a parameter of {step_id} "
                                        f"({step.capability}).", f"{step_id}.{name}"))  # fmt: skip
-    return issues
-
-
-def check_window_units(
-    plan: Plan,
-    baseline: Plan,
-    dry_run: dict[str, dict[str, Any]],
-    baseline_dry_run: dict[str, dict[str, Any]],
-) -> list[Issue]:
-    """G14 WINDOW_UNITS_CHANGED: a frequency edit left a window counted in periods unchanged.
-
-    Window-type parameters (rolling_volatility.window, flag_regime.min_periods)
-    count periods of the frequency feeding the step. If an edit changes that
-    frequency (e.g. resample W -> D) but not the window, "12" silently changes
-    meaning from 12 weeks to 12 trading days. The plan is still valid, so this is
-    a warning with a suggested equivalent value.
-
-    Args:
-        plan: the edited plan.
-        baseline: the planner's proposal (defaults filled), same step ids.
-        dry_run: predicted metadata of the edited plan.
-        baseline_dry_run: predicted metadata of the proposal.
-    """
-    original_steps = {step.id: step for step in baseline.steps}
-    issues = []
-    for step in plan.steps:
-        spec, original = REGISTRY.get(step.capability), original_steps.get(step.id)
-        if spec is None or original is None:
-            continue
-        for ref in step.inputs.values():
-            new = dry_run.get(ref, {}).get("frequency")
-            old = baseline_dry_run.get(ref, {}).get("frequency")
-            if not new or not old or new == old:
-                continue
-            for p in spec.params:
-                value = step.params.get(p.name)
-                if not p.counted_in_periods or value != original.params.get(p.name):
-                    continue
-                old_f, new_f = Frequency(old), Frequency(new)
-                # Same calendar span in the new units, kept inside the allowed range.
-                span = value * TRADING_DAYS_PER_PERIOD[old_f] / TRADING_DAYS_PER_PERIOD[new_f]
-                suggested = int(min(max(round(span), p.min), p.max))
-                message = (
-                    f"Frequency changed from {FREQUENCY_NAMES[old_f]} to "
-                    f"{FREQUENCY_NAMES[new_f]}: {p.name} {value} now means {value} "
-                    f"{PERIOD_UNITS[new_f]}, not {value} {PERIOD_UNITS[old_f]}."
-                )
-                suggestion = f"Consider {suggested} for roughly {value} {PERIOD_UNITS[old_f]}."
-                issues.append(make_issue("G14", step.id, message, suggestion, key=p.name))
     return issues
 
 
@@ -1231,6 +998,8 @@ def infer_output_meta(
         if meta_field == "frequency":
             value = Frequency(value) if value in ("D", "W", "M") else None
         setattr(predicted, meta_field, value)
+    if spec.output_kind == SeriesKind.FORWARD_RETURNS:
+        predicted.horizon = FORWARD_HORIZON  # no parameter: always one period ahead
     return predicted
 
 
@@ -1243,7 +1012,6 @@ def validate_plan(
     plan: Plan,
     catalog: Catalog,
     *,
-    baseline: Plan | None = None,
     max_steps: int = 15,
     max_datasets: int = 5,
     max_request_chars: int = 2000,
@@ -1253,12 +1021,9 @@ def validate_plan(
     Args:
         plan: the plan to check (defaults may or may not be filled in).
         catalog: the dataset catalog.
-        baseline: the planner's proposal, when `plan` is a user-edited version of
-            it; enables G14. None for a fresh plan (and in the executor and replay,
-            where G14 is a warning that cannot change the outcome).
-        max_steps: budget for G06.
-        max_datasets: budget for G06.
-        max_request_chars: budget for G06.
+        max_steps: budget for G05.
+        max_datasets: budget for G05.
+        max_request_chars: budget for G05.
 
     Returns:
         A ValidationReport with all issues (not just the first) and the dry-run metadata.
@@ -1274,7 +1039,7 @@ def validate_plan(
     issues += check_duplicate_step_ids(plan)
 
     all_ids = [step.id for step in plan.steps]
-    # Flag step id -> the significance tests that use its flags (for G10's message).
+    # Flag step id -> the significance tests that use its flags (for G09's message).
     tested_in: dict[str, list[str]] = {}
     for step in plan.steps:
         if step.capability == "hac_mean_difference" and "flags" in step.inputs:
@@ -1294,18 +1059,11 @@ def validate_plan(
         issues += check_references(step, spec, earlier_ids, all_ids)
         issues += check_returns_on_rates(step, spec, input_metas)
         issues += check_forward_data_as_signal(step, spec, input_metas)
-        issues += check_nonstationary_outcome(step, spec, input_metas)
         issues += check_input_types(step, spec, input_metas)
         issues += check_frequency_mismatch(step, spec, input_metas)
         issues += check_look_ahead(step, spec, params, input_metas, tested_in.get(step.id, []))
-        issues += check_overlapping_observations(step, spec, params, input_metas)
-        issues += check_period(step, spec, params, input_metas, catalog)
-        issues += check_hac_lags(step, spec, params, input_metas)
         issues += check_material_assumptions(step, spec, params)
         metas[step.id] = infer_output_meta(spec, params, input_metas, catalog)
 
     dry_run = {step_id: meta.to_dict() for step_id, meta in metas.items() if meta is not None}
-    if baseline is not None:
-        baseline_dry_run = validate_plan(baseline, catalog).dry_run
-        issues += check_window_units(plan, baseline, dry_run, baseline_dry_run)
     return ValidationReport(issues=issues, dry_run=dry_run)

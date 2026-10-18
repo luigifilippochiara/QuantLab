@@ -22,23 +22,21 @@ from quantlab.types import Artifact, ArtifactMeta, DataType, Frequency, SeriesKi
 
 from conftest import (
     ARIMA_PLAN,
-    PERIOD_PLAN,
     RETURN_METHOD_APPROVAL,
     SCENARIO_1_APPROVALS,
     SPREAD_PLAN,
     as_plan,
     build_synthetic_data_dir,
-    canned_plan,
     raw_plan,
 )
 
 SUCCESS = "volatility_flag_success"  # scenario 1
 
 
-def with_horizon(horizon: int) -> dict:
-    """Scenario 1 with its forward returns (s6) over `horizon` weeks instead of one."""
+def daily_scenario_1() -> dict:
+    """Scenario 1 kept at daily frequency (resample D): windows count trading days."""
     raw = raw_plan(SUCCESS)
-    raw["steps"][5]["params"]["horizon"] = horizon
+    raw["steps"][1]["params"]["freq"] = "D"
     return raw
 
 
@@ -110,17 +108,14 @@ def test_execution_is_deterministic(catalog: Catalog) -> None:
     ]
 
 
-@pytest.mark.parametrize(
-    "name", ["scenario_1", "spread", "horizon_4", "volatility_since_2020", "returns_2022"]
-)
+@pytest.mark.parametrize("name", ["scenario_1", "spread", "daily_scenario_1", "lookahead"])
 def test_dry_run_metadata_matches_runtime_metadata(name: str, catalog: Catalog) -> None:
     """The validator's predictions must equal what the capability functions produce."""
     raw = {
         "scenario_1": raw_plan(SUCCESS),
         "spread": SPREAD_PLAN,
-        "horizon_4": with_horizon(4),
-        "volatility_since_2020": canned_plan("nasdaq_volatility_peak_since_2020"),
-        "returns_2022": canned_plan("sp500_returns_2022"),
+        "daily_scenario_1": daily_scenario_1(),
+        "lookahead": raw_plan("volatility_flag_lookahead"),
     }
     plan = as_plan(raw[name])
     report = validate_plan(plan, catalog)
@@ -169,49 +164,10 @@ def test_r02_window_too_long_for_the_history(catalog: Catalog) -> None:
                  params={"window": 200}),
         ],
     )  # fmt: skip
-    result = execute_plan(fill_defaults(plan), catalog, {"G12:s3:return_method"})
+    result = execute_plan(fill_defaults(plan), catalog, {"G10:s3:return_method"})
     assert result.status == "blocked"
     assert "R02" in runtime_codes(result)
     assert result.step_records[-1].step_id == "s4"
-
-
-def test_r02_period_too_short_for_the_next_step(catalog: Catalog) -> None:
-    # Filtering BEFORE the rolling window: ~24 weekly returns since June 2025 are
-    # fewer than the 3 x 12 that a 12-week volatility needs.
-    raw = canned_plan("nasdaq_volatility_peak_since_2020")
-    load, weekly, returns = raw["steps"][:3]
-    raw["steps"] = [
-        load, weekly, returns,
-        {"id": "s4", "capability": "filter_period", "inputs": {"series": "s3"},
-         "params": {"start": "2025-06-01"}},
-        {"id": "s5", "capability": "rolling_volatility", "inputs": {"series": "s4"},
-         "params": {"window": 12}},
-    ]  # fmt: skip
-    result = execute_plan(as_plan(raw), catalog, {RETURN_METHOD_APPROVAL})
-    assert result.status == "blocked" and runtime_codes(result) == {"R02"}
-    assert result.step_records[-1].capability == "rolling_volatility"
-
-
-def test_r02_period_that_leaves_no_observations(catalog: Catalog) -> None:
-    # Inside the catalog's coverage (so no G03), but after the last complete week.
-    raw = canned_plan("nasdaq_volatility_peak_since_2020")
-    raw["steps"][4]["params"] = {"start": catalog.entries["NASDAQCOM"].end_date}
-    plan = as_plan(raw)
-    assert not validate_plan(plan, catalog).is_blocked
-    result = execute_plan(plan, catalog, {RETURN_METHOD_APPROVAL})
-    assert result.status == "blocked"
-    assert [i.issue_id for i in result.issues] == ["R02:s5:output"]
-    assert result.step_records[-1].step_id == "s5" and "s5" not in result.artifacts
-
-
-def test_step_record_keeps_the_resolved_period(catalog: Catalog) -> None:
-    result = execute_plan(as_plan(PERIOD_PLAN), catalog)
-    assert result.status == "completed", result.error
-    record = result.step_records[1]
-    # start as given; no end, so the period ends at the last observation.
-    last_date = catalog.entries["NASDAQCOM"].end_date
-    assert (record.meta["period_start"], record.meta["period_end"]) == ("2021-01-01", last_date)
-    assert result.step_records[0].meta["period_start"] is None
 
 
 # --- R03 MISSING_DATA -------------------------------------------------------------

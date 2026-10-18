@@ -10,7 +10,7 @@ import pytest
 
 from quantlab.config import Settings
 from quantlab.data import Catalog, load_dataset
-from quantlab.mock_scenarios import CANNED_REQUESTS, SCENARIOS, SCENARIOS_BY_ID
+from quantlab.mock_scenarios import SCENARIOS, SCENARIOS_BY_ID
 from quantlab.plan import plan_tool_schema
 from quantlab.planner import (
     MockPlanner,
@@ -54,34 +54,13 @@ def test_mock_planner_matches_by_keyword() -> None:
     assert result.plan.steps[-1].params["method"] == "full_sample"  # scenario 2
 
 
-@pytest.mark.parametrize("canned", CANNED_REQUESTS, ids=lambda c: c.id)
-def test_mock_planner_answers_canned_requests_by_exact_text(canned) -> None:
-    for text in (canned.request, canned.id):
-        result = MockPlanner().generate_plan(text, list(canned.dataset_ids))
-        assert [s.capability for s in result.plan.steps] == [
-            s["capability"] for s in canned.plan["steps"]
-        ]
-    # The volatility request contains example 1's keywords (nasdaq, volatil), yet
-    # its exact text gets its own plan; a variation still matches example 1.
-    variation = MockPlanner().generate_plan("nasdaq volatility since 2020, and its peak", [])
-    assert [s.capability for s in variation.plan.steps] == [
-        s["capability"] for s in PLAN_A["steps"]
-    ]
-
-
-def test_system_prompt_explains_filter_period_placement(catalog: Catalog) -> None:
-    prompt = build_system_prompt(catalog, ["NASDAQCOM"])
-    assert '"name": "filter_period"' in prompt and '"name": "find_extremes"' in prompt
-    assert "filter AFTER the calculation" in prompt and "BEFORE a rolling" in prompt
-    # A relative period ("the last 5 years") becomes an explicit start from the data's end.
-    assert "end_date in DATASETS minus that many years" in prompt
-
-
 def test_system_prompt_keeps_forward_returns_as_outcomes(catalog: Catalog) -> None:
     prompt = build_system_prompt(catalog, ["NASDAQCOM"])
     assert '"name": "forward_return"' in prompt and '"name": "hac_mean_difference"' in prompt
     assert "use it ONLY as the values of compare_groups" in prompt
     assert "never give them to any other capability" in prompt
+    assert "always covers exactly the next period" in prompt  # no other horizon
+    assert '"name": "horizon"' not in prompt and '"name": "maxlags"' not in prompt
     # The one registered test is not refused as a "statistical test".
     assert "statistical tests other than hac_mean_difference" in prompt
 

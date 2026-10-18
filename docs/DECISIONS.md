@@ -5,6 +5,10 @@ The design decisions behind QuantLab: choices made where the v1 specification
 rationale for later changes to the product. One short paragraph each: what, why,
 alternatives considered.
 
+Each section uses the guardrail and capability codes in force when it was
+written. The codes were renumbered once, in "Simplified registry and guardrails,
+renumbered codes" (the last section), which lists every old and new code.
+
 ## Project setup
 
 **Python 3.12+, not 3.11+.** The current numpy release (2.5) requires Python
@@ -977,3 +981,111 @@ differed only in what they wrote out: one left `annualize`, `quantile` and
 named the 90th percentile as an assumption in their notes. Alternative: keep the
 fully specified request, rejected because it reads like a parameter list rather
 than a question an analyst would ask, and the defaults make it unnecessary.
+
+## Simplified registry and guardrails, renumbered codes
+
+**Capabilities removed: `filter_period`, `find_extremes` and `summary_stats`.**
+The menu is reduced to what the flagship analysis and its protections use: load,
+resample, returns, differences, spread, rolling volatility, regime flags, forward
+returns, the descriptive comparison and the one significance test. The rates
+capabilities (`difference`, `spread`) and all six datasets stay. Removed with them:
+their functions, specs and tests, the planner-prompt rules on period placement
+and extremes, `CANNED_REQUESTS` and `match_canned_request` (every canned request
+used a removed capability), their golden cases, and the machinery only they used:
+the `date` parameter type and its widget, nullable parameters, `MinObsRule.output_min_obs`
+with R02's output check, `ArtifactMeta.period_start`/`period_end`, the period fact
+and sentence in the narrator, and tables of named rows. The golden set also lost
+the three requests that needed summary statistics (`vix_summary`,
+`sp500_weekly_log_average`, `two_year_monthly_changes`). Alternative: keep them as
+"advanced" capabilities, rejected because every capability is one more thing for
+the planner to misuse and for a reviewer to check.
+
+**`forward_return` is always one period ahead.** The `horizon` parameter is gone:
+the value at t is the return from the close of t to the close of t+1, one period
+of the input's frequency (the following week on weekly data). `horizon=1` is still
+recorded in the metadata (`capabilities.FORWARD_HORIZON`, also set by the dry run)
+and in the test's table, so results and hashes are unchanged. Multi-period
+horizons were the only source of overlapping observations; without them, G11
+OVERLAPPING_OBSERVATIONS and G17 HAC_LAG_TOO_SHORT have nothing to check.
+Alternative: keep the horizon with both guardrails, rejected as complexity no
+example workflow needs.
+
+**`hac_mean_difference` always uses the Newey-West lag rule**, floor(4·(T/100)^(2/9)),
+with no `maxlags` parameter and no h-1 floor (h is always 1). `maxlags_used` stays
+in the output table. HAC errors are now justified by heteroskedasticity (flagged
+weeks have a much higher variance than normal weeks) and autocorrelation
+(volatility clusters, so weeks are not independent); the overlap argument is gone.
+`compare_groups` and the test still report `n_episodes_flagged`, the narrator
+still states it, and R05 LOW_EFFECTIVE_SAMPLE is unchanged.
+
+**Window units are documented, not guarded.** `rolling_volatility.window` and
+`flag_regime.min_periods` state in their registry descriptions that they count
+periods of the input's frequency (12 = 12 weeks on weekly data, 12 trading days on
+daily data); the edit widget and the step summary already showed the unit. G14
+WINDOW_UNITS_CHANGED is removed with the `baseline` argument of `validate_plan`,
+`check_window_units` and its tables. `resample` keeps D, W and M.
+
+**Guardrails merged or removed.** G04 BAD_REFERENCE's checks (inputs given and
+referring to earlier steps, unique step ids) moved into G01, renamed INVALID_PLAN
+(schema, empty plans, step references). G16 NONSTATIONARY_OUTCOME became part of
+TYPE_MISMATCH, which reports a non-return outcome of `hac_mean_difference` with a
+message explaining that levels are non-stationary and make the test invalid. G11,
+G14 and G17 are removed. No other guardrail changed its logic or severity.
+
+**Codes renumbered once; permanent from this version on.** With these guardrails and
+capabilities gone, the codes were renumbered to close the gaps, in a single
+simultaneous pass (each old code looked up once in the table below, never as
+sequential find-and-replace, since numbers are reused with new meanings), including
+codes in comments, docstrings, messages, issue ids and test names. Old manifests
+carry old codes in their issue ids, so the stored runs were deleted and the demo
+runs regenerated. From this version on, codes are permanent again: never renumbered,
+never reused. This section and the sections above it keep the codes of their time.
+
+| Old | Name | New |
+|---|---|---|
+| G01 | SCHEMA_INVALID | G01 INVALID_PLAN |
+| G02 | UNKNOWN_CAPABILITY | G02 |
+| G03 | INVALID_PARAM | G03 |
+| G04 | BAD_REFERENCE | merged into G01 |
+| G05 | TYPE_MISMATCH | G04 |
+| G06 | BUDGET_EXCEEDED | G05 |
+| G07 | UNKNOWN_DATASET | G06 |
+| G08 | RETURNS_ON_RATES | G07 |
+| G09 | FREQUENCY_MISMATCH | G08 |
+| G10 | LOOK_AHEAD | G09 |
+| G11 | OVERLAPPING_OBSERVATIONS | removed |
+| G12 | MATERIAL_ASSUMPTION | G10 |
+| G13 | PLANNER_REFUSED | G11 |
+| G14 | WINDOW_UNITS_CHANGED | removed |
+| G15 | FORWARD_DATA_AS_SIGNAL | G12 |
+| G16 | NONSTATIONARY_OUTCOME | merged into G04 TYPE_MISMATCH |
+| G17 | HAC_LAG_TOO_SHORT | removed |
+| R01, R02, R03, R04, R05 | (runtime) | unchanged |
+
+| Old | Capability | New |
+|---|---|---|
+| C01, C02, C03, C04, C05, C06, C07 | `load_series`, `resample`, `compute_returns`, `difference`, `spread`, `rolling_volatility`, `flag_regime` | unchanged |
+| C08 | `summary_stats` | removed |
+| C09 | `compare_groups` | C09 |
+| C10 | `filter_period` | removed |
+| C11 | `find_extremes` | removed |
+| C12 | `forward_return` | C08 |
+| C13 | `hac_mean_difference` | C10 |
+
+**The five example workflows are the golden reference, and a test keeps it.**
+Before any change, each workflow was run in mock mode (auto-approved as `cli demo`
+does) on the synthetic test data and on the committed FRED snapshots, and the
+status, every static and runtime issue, the plan, every step's hashes and
+metadata, every table number and the facts sheet were recorded in
+`tests/fixtures/golden_scenarios.json`. `tests/test_golden_scenarios.py` re-runs
+them and requires identical results, allowing only the differences made on
+purpose: codes and issue ids translated by the table above, and the removed
+parameters absent from scenario 1's plan. No runtime guardrail fired in any of
+them, before or after. The committed-data comparison is skipped if the snapshots
+are ever refreshed; the fixture is never regenerated.
+
+**Versions bumped.** The planner prompt is `planner-v6` (no period, extremes,
+horizon or lag rules; forward returns always cover the next period) and the canned
+plans `canned-scenarios-v9`; with the new registry version, no plan cached before
+is reused. The scenario 3 refusal text, part of a canned plan, was left unchanged.
+

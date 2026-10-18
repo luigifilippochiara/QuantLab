@@ -13,8 +13,7 @@ directly (from a notebook, a test or replay) cannot skip the checks.
 
 While running it applies the runtime guardrails that need data:
     R01 DATASET_HASH_MISMATCH (BLOCK)   before load_series
-    R02 INSUFFICIENT_DATA     (BLOCK)   before any step with inputs, and after
-                                        filter_period (the selected period)
+    R02 INSUFFICIENT_DATA     (BLOCK)   before any step with inputs
     R03 MISSING_DATA          (WARN)    after load_series
     R04 ALIGNMENT_LOSS        (WARN)    before two-input steps
     R05 LOW_EFFECTIVE_SAMPLE  (WARN)    before compare_groups / hac_mean_difference
@@ -216,28 +215,6 @@ def check_insufficient_data(
     ]
 
 
-def check_insufficient_output(step: Step, spec: CapabilitySpec, output: Artifact) -> list[Issue]:
-    """R02 INSUFFICIENT_DATA (output): enough observations left in a step's output.
-
-    Only for capabilities whose min_obs rule sets output_min_obs (filter_period).
-    Without it, a period that matches no data (e.g. after the last weekly close)
-    would pass an empty series on, or end the run with an empty result.
-    """
-    required = spec.min_obs.output_min_obs
-    if required is None or output.meta.n_obs >= required:
-        return []
-    return [
-        make_issue(
-            "R02",
-            step.id,
-            f"{spec.name} left {output.meta.n_obs} observations; at least {required} are "
-            f"needed ({spec.min_obs.description}).",
-            "Choose a longer period.",
-            key="output",
-        )
-    ]
-
-
 def check_missing_data(step: Step, output: Artifact) -> list[Issue]:
     """R03 MISSING_DATA: warn when more than 5% of a raw series was missing.
 
@@ -428,16 +405,6 @@ def execute_plan(
         # Runtime guardrails that look at the output.
         if spec.reads_catalog:
             record.issues += check_missing_data(step, output)
-        output_issues = check_insufficient_output(step, spec, output)
-        if output_issues:
-            record.issues += output_issues
-            record.status = "blocked"
-            record.duration_ms = _elapsed_ms(step_started)
-            result.step_records.append(record)
-            result.issues += record.issues
-            result.status = "blocked"
-            result.error = f"Step {step.id} ({step.capability}): {output_issues[0].message}"
-            break
 
         hashes[step.id] = artifact_hash(output)
         record.output_hash = hashes[step.id]
@@ -450,12 +417,10 @@ def execute_plan(
             "frequency": output.meta.frequency,
             "return_method": output.meta.return_method,
             "periods": output.meta.periods,
-            "horizon": output.meta.horizon,  # forward_return's h (and tables built on it)
+            # forward_return's horizon, always 1 (and the tables built on forward returns)
+            "horizon": output.meta.horizon,
             "source_dataset_ids": output.meta.source_dataset_ids,
             "notes": output.meta.notes,
-            # filter_period's resolved interval, kept in the run manifest.
-            "period_start": output.meta.period_start,
-            "period_end": output.meta.period_end,
         }
         record.duration_ms = _elapsed_ms(step_started)
         result.artifacts[step.id] = output

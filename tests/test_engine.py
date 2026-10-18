@@ -79,7 +79,7 @@ def test_invalid_edit_blocks_execution(settings: Settings) -> None:
 def test_only_open_approval_issues_can_be_approved(settings: Settings) -> None:
     session = start(settings)
     with pytest.raises(ValueError):
-        session.approve(["G10:s5"])  # only scenario 2 raises it
+        session.approve(["G09:s5"])  # only scenario 2 raises it
     # An edit to a step that does not exist is rejected (see test_editing.py).
     assert session.apply_param_edits({"s99": {"window": 3}}).is_blocked
 
@@ -88,7 +88,7 @@ def test_blocked_scenario_is_recorded(settings: Settings) -> None:
     session = start(settings, "arima_forecast_block")
     assert session.status == "blocked"
     record = load_run(session.run_id, settings.runs_dir)
-    assert record.status == "blocked" and "G13" in record.error
+    assert record.status == "blocked" and "G11" in record.error
     events = read_events(settings.events_path)
     assert events[-1]["event_type"] == "run_failed"
     assert events[-1]["details"]["status"] == "blocked"
@@ -107,7 +107,7 @@ def test_planner_failure_is_a_recorded_g01(settings: Settings) -> None:
 def test_over_budget_request_never_reaches_the_planner(settings: Settings) -> None:
     client = FakeAnthropicClient(error=AssertionError("must not be called"))
     session = Session.start("x" * 5000, ["NASDAQCOM"], "live", settings, client)
-    assert session.create_plan().codes() == ["G06"]
+    assert session.create_plan().codes() == ["G05"]
     assert client.calls == []
 
 

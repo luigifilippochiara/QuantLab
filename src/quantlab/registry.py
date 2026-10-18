@@ -22,8 +22,7 @@ from typing import Any, Literal
 from quantlab import capabilities
 from quantlab.types import Artifact, DataType, SeriesKind
 
-# "date" is an ISO date string, "YYYY-MM-DD" (JSON has no date type).
-ParamType = Literal["int", "float", "str", "bool", "date"]
+ParamType = Literal["int", "float", "str", "bool"]
 
 # Special values for CapabilitySpec.output_kind, besides a fixed SeriesKind.
 SAME_AS_INPUT = "same_as_input"  # e.g. resample keeps the kind of its input
@@ -53,7 +52,7 @@ class ParamSpec:
 
     Fields:
         name: parameter name used in plans.
-        type: "int", "float", "str", "bool" or "date" (a "YYYY-MM-DD" string).
+        type: "int", "float", "str" or "bool".
         description: what it controls, in plain words.
         required: if True the plan must give a value; if False `default` is filled in.
         default: value used when the plan omits an optional parameter.
@@ -61,11 +60,9 @@ class ParamSpec:
         max: largest allowed value (numbers only, inclusive).
         choices: allowed values (strings only).
         counted_in_periods: True for window-type parameters counted in periods of
-            the input's frequency (12 means 12 weeks on weekly data, 12 days on
-            daily data); used by G14 and to label the edit widget.
-        nullable: True if null is a valid value meaning "not set" (the default is
-            then null), e.g. filter_period's start and end. Every other
-            parameter rejects null.
+            the input's frequency (12 means 12 weeks on weekly data, 12 trading
+            days on daily data); shown to the LLM as the parameter's unit, and
+            used to label the edit widget and the step summary.
     """
 
     name: str
@@ -77,7 +74,6 @@ class ParamSpec:
     max: float | None = None
     choices: tuple[str, ...] | None = None
     counted_in_periods: bool = False
-    nullable: bool = False
 
 
 @dataclass(frozen=True)
@@ -87,7 +83,7 @@ class Assumption:
     Fields:
         id: short identifier, e.g. "return_method".
         text: the assumption in plain words.
-        requires_approval: if True the user must explicitly approve it (guardrail G12).
+        requires_approval: if True the user must explicitly approve it (guardrail G10).
         param: the parameter whose chosen value the assumption is about, if any.
     """
 
@@ -106,15 +102,12 @@ class MinObsRule:
         min_obs: absolute minimum number of usable (aligned) observations.
         window_param: if set, also require window_multiple x params[window_param].
         window_multiple: multiplier for window_param.
-        output_min_obs: if set, the step's OUTPUT must also have this many
-            observations (filter_period: the selected period); checked after the step.
     """
 
     description: str
     min_obs: int = 1
     window_param: str | None = None
     window_multiple: int = 1
-    output_min_obs: int | None = None
 
 
 @dataclass(frozen=True)
@@ -368,7 +361,7 @@ ROLLING_VOLATILITY = CapabilitySpec(
         ParamSpec(
             "window",
             "int",
-            "Observations per rolling window, in periods of the input frequency "
+            "Observations per rolling window, counted in periods of the input's frequency "
             "(12 = 12 weeks on weekly data, 12 trading days on daily data).",
             min=4,
             max=260,
@@ -435,8 +428,9 @@ FLAG_REGIME = CapabilitySpec(
         ParamSpec(
             "min_periods",
             "int",
-            "Expanding method: past observations required before flagging starts, in "
-            "periods of the input frequency.",
+            "Expanding method: past observations required before flagging starts, counted "
+            "in periods of the input's frequency (52 = 52 weeks on weekly data, 52 trading "
+            "days on daily data).",
             required=False,
             default=52,
             min=20,
@@ -465,20 +459,55 @@ FLAG_REGIME = CapabilitySpec(
     summary_params=("quantile", "method"),
 )
 
-SUMMARY_STATS = CapabilitySpec(
+FORWARD_RETURN = CapabilitySpec(
     code="C08",
-    name="summary_stats",
-    description="Descriptive statistics: count, mean, std, min, max, skew, excess kurtosis.",
-    func=capabilities.summary_stats,
-    inputs=(InputSpec("series", (DataType.SERIES,), "Any series."),),
-    params=(),
-    output_type=DataType.TABLE,
-    output_kind=None,
-    min_obs=MinObsRule("at least 4 observations", min_obs=4),
-    assumptions=(
-        Assumption("estimators", "Sample std (ddof=1); skew and excess kurtosis bias-adjusted."),
+    name="forward_return",
+    description=(
+        "Return over the NEXT period, stamped at the date it starts from: the return from "
+        "the close of t to the close of t+1 (the following week on weekly data), from a "
+        "price or index level (resample first). Future information: use it ONLY as the "
+        "outcome (values of compare_groups, outcome of hac_mean_difference), never as the "
+        "input of anything else."
     ),
-    library_calls="pandas.Series.mean / .std(ddof=1) / .min / .max / .skew / .kurt",
+    func=capabilities.forward_return,
+    inputs=(
+        InputSpec(
+            "series",
+            (DataType.SERIES,),
+            "Price or index level series, at the frequency of the flags.",
+            (SeriesKind.PRICE_LEVEL, SeriesKind.INDEX_LEVEL),
+        ),
+    ),
+    params=(
+        ParamSpec(
+            "method",
+            "str",
+            "simple = P_{t+1}/P_t - 1; log = ln(P_{t+1}/P_t).",
+            choices=("simple", "log"),
+        ),
+    ),
+    output_type=DataType.SERIES,
+    output_kind=SeriesKind.FORWARD_RETURNS,
+    min_obs=MinObsRule("at least 2 observations", min_obs=2),
+    assumptions=(
+        Assumption(
+            "return_method",
+            "The return method is a material modelling choice: simple returns compound "
+            "multiplicatively, log returns add up over time, and the two give different "
+            "averages.",
+            requires_approval=True,
+            param="method",
+        ),
+        Assumption(
+            "outcome_only",
+            "Forward returns are not known at t: they are only an outcome, compared across "
+            "periods defined by information known at t. The last observation has no "
+            "future price yet and is dropped, not filled.",
+        ),
+    ),
+    library_calls="P.shift(-1) / P - 1 (pandas) | numpy.log(P.shift(-1) / P)",
+    meta_from_params={"return_method": "method"},
+    summary_params=("method",),
 )
 
 COMPARE_GROUPS = CapabilitySpec(
@@ -518,152 +547,8 @@ COMPARE_GROUPS = CapabilitySpec(
     ),
 )
 
-FILTER_PERIOD = CapabilitySpec(
-    code="C10",
-    name="filter_period",
-    description=(
-        "Restrict a series to a time interval given by start and/or end dates (inclusive). "
-        "Placement matters: filtering BEFORE a rolling or expanding "
-        "calculation shortens the history it uses; filtering AFTER keeps the full "
-        "history for the calculation and only trims what is reported."
-    ),
-    func=capabilities.filter_period,
-    inputs=(InputSpec("series", (DataType.SERIES,), "Any series to restrict to a period."),),
-    params=(
-        ParamSpec(
-            "start",
-            "date",
-            "First date to keep, YYYY-MM-DD, inclusive; null = from the first observation.",
-            required=False,
-            default=None,
-            nullable=True,
-        ),
-        ParamSpec(
-            "end",
-            "date",
-            "Last date to keep, YYYY-MM-DD, inclusive; null = up to the last observation.",
-            required=False,
-            default=None,
-            nullable=True,
-        ),
-    ),
-    output_type=DataType.SERIES,
-    output_kind=SAME_AS_INPUT,
-    min_obs=MinObsRule(
-        "at least 2 observations, before and after filtering", min_obs=2, output_min_obs=2
-    ),
-    assumptions=(
-        Assumption(
-            "inclusive",
-            "start and end are inclusive; a missing start or end means the first or last "
-            "observation.",
-        ),
-    ),
-    library_calls="boolean mask on the pandas DatetimeIndex",
-    summary_params=("start", "end"),
-)
-
-FIND_EXTREMES = CapabilitySpec(
-    code="C11",
-    name="find_extremes",
-    description=(
-        "When a series reached its maximum and/or minimum, and the value there (e.g. when "
-        "an index peaked, or when volatility was highest). Works on any series."
-    ),
-    func=capabilities.find_extremes,
-    inputs=(
-        InputSpec("series", (DataType.SERIES,), "Any series: a level, returns, a volatility..."),
-    ),
-    params=(
-        ParamSpec(
-            "which",
-            "str",
-            "max, min or both.",
-            required=False,
-            default="both",
-            choices=("max", "min", "both"),
-        ),
-    ),
-    output_type=DataType.TABLE,
-    output_kind=None,
-    min_obs=MinObsRule("at least 1 observation"),
-    assumptions=(
-        Assumption(
-            "ties",
-            "Missing values are ignored. If the extreme value occurs on several dates, the "
-            "earliest is reported and tie_count gives the number of dates.",
-        ),
-    ),
-    library_calls="pandas.Series.dropna().max() / .min(); dates where the value equals it",
-    summary_params=("which",),
-)
-
-
-FORWARD_RETURN = CapabilitySpec(
-    code="C12",
-    name="forward_return",
-    description=(
-        "Return over the NEXT h periods, stamped at the date it starts from: the return from "
-        "the close of t to the close of t+h, from a price or index level (resample first). "
-        "Future information: use it ONLY as the outcome (values of compare_groups, outcome "
-        "of hac_mean_difference), never as the input of anything else."
-    ),
-    func=capabilities.forward_return,
-    inputs=(
-        InputSpec(
-            "series",
-            (DataType.SERIES,),
-            "Price or index level series, at the frequency of the flags.",
-            (SeriesKind.PRICE_LEVEL, SeriesKind.INDEX_LEVEL),
-        ),
-    ),
-    params=(
-        ParamSpec(
-            "method",
-            "str",
-            "simple = P_{t+h}/P_t - 1; log = ln(P_{t+h}/P_t).",
-            choices=("simple", "log"),
-        ),
-        ParamSpec(
-            "horizon",
-            "int",
-            "h, the number of periods ahead, in periods of the input frequency "
-            "(1 = the following week on weekly data).",
-            required=False,
-            default=1,
-            min=1,
-            max=13,
-            counted_in_periods=True,
-        ),
-    ),
-    output_type=DataType.SERIES,
-    output_kind=SeriesKind.FORWARD_RETURNS,
-    min_obs=MinObsRule(
-        "at least 2 x horizon observations", min_obs=2, window_param="horizon", window_multiple=2
-    ),
-    assumptions=(
-        Assumption(
-            "return_method",
-            "The return method is a material modelling choice: simple returns compound "
-            "multiplicatively, log returns add up over time, and the two give different "
-            "averages.",
-            requires_approval=True,
-            param="method",
-        ),
-        Assumption(
-            "outcome_only",
-            "Forward returns are not known at t: they are only an outcome, compared across "
-            "periods defined by information known at t. The last h observations have no "
-            "future price yet and are dropped, not filled.",
-        ),
-    ),
-    library_calls="P.shift(-h) / P - 1 (pandas) | numpy.log(P.shift(-h) / P)",
-    meta_from_params={"return_method": "method", "horizon": "horizon"},
-    summary_params=("horizon", "method"),
-)
-
 HAC_MEAN_DIFFERENCE = CapabilitySpec(
-    code="C13",
+    code="C10",
     name="hac_mean_difference",
     description=(
         "Significance test of the difference in mean outcome between flagged and normal "
@@ -687,19 +572,7 @@ HAC_MEAN_DIFFERENCE = CapabilitySpec(
             "Regime flags with the same frequency, known at t (e.g. an expanding threshold).",
         ),
     ),
-    params=(
-        ParamSpec(
-            "maxlags",
-            "int",
-            "Newey-West lag truncation; null = floor(4*(T/100)^(2/9)) for T observations, "
-            "raised to at least h-1 for h-period forward returns.",
-            required=False,
-            default=None,
-            min=0,
-            max=52,
-            nullable=True,
-        ),
-    ),
+    params=(),
     output_type=DataType.TABLE,
     output_kind=None,
     min_obs=MinObsRule("at least 30 common observations", min_obs=30),
@@ -707,8 +580,9 @@ HAC_MEAN_DIFFERENCE = CapabilitySpec(
         Assumption("inner_join", "Only dates present in both inputs are kept."),
         Assumption(
             "hac",
-            "Newey-West standard errors (Bartlett kernel) allow for clustered volatility and "
-            "for the overlap of multi-period forward returns; p-values and the 95% interval "
+            "Newey-West standard errors (Bartlett kernel, lags set by the rule "
+            "floor(4*(T/100)^(2/9)) for T observations) allow for the higher variance of "
+            "flagged periods and for clustered volatility; p-values and the 95% interval "
             "use the normal distribution (valid in large samples).",
         ),
         Assumption(
@@ -719,19 +593,20 @@ HAC_MEAN_DIFFERENCE = CapabilitySpec(
     ),
     library_calls=(
         "statsmodels OLS(outcome, [const, flag]).fit(cov_type='HAC', "
-        "cov_kwds={'maxlags': L, 'kernel': 'bartlett'})"
+        "cov_kwds={'maxlags': L, 'kernel': 'bartlett'}), L = floor(4*(T/100)^(2/9))"
     ),
-    summary_params=("maxlags",),
 )
 
 
 # The registry itself: capability name -> spec. Built from a list so each key is
 # guaranteed to equal the spec's own name. This dict IS the whitelist.
 #
-# Capability codes (C01, C02, ...) are permanent, like the guardrail codes: each
-# is written explicitly in its spec (never derived from its position in this
-# list), codes are never renumbered, and a retired capability's code is never
-# reused, so the codes in older run records keep their meaning.
+# Capability codes (C01, C02, ...) are written explicitly in each spec, never
+# derived from its position in this list. They were renumbered once, when the
+# registry was simplified (docs/DECISIONS.md lists the old and new codes); from
+# that version on they are permanent, like the guardrail codes: never renumbered,
+# and a retired capability's code is never reused, so the codes in run records
+# keep their meaning.
 REGISTRY: dict[str, CapabilitySpec] = {
     spec.name: spec
     for spec in [
@@ -742,11 +617,8 @@ REGISTRY: dict[str, CapabilitySpec] = {
         SPREAD,
         ROLLING_VOLATILITY,
         FLAG_REGIME,
-        SUMMARY_STATS,
-        COMPARE_GROUPS,
-        FILTER_PERIOD,
-        FIND_EXTREMES,
         FORWARD_RETURN,
+        COMPARE_GROUPS,
         HAC_MEAN_DIFFERENCE,
     ]
 }
@@ -789,8 +661,6 @@ def describe_capability(spec: CapabilitySpec) -> dict[str, Any]:
             described["choices"] = list(p.choices)
         if p.counted_in_periods:
             described["unit"] = "periods of the input frequency"
-        if p.nullable:
-            described["nullable"] = True
         described["description"] = p.description
         params.append(described)
 
