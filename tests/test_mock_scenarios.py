@@ -94,7 +94,7 @@ FLAGSHIP_PLAN = [
     ("s5", "compute_returns", {"series": "s3"}, {"method": "log", "periods": 1}),
     ("s6", "rolling_volatility", {"series": "s5"}, {"window": 12, "annualize": True}),
     ("s7", "flag_regime", {"series": "s6"},
-     {"method": "expanding", "quantile": 0.90, "min_periods": 52}),
+     {"method": "expanding", "quantile": 0.90, "min_periods": 52, "direction": "above"}),
     ("s8", "forward_return", {"series": "s4"}, {"method": "simple"}),
     ("s9", "compare_groups", {"values": "s8", "flags": "s7"}, {}),
     ("s10", "hac_mean_difference", {"outcome": "s8", "flags": "s7"}, {}),
@@ -195,7 +195,7 @@ def test_flagship_demo_edit_quantile_out_of_range_is_blocked(settings: Settings)
     report = session.apply_param_edits({"s7": {"quantile": 1.5}})
     (v03,) = report.blocks
     assert (v03.code, v03.name, v03.step_id) == ("V03", "INVALID_PARAM", "s7")
-    assert "'quantile'=1.5 is outside [0.5, 0.99]" in v03.message
+    assert "'quantile'=1.5 is outside [0.01, 0.99]" in v03.message
     with pytest.raises(ExecutionRefusedError):
         session.execute()
 
@@ -209,7 +209,7 @@ VOLATILITY_PLAN = [
     ("s3", "compute_returns", {"series": "s2"}, {"method": "log", "periods": 1}),
     ("s4", "rolling_volatility", {"series": "s3"}, {"window": 12, "annualize": True}),
     ("s5", "flag_regime", {"series": "s4"},
-     {"method": "expanding", "quantile": 0.90, "min_periods": 52}),
+     {"method": "expanding", "quantile": 0.90, "min_periods": 52, "direction": "above"}),
     ("s6", "forward_return", {"series": "s2"}, {"method": "simple"}),
     ("s7", "compare_groups", {"values": "s6", "flags": "s5"}, {}),
     ("s8", "hac_mean_difference", {"outcome": "s6", "flags": "s5"}, {}),
@@ -369,10 +369,36 @@ def test_scenario_4_injected_plan_is_blocked_and_never_runs(
 
 def test_scenario_2_frequency_mismatch_blocks_before_anything_runs(settings: Settings) -> None:
     session = start("spread_frequency_mismatch_block", settings)
-    (v08,) = session.report.issues  # the frequency mismatch, and nothing else
-    assert (v08.issue_id, v08.action) == ("V08:s4", "BLOCK")
+    # The frequency mismatch, and the look-ahead approval of the full-history threshold.
+    assert [(i.issue_id, i.action) for i in session.report.issues] == [
+        ("V08:s4", "BLOCK"),
+        ("V09:s5", "APPROVE"),
+    ]
+    v08 = session.report.blocks[0]
     assert "'a' is weekly, 'b' is daily" in v08.message
     assert "Resample DGS2 to weekly" in v08.suggestion
     assert session.status == "blocked" and not session.can_execute()[0]
     with pytest.raises(ExecutionRefusedError):
         session.execute()
+
+
+def test_scenario_2_asks_for_the_bottom_tail_of_the_spread() -> None:
+    flags = SCENARIOS_BY_ID["spread_frequency_mismatch_block"].plan["steps"][4]
+    assert (flags["capability"], flags["inputs"]) == ("flag_regime", {"series": "s4"})
+    assert flags["params"] == {"method": "full_sample", "quantile": 0.10, "min_periods": 52,
+                               "direction": "below"}  # fmt: skip
+
+
+def test_scenario_2_runs_once_both_yields_are_daily(settings: Settings) -> None:
+    # The fix the app allows (steps are locked): the 10-year kept daily, like the 2-year.
+    session = start("spread_frequency_mismatch_block", settings)
+    report = session.apply_param_edits({"s2": {"freq": "D"}})
+    assert [i.issue_id for i in report.issues] == ["V09:s5"]  # no more V08
+    session.approve(["V09:s5"])
+    execution = session.execute()
+    assert execution.status == "completed"
+    spread = execution.artifacts["s4"].value
+    flags = execution.artifacts["s5"].value
+    # The bottom tail of the whole history: below the 10% quantile, about 10% of the days.
+    assert flags.any() and (spread[flags] < spread.quantile(0.10)).all()
+    assert 0.09 < flags.mean() < 0.11

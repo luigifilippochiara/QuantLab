@@ -44,13 +44,14 @@
     forward_return: {method: simple}
   guardrails: {approve: [V10, V10], warn: [], block: []}
 
-# The canned plan follows the request (weekly 10-year, daily 2-year) and the
+# The canned plan follows the request (weekly 10-year, daily 2-year), then flags the
+# bottom 10% of the spread over its whole history (the look-ahead approval), and the
 # validator blocks it; a planner that refuses is also correct.
 - id: s2_spread_frequency_mismatch
   scenario: spread_frequency_mismatch_block
   expect: refuse_or_block
-  capabilities: [load_series, resample, load_series, spread]
-  guardrails: {approve: [], warn: [], block: [V08]}
+  capabilities: [load_series, resample, load_series, spread, flag_regime]
+  guardrails: {approve: [V09], warn: [], block: [V08]}
 
 - id: s3_arima_forecast
   scenario: arima_forecast_block

@@ -136,10 +136,18 @@ app or with `cli demo`.
    the dataset catalog, and so does every USD/CHF result.
 2. **Frequency-alignment protection** (`spread_frequency_mismatch_block`):
    "Compute the spread between the weekly 10-year Treasury yield and the daily
-   2-year Treasury yield." Planned exactly as asked, the spread of a weekly and a
-   daily series would silently keep only the Fridays and mix two frequencies. The
-   validator, not the planner, blocks it (V08) before anything runs and states the
-   fix: resample the 2-year yield to weekly first.
+   2-year Treasury yield, and show the weeks when the curve was most negative."
+   Planned exactly as asked, the spread of a weekly and a daily series would
+   silently keep only the Fridays and mix two frequencies. The validator, not the
+   planner, blocks it (V08) before anything runs and states the fix: resample the
+   2-year yield to weekly first. The most negative weeks are the bottom 10% of the
+   spread over its whole history (`flag_regime` with direction below and a
+   full-sample threshold), so the plan also asks for the look-ahead approval (V09).
+   Steps are locked, so in the app the frequencies are aligned the other way:
+   switching the 10-year's `resample.freq` to D leaves only V09 to approve, and the
+   plan runs on daily data, flagging 1,257 of 12,590 days, every one with an
+   inverted curve (the 10-year below the 2-year by more than 0.26 percentage
+   points).
 3. **Out-of-scope forecast request** (`arima_forecast_block`): "Fit an ARIMA
    model to the S&P 500 and forecast the next 12 weeks." The registry has no
    capability that fits a model or makes a forecast, so the planner declines

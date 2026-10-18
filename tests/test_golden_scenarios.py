@@ -1,6 +1,6 @@
 """The example workflows and the mock eval set give exactly the results of their golden records.
 
-tests/fixtures/golden_scenarios.json holds six records. For each example
+tests/fixtures/golden_scenarios.json holds seven records. For each example
 workflow, run in mock mode and auto-approved as `cli demo` does, each holds: the
 status, every static and runtime issue, the plan, every step's input and output
 hashes and metadata, the numbers of every output table and the facts sheet, on
@@ -26,6 +26,9 @@ snapshots.
   commit fc52c98, when the Swiss franc safe-haven analysis became example 1, the
   earlier flagship moved to example 6 and example 3's forecast request moved to
   the S&P 500.
+- "yield_curve_below": all six examples and the mock eval set, recorded after
+  commit 24372ea, when flag_regime gained `direction` (below: the lower tail) and
+  example 2 asked for the weeks when the yield curve was most negative.
 
 Every result must be the same as recorded. The only allowed differences are the
 changes made on purpose since a record was made (MIGRATIONS), applied in order:
@@ -37,8 +40,10 @@ the older records then no longer vouch for; the renumbering swapped examples 2 a
 5, so their eval cases' ids (which start with the example number) were renamed; the
 new flagship moved the earlier one, unchanged, to example 6 under a new id (and its
 eval case with it). Example 3's new request leaves its recorded result as it was (a
-refusal records no dataset). No narrative raises N01, and no example or eval request
-raises R01.
+refusal records no dataset). flag_regime's new `direction` parameter adds
+direction="above" (the default, the old behaviour) to every recorded flag step, and
+example 2's new question replaced it and its eval case. No narrative raises N01, and
+no example or eval request raises R01.
 
 The fixture is a frozen reference: a record is never regenerated.
 """
@@ -94,6 +99,8 @@ class Migration:
     Fields:
         codes: old guardrail code -> new code (every code an issue may have).
         removed_params: capability -> parameters removed from its plan steps.
+        added_params: capability -> {parameter: value} added to its plan steps (a new
+            parameter, at the default that keeps the old behaviour).
         severity_to_action: whether issues' "severity" became "action".
         replaced: example workflows and eval cases replaced on purpose: what an older
             record holds for them no longer applies, and a newer record covers them.
@@ -105,6 +112,7 @@ class Migration:
     severity_to_action: bool
     replaced: tuple[str, ...] = ()
     renamed: dict[str, str] = field(default_factory=dict)
+    added_params: dict[str, dict[str, Any]] = field(default_factory=dict)
 
 
 # Stage naming: L planner -> P, G validator -> V, R executor -> E (same numbers),
@@ -145,6 +153,22 @@ FLAGSHIP_MOVE = Migration(
     {code: code for code in GUARDRAILS}, {}, False, renamed=MOVED_FLAGSHIP_IDS
 )
 
+# Direction: flag_regime gained `direction`, whose default ("above") is the old
+# behaviour; example 2 now asks for the weeks when the yield curve was most negative,
+# so it and its eval case (under both ids it has had) were replaced.
+REPLACED_BY_CURVE = (
+    "spread_frequency_mismatch_block",
+    "s5_spread_frequency_mismatch",
+    "s2_spread_frequency_mismatch",
+)
+DIRECTION = Migration(
+    {code: code for code in GUARDRAILS},
+    {},
+    False,
+    replaced=REPLACED_BY_CURVE,
+    added_params={"flag_regime": {"direction": "above"}},
+)
+
 # The changes made since each record was recorded, oldest first.
 MIGRATIONS = {
     "before_simplification": (
@@ -154,12 +178,14 @@ MIGRATIONS = {
         INJECTION,
         RENUMBERING,
         FLAGSHIP_MOVE,
+        DIRECTION,
     ),
-    "final_examples": (RESTRUCTURE, STAGES, INJECTION, RENUMBERING, FLAGSHIP_MOVE),
-    "before_restructure": (RESTRUCTURE, STAGES, INJECTION, RENUMBERING, FLAGSHIP_MOVE),
-    "before_stage_codes": (STAGES, INJECTION, RENUMBERING, FLAGSHIP_MOVE),
-    "simulated_injection": (RENUMBERING, FLAGSHIP_MOVE),
-    "safe_haven_flagship": (),
+    "final_examples": (RESTRUCTURE, STAGES, INJECTION, RENUMBERING, FLAGSHIP_MOVE, DIRECTION),
+    "before_restructure": (RESTRUCTURE, STAGES, INJECTION, RENUMBERING, FLAGSHIP_MOVE, DIRECTION),
+    "before_stage_codes": (STAGES, INJECTION, RENUMBERING, FLAGSHIP_MOVE, DIRECTION),
+    "simulated_injection": (RENUMBERING, FLAGSHIP_MOVE, DIRECTION),
+    "safe_haven_flagship": (DIRECTION,),
+    "yield_curve_below": (),
 }
 # The records that hold (part of) the mock eval set.
 EVAL_RECORDS = (
@@ -167,6 +193,7 @@ EVAL_RECORDS = (
     "before_stage_codes",
     "simulated_injection",
     "safe_haven_flagship",
+    "yield_curve_below",
 )
 
 # Output metadata compared step by step (the notes are free text and are not).
@@ -341,9 +368,10 @@ def migrate_issue(issue: dict[str, Any], migration: Migration) -> dict[str, Any]
 
 
 def migrate_step(step: dict[str, Any], migration: Migration) -> dict[str, Any]:
-    """A recorded plan step without the parameters the migration removed."""
+    """A recorded plan step without the parameters the migration removed, with those it added."""
     removed = migration.removed_params.get(step["capability"], ())
-    return {**step, "params": {k: v for k, v in step["params"].items() if k not in removed}}
+    kept = {k: v for k, v in step["params"].items() if k not in removed}
+    return {**step, "params": {**kept, **migration.added_params.get(step["capability"], {})}}
 
 
 def migrate_result(recorded: dict[str, Any], migration: Migration) -> dict[str, Any]:

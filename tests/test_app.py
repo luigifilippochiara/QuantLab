@@ -680,7 +680,8 @@ def headless_replayed_run(settings: Settings) -> str:
 
 
 def test_monitoring_page_sections_cards_and_charts(app_env: Settings) -> None:
-    # Counted: approved and executed, rejected, blocked (V08), failed, and a live run.
+    # Counted: approved and executed, rejected, blocked (V08, with a V09 to approve), failed,
+    # and a live run.
     approved = app_session("nasdaq_volatility_success", app_env)
     approved.approve([i.issue_id for i in approved.unresolved_approvals()])
     approved.execute()
@@ -756,12 +757,13 @@ def test_monitoring_page_sections_cards_and_charts(app_env: Settings) -> None:
     runs = monitored_runs(load_runs(app_env.runs_dir))
     events = monitored_events(read_events(app_env.events_path), runs)
     fired = guardrail_counts(events, include_unused=False)
-    assert {r["code"] for r in fired} == {"V10", "V08"}  # not the undecided plan's or the CLI's
+    assert {r["code"] for r in fired} == {"V10", "V08", "V09"}  # not the undecided plan's
     assert chart_bars(app) == [len(REGISTRY), len(fired), 2, 2 * 4]
     # The unused guardrails: a compact table sorted by code, no chart.
     unused = next(e for e in app.expander if e.label == "Show unused guardrails")
     assert not unused.get("plotly_chart")
-    assert unused.dataframe[0].value["Code"].tolist() == sorted(set(GUARDRAILS) - {"V10", "V08"})
+    used = {"V10", "V08", "V09"}
+    assert unused.dataframe[0].value["Code"].tolist() == sorted(set(GUARDRAILS) - used)
     cost, latency = [t.value for t in app.table]
     assert cost.loc["planner", "Cost, US$ (mean)"] == pytest.approx(0.00035)
     assert cost.loc["total", "Input tokens (mean)"] == 2500

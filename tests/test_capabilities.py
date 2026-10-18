@@ -166,6 +166,29 @@ def test_full_sample_flags_use_one_threshold() -> None:
     assert "future" in out.meta.notes[0]
 
 
+def test_below_flags_the_lower_tail() -> None:
+    # 1..20: the full-sample 10% quantile is 1 + 0.1 * 19 = 2.9 (linear interpolation),
+    # so exactly the two lowest values are flagged.
+    values = np.arange(1.0, 21.0)
+    out = cap.flag_regime(make_artifact(values), 0.10, "full_sample", direction="below")
+    assert out.value.tolist() == [True, True] + [False] * 18
+    assert out.meta.notes[0] == "flag = value < full-sample 0.1 quantile (uses future data)"
+    # Expanding: x_t against the 10% quantile of x_0..x_{t-1}, from past data only.
+    rng = np.random.default_rng(2)
+    values = rng.normal(size=80)
+    out = cap.flag_regime(make_artifact(values), 0.10, "expanding", 20, direction="below")
+    assert out.value.tolist() == [values[t] < np.quantile(values[:t], 0.10) for t in range(20, 80)]
+
+
+def test_a_value_equal_to_its_threshold_is_never_flagged() -> None:
+    # The median of 1..5 is exactly 3: neither tail takes it, so the tails never overlap.
+    values = np.arange(1.0, 6.0)
+    above = cap.flag_regime(make_artifact(values), 0.5, "full_sample").value
+    below = cap.flag_regime(make_artifact(values), 0.5, "full_sample", direction="below").value
+    assert above.tolist() == [False, False, False, True, True]
+    assert below.tolist() == [True, True, False, False, False]
+
+
 def test_count_episodes() -> None:
     flags = pd.Series([False, True, True, False, True, False, False, True])
     assert cap.count_episodes(flags) == 3

@@ -395,25 +395,28 @@ FLAG_REGIME = CapabilitySpec(
     code="C07",
     name="flag_regime",
     description=(
-        "Flag observations above a quantile threshold, e.g. periods of high volatility. "
-        "Prefer method=expanding: it only uses past data."
+        "Flag observations above (or below) a quantile threshold, e.g. periods of high "
+        "volatility or the most negative spreads. Prefer method=expanding: it only uses "
+        "past data."
     ),
     func=capabilities.flag_regime,
     inputs=(
         InputSpec(
             "series",
             (DataType.SERIES,),
-            "Series to threshold, e.g. a rolling volatility or the VIX level.",
+            "Series to threshold, e.g. a rolling volatility, the VIX level or a spread.",
         ),
     ),
     params=(
         ParamSpec(
             "quantile",
             "float",
-            "Threshold quantile, e.g. 0.90 flags values above the 90th percentile.",
+            "Threshold quantile, e.g. 0.90 with direction=above flags values above the 90th "
+            "percentile (the top 10%); 0.10 with direction=below flags values below the 10th "
+            "percentile (the bottom 10%).",
             required=False,
             default=0.90,
-            min=0.50,
+            min=0.01,
             max=0.99,
         ),
         ParamSpec(
@@ -437,6 +440,15 @@ FLAG_REGIME = CapabilitySpec(
             max=520,
             counted_in_periods=True,
         ),
+        ParamSpec(
+            "direction",
+            "str",
+            "above = flag values above the threshold (the upper tail, e.g. high volatility); "
+            "below = values under it (the lower tail, e.g. the most negative spreads).",
+            required=False,
+            default="above",
+            choices=("above", "below"),
+        ),
     ),
     output_type=DataType.FLAGS,
     output_kind=SeriesKind.FLAGS,
@@ -449,14 +461,15 @@ FLAG_REGIME = CapabilitySpec(
     assumptions=(
         Assumption(
             "threshold",
-            "A flag means the value is strictly above the threshold; the expanding "
-            "threshold at t uses values up to t-1 only.",
+            "A flag means the value is strictly above the threshold (direction=above) or "
+            "strictly below it (direction=below); the expanding threshold at t uses values "
+            "up to t-1 only.",
         ),
     ),
     library_calls=(
         "pandas.Series.shift(1).expanding(min_periods).quantile(q) | pandas.Series.quantile(q)"
     ),
-    summary_params=("quantile", "method"),
+    summary_params=("quantile", "method", "direction"),
 )
 
 FORWARD_RETURN = CapabilitySpec(

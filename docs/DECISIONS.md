@@ -1720,3 +1720,35 @@ still matches nothing. The flagship matches on a franc word plus the NASDAQ.
 V07 on s5, and a quantile of 1.5 by V03 on s7. The app's quantile field does not
 accept values outside the registry's range (0.5 to 0.99), so in the app the V03
 block only appears for an edit made through the engine.
+
+## `flag_regime` flags either tail; example 2 asks when the curve was most negative
+
+**`flag_regime` has a `direction` parameter**: "above" (the default, the behaviour so
+far) flags values strictly above the quantile threshold, "below" values strictly
+below it. The threshold itself is computed as before (expanding from data up to t−1,
+or full sample). The `quantile` range widens from [0.50, 0.99] to [0.01, 0.99], so
+"the bottom 10%" is `quantile=0.10, direction="below"`. Both inequalities are strict,
+so a value equal to its threshold is never flagged and the two tails of one quantile
+never overlap. The step header shows the direction. This was a deliberate change to the
+registry and a capability, approved for this purpose. Alternatives: reverse the
+spread (2y − 10y) and flag its top tail, rejected because the series would then read
+backwards (positive means inverted); or read `quantile` as a tail share, rejected as
+ambiguous. The registry version changes, so every cached live plan is planned again
+once. The canned plans write `direction` out, like every other parameter.
+
+**Example 2 asks a real question**: "Compute the spread between the weekly 10-year
+Treasury yield and the daily 2-year Treasury yield, and show the weeks when the curve
+was most negative." The canned plan follows it literally (10-year weekly, 2-year
+daily, the spread), then flags the bottom 10% of the spread with a **full-sample**
+threshold. "Most negative" is a descriptive question about the whole history, and only
+one threshold for all of it guarantees that every flagged period is inverted: an
+expanding threshold, set from little history in the late 1970s, would also flag 42
+weeks with a positive spread. So the blocked plan shows V08 BLOCK (the spread) and V09
+APPROVE (the flags), and nothing runs. The scenario keeps its id. The app cannot add
+a resample step (steps are locked), so its fix is the one it always had: the 10-year
+switched to daily. That leaves only V09, and the run flags 1,257 of 12,590 days, all
+inverted (below −0.26 percentage points), with an E04 warning because DGS2 starts in
+1976. A weekly fix (both series weekly, outside the app) flags 263 of 2,628 weeks,
+all below −0.273 percentage points. Golden records: a `DIRECTION` migration adds
+`direction="above"` to every recorded flag step and marks example 2 and its eval case
+as replaced; the record `yield_curve_below` holds all six examples and the eval set.

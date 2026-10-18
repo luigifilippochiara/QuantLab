@@ -191,10 +191,11 @@ def test_v03_invalid_params(step_id: str, params: dict[str, Any], catalog: Catal
 
 
 def test_defaults_are_filled_in() -> None:
-    raw = raw_plan("vix_full_sample_lookahead")  # its flag_regime omits `min_periods`
+    raw = raw_plan(SUCCESS)
+    del step(raw, "s5")["params"]["min_periods"], step(raw, "s5")["params"]["direction"]
     filled = fill_defaults(Plan(plan_id="p", request="r", **raw))
-    assert filled.steps[1].params == {"quantile": 0.95, "method": "full_sample",
-                                      "min_periods": 52}  # default added  # fmt: skip
+    assert filled.steps[4].params == {"method": "expanding", "quantile": 0.90,
+                                      "min_periods": 52, "direction": "above"}  # added  # fmt: skip
     unknown = fill_defaults(Plan(plan_id="p", request="r", **ARIMA_PLAN))
     assert unknown.steps[1].params == ARIMA_PLAN["steps"][1]["params"]  # left untouched
 
@@ -298,8 +299,9 @@ def test_v07_returns_on_rates_replaces_generic_type_error(catalog: Catalog) -> N
 
 def test_v08_spread_of_a_weekly_and_a_daily_yield(catalog: Catalog) -> None:
     report = validate(raw_plan("spread_frequency_mismatch_block"), catalog)  # scenario 2
-    assert report.is_blocked and report.codes() == ["V08"]
-    (v08,) = report.issues
+    # The block, and the full-history threshold's look-ahead approval on the flags.
+    assert report.is_blocked and report.codes() == ["V08", "V09"]
+    (v08,) = report.blocks
     assert v08.step_id == "s4"  # the spread step
     assert "'b' is daily" in v08.message
     assert "Resample DGS2 to weekly" in v08.suggestion

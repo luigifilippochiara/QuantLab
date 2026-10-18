@@ -341,20 +341,28 @@ def rolling_volatility(series: Artifact, window: int, annualize: bool = True) ->
 
 
 def flag_regime(
-    series: Artifact, quantile: float = 0.90, method: str = "expanding", min_periods: int = 52
+    series: Artifact,
+    quantile: float = 0.90,
+    method: str = "expanding",
+    min_periods: int = 52,
+    direction: str = "above",
 ) -> Artifact:
-    """Flag observations above a quantile threshold (e.g. high-volatility weeks).
+    """Flag observations beyond a quantile threshold (e.g. high-volatility weeks).
 
     Args:
-        series: SERIES artifact (typically a volatility or a VIX level).
-        quantile: threshold quantile, e.g. 0.90 = above the 90th percentile.
+        series: SERIES artifact (typically a volatility, a VIX level or a spread).
+        quantile: threshold quantile, e.g. 0.90 = the 90th percentile.
         method: "expanding" (threshold from past data only) or "full_sample"
             (one threshold from the whole sample, which uses future data).
         min_periods: expanding method only, minimum history before flagging starts.
+        direction: "above" flags the upper tail (e.g. quantile 0.90: the top 10%),
+            "below" the lower tail (e.g. quantile 0.10: the bottom 10%, such as the
+            most negative spreads).
 
     Returns:
-        FLAGS artifact: True where the value is strictly above its threshold.
-        Expanding flags start once `min_periods` past values exist.
+        FLAGS artifact: True where the value is strictly above (or, for "below",
+        strictly below) its threshold. Expanding flags start once `min_periods`
+        past values exist.
     """
     x = series.value
     if method == "expanding":
@@ -365,18 +373,22 @@ def flag_regime(
         # not move its own threshold. (pandas uses linear interpolation between
         # order statistics, the same default as numpy.quantile.)
         threshold = x.shift(1).expanding(min_periods=min_periods).quantile(quantile)
-        note = (
-            f"flag = value > expanding {quantile:g} quantile of values up to t-1 "
-            f"(at least {min_periods} past values)"
-        )
+        described = f"expanding {quantile:g} quantile of values up to t-1"
+        detail = f" (at least {min_periods} past values)"
     else:
         # One number computed from ALL observations, including those after t:
         # look-ahead bias. Allowed only with explicit approval (V09).
         threshold = pd.Series(x.quantile(quantile), index=x.index)
-        note = f"flag = value > full-sample {quantile:g} quantile (uses future data)"
+        described = f"full-sample {quantile:g} quantile"
+        detail = " (uses future data)"
 
     has_threshold = threshold.notna()
-    flags = (x[has_threshold] > threshold[has_threshold]).astype(bool)
+    value, limit = x[has_threshold], threshold[has_threshold]
+    # Strict inequalities in both directions: a value equal to its threshold is
+    # never flagged, so the two tails of the same quantile never overlap.
+    below = direction == "below"
+    flags = (value < limit if below else value > limit).astype(bool)
+    note = f"flag = value {'<' if below else '>'} {described}{detail}"
     meta = derive_meta(series.meta, flags, kind=SeriesKind.FLAGS, notes=[note])
     return Artifact(value=flags, data_type=DataType.FLAGS, meta=meta)
 

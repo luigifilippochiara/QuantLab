@@ -12,9 +12,12 @@ the MockPlanner know these six and nothing else.
    per US dollar, so a negative return means the franc strengthened). It runs to
    completion after the analyst approves the two return methods (V10
    MATERIAL_ASSUMPTION, on s5 and s8). Its result carries the audit trail (the trace).
-2. Frequency-alignment protection (`spread_frequency_mismatch_block`): the spread
-   of a weekly and a daily yield, planned exactly as requested. The validator, not
-   the planner, catches the mismatch (V08 FREQUENCY_MISMATCH) before anything runs.
+2. Frequency-alignment protection (`spread_frequency_mismatch_block`): when was
+   the yield curve most negative? The spread of a weekly and a daily yield, planned
+   exactly as requested, then its bottom 10% over the whole history (`flag_regime`
+   with direction below, a full-sample threshold that needs the look-ahead approval,
+   V09). The validator, not the planner, catches the mismatch (V08
+   FREQUENCY_MISMATCH) before anything runs.
 3. Out-of-scope forecast request (`arima_forecast_block`): an ARIMA forecast of
    the S&P 500 has no registered capability, so the planner declines (P01
    PLANNER_REFUSED) and lists what the registry can do instead.
@@ -171,7 +174,7 @@ FLAGSHIP_STEPS = [
     # volatility only (expanding), after 52 weeks of history, so every flag could
     # have been set at the time (no look-ahead).
     _step("s7", "flag_regime", {"series": "s6"},
-          {"method": "expanding", "quantile": 0.90, "min_periods": 52},
+          {"method": "expanding", "quantile": 0.90, "min_periods": 52, "direction": "above"},
           rationale="Flag weeks above the 90th percentile of past NASDAQ volatility only."),
     # The outcome: next week's SIMPLE USD/CHF return, as requested, computed from the
     # weekly rates (s4), so it starts at the close of the flagged week. forward_return
@@ -231,7 +234,7 @@ VOLATILITY_STEPS = [
     # The defaults: a threshold from past volatility only (expanding), after 52 weeks
     # of history, so every flag could have been set at the time (no look-ahead).
     _step("s5", "flag_regime", {"series": "s4"},
-          {"method": "expanding", "quantile": 0.90, "min_periods": 52},
+          {"method": "expanding", "quantile": 0.90, "min_periods": 52, "direction": "above"},
           rationale="Flag weeks above the 90th percentile of past volatility only."),
     # SIMPLE returns for the outcome, unlike s3: a mean of log returns is lower than
     # the mean simple return by about half the variance, so it would understate the
@@ -281,11 +284,12 @@ SCENARIOS: list[Scenario] = [
         label="2 · Frequency-alignment protection",
         request=(
             "Compute the spread between the weekly 10-year Treasury yield and the daily "
-            "2-year Treasury yield."
+            "2-year Treasury yield, and show the weeks when the curve was most negative."
         ),
         dataset_ids=("DGS10", "DGS2"),
         expected_status="blocked",
-        expected_codes=("V08",),
+        # The block, and the look-ahead approval of the full-history threshold (s5).
+        expected_codes=("V08", "V09"),
         auto_approve=False,
         keywords=(("spread",), ("treasury", "yield")),
         # Deliberately misaligned, planned exactly as the request words it: the
@@ -319,10 +323,31 @@ SCENARIOS: list[Scenario] = [
                     "s4",
                     "spread",
                     {"a": "s2", "b": "s3"},
-                    rationale="10-year minus 2-year yield.",
+                    rationale="10-year minus 2-year yield: negative when the curve is inverted.",
+                ),
+                # "The weeks when the curve was most negative": the lower tail of the
+                # spread over its whole history (direction below, the 10% quantile).
+                # A descriptive question about the past, so one full-sample threshold:
+                # every flagged week is then among the most inverted ever observed (an
+                # expanding threshold, set from little history in the late 1970s, would
+                # also flag weeks with a positive spread). It needs the look-ahead
+                # approval (V09).
+                _step(
+                    "s5",
+                    "flag_regime",
+                    {"series": "s4"},
+                    {
+                        "method": "full_sample",
+                        "quantile": 0.10,
+                        "min_periods": 52,
+                        "direction": "below",
+                    },
+                    rationale="Flag the weeks in the bottom 10% of the spread's whole history.",
                 ),
             ],
-            "The 10-year yield is weekly and the 2-year yield daily, as the request states.",
+            "The 10-year yield is weekly and the 2-year yield daily, as the request states. "
+            "The most negative weeks are those below the spread's 10th percentile over its "
+            "whole history (a full-sample threshold, for this descriptive question).",
         ),
     ),
     Scenario(
@@ -411,7 +436,7 @@ SCENARIOS: list[Scenario] = [
                     "s2",
                     "flag_regime",
                     {"series": "s1"},
-                    {"method": "full_sample", "quantile": 0.95},
+                    {"method": "full_sample", "quantile": 0.95, "direction": "above"},
                     rationale="Flag the days above the 95th percentile of the whole VIX history.",
                 ),
             ],
