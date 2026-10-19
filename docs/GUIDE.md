@@ -147,7 +147,7 @@ narrator"), and N01 checks its numbers again on every run.
    USD/CHF result.
 2. **Frequency-alignment protection** (`spread_frequency_mismatch_block`):
    "Compute the spread between the weekly 10-year Treasury yield and the daily
-   2-year Treasury yield, and flag the weeks when the curve was most negative."
+   2-year Treasury yield, and flag the most negative weeks across the entire history."
    Planned exactly as asked, the spread of a weekly and a daily series would
    silently keep only the Fridays and mix two frequencies. The validator, not the
    planner, blocks it (V08) before anything runs and states the fix: resample the

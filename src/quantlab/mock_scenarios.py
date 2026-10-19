@@ -320,7 +320,7 @@ SCENARIOS: list[Scenario] = [
         label="2 · Frequency-alignment protection",
         request=(
             "Compute the spread between the weekly 10-year Treasury yield and the daily 2-year "
-            "Treasury yield, and flag the weeks when the curve was most negative."
+            "Treasury yield, and flag the most negative weeks across the entire history."
         ),
         dataset_ids=("DGS10", "DGS2"),
         expected_status="blocked",
@@ -361,13 +361,12 @@ SCENARIOS: list[Scenario] = [
                     {"a": "s2", "b": "s3"},
                     rationale="10-year minus 2-year yield: negative when the curve is inverted.",
                 ),
-                # "The weeks when the curve was most negative": the lower tail of the
-                # spread over its whole history (direction below, the 10% quantile).
-                # A descriptive question about the past, so one full-sample threshold:
-                # every flagged week is then among the most inverted ever observed (an
-                # expanding threshold, set from little history in the late 1970s, would
-                # also flag weeks with a positive spread). It needs the look-ahead
-                # approval (V09).
+                # "The most negative weeks across the entire history": the lower tail of
+                # the spread (direction below, the 10% quantile) with one full-sample
+                # threshold, as the request asks: every flagged week is then among the
+                # most inverted ever observed (an expanding threshold, set from little
+                # history in the late 1970s, would also flag weeks with a positive
+                # spread). It needs the look-ahead approval (V09).
                 _step(
                     "s5",
                     "flag_regime",

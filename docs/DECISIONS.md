@@ -2205,3 +2205,13 @@ as are APPROVE and WARN.
   and its eval case; the record `scenario_4_single_step` holds all five examples and
   the eval set. The canned plans are `canned-scenarios-v22`.
 
+
+## Example 2's request names the whole history
+
+**Example 2's request** is now "Compute the spread between the weekly 10-year Treasury
+yield and the daily 2-year Treasury yield, and flag the most negative weeks across the
+entire history." It asks for the full-sample threshold the plan already used, so the plan
+follows the request instead of reading it into "the weeks when the curve was most
+negative"; "most negative" is still the bottom 10%, the plan's choice. The plan and
+outcome are unchanged (V08 BLOCK, V09 to approve), and so are the golden records, which
+hold no request text. The canned plans are `canned-scenarios-v23`.
