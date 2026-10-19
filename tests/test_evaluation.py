@@ -31,8 +31,8 @@ from fakes import FakeAnthropicClient, tool_response
 def test_golden_file_resolves_scenarios() -> None:
     cases = {case.id: case for case in load_golden()}
     assert len(cases) >= 10
-    flagship = SCENARIOS_BY_ID["chf_safe_haven_success"]
-    assert cases["s1_chf_safe_haven"].request == flagship.request
+    scenario_1 = SCENARIOS_BY_ID["chf_safe_haven_success"]
+    assert cases["s1_chf_safe_haven"].request == scenario_1.request
     assert cases["s1_chf_safe_haven"].datasets == ["VIXCLS", "DEXSZUS"]
     adversarial = [c for c in cases.values() if c.expect == "refuse_or_block"]
     assert len(adversarial) >= 4
@@ -96,11 +96,11 @@ def test_one_case_can_be_evaluated_on_its_own(settings: Settings) -> None:
 
 
 def golden_case(case_id: str) -> GoldenCase:
-    """A golden case by id, e.g. the flagship's: every step, its parameters, its outcome."""
+    """A golden case by id, e.g. example 1's: every step, its parameters, its outcome."""
     return next(c for c in load_golden() if c.id == case_id)
 
 
-def test_live_scoring_of_the_flagship_with_a_perfect_fake_planner(
+def test_live_scoring_of_scenario_1_with_a_perfect_fake_planner(
     settings: Settings, catalog: Catalog
 ) -> None:
     plan = copy.deepcopy(SCENARIOS_BY_ID["chf_safe_haven_success"].plan)
@@ -110,7 +110,7 @@ def test_live_scoring_of_the_flagship_with_a_perfect_fake_planner(
     assert score.params_hit == score.params_total == 1
     assert score.guardrails_match and all(check.match for check in score.checks)
     items = [check.item for check in score.checks]
-    assert items == [f"step {i}" for i in range(1, 9)] + [
+    assert items == [f"step {i}" for i in range(1, 8)] + [
         "flag_regime.method", "approvals", "warnings", "blocks",
     ]  # fmt: skip
 

@@ -469,16 +469,17 @@ def template_narrative(
             outcome = f"{d['horizon']}-period forward returns" if "horizon" in d else "returns"
             sentences.append(
                 f"The significance test ({sid}) finds {verdict} in {outcome} between flagged "
-                f"and normal periods: the difference in means is {d['diff_means']} (normal "
-                f"periods {d['mean_normal']}), with a Newey-West standard error of "
-                f"{d['se_hac']} ({d['maxlags_used']} lags), a p-value of {d['p_value']} and a "
-                f"95% confidence interval from {d['ci_low']} to {d['ci_high']}."
+                f"and normal periods: the difference in means is {d['diff_means']} (flagged "
+                f"periods {d['mean_flagged']}, normal periods {d['mean_normal']}), with a "
+                f"Newey-West standard error of {d['se_hac']} ({d['maxlags_used']} lags), a "
+                f"p-value of {d['p_value']} and a 95% confidence interval from {d['ci_low']} "
+                f"to {d['ci_high']}."
             )
             sentences.append(
-                f"The {d['n_flagged']} flagged observations form {d['n_episodes_flagged']} "
-                "distinct episodes, the real measure of independent evidence because flagged "
-                "periods cluster; the test describes an association in this sample, not a "
-                "cause or a forecast."
+                f"The {d['n_flagged']} flagged observations (against {d['n_normal']} normal "
+                f"ones) form {d['n_episodes_flagged']} distinct episodes, the real measure of "
+                "independent evidence because flagged periods cluster; the test describes an "
+                "association in this sample, not a cause or a forecast."
             )
 
     warnings = [i for i in issues if i.action == Action.WARN]

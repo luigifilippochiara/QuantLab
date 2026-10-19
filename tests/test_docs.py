@@ -6,7 +6,7 @@ import re
 from quantlab.config import PROJECT_ROOT
 from quantlab.evaluation import load_golden
 from quantlab.guardrails import CATEGORY_DEFINITIONS, GUARDRAILS, Category
-from quantlab.mock_scenarios import FLAGSHIP_REQUEST, SCENARIOS_BY_ID
+from quantlab.mock_scenarios import SCENARIOS_BY_ID, VIX_CHF_REQUEST
 from quantlab.registry import REGISTRY
 
 README = (PROJECT_ROOT / "README.md").read_text(encoding="utf-8")
@@ -97,15 +97,15 @@ def test_no_hardcoded_counts_or_code_ranges() -> None:
     assert found == []
 
 
-def test_flagship_request_is_one_constant_used_everywhere() -> None:
+def test_scenario_1_request_is_one_constant_used_everywhere() -> None:
     # The app, the CLI and the notebooks read the scenario's request; the golden set
     # resolves its `scenario:` reference to it; the user guide quotes it verbatim.
-    assert SCENARIOS_BY_ID["chf_safe_haven_success"].request is FLAGSHIP_REQUEST
+    assert SCENARIOS_BY_ID["chf_safe_haven_success"].request is VIX_CHF_REQUEST
     golden = next(c for c in load_golden() if c.id == "s1_chf_safe_haven")
-    assert golden.request == FLAGSHIP_REQUEST
-    assert FLAGSHIP_REQUEST in GUIDE  # on one line, character for character
+    assert golden.request == VIX_CHF_REQUEST
+    assert VIX_CHF_REQUEST in GUIDE  # on one line, character for character
     # The text is written only where it is defined, and quoted in the guide.
-    opening = FLAGSHIP_REQUEST[:48]
+    opening = VIX_CHF_REQUEST[:48]
     texts = {**written_text(), "eval/golden_requests.yaml": (PROJECT_ROOT / "eval" /
              "golden_requests.yaml").read_text(encoding="utf-8")}  # fmt: skip
     assert sorted(path for path, text in texts.items() if opening in text) == [

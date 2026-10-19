@@ -40,7 +40,7 @@ from quantlab.guardrails import (
     planner_failure_issue,
     validate_plan,
 )
-from quantlab.mock_scenarios import FLAGSHIP_REQUEST
+from quantlab.mock_scenarios import VIX_CHF_REQUEST
 from quantlab.plan import Plan, plan_tool_schema
 
 from conftest import (
@@ -87,7 +87,7 @@ def test_volatility_plan_needs_only_the_return_method_approvals(catalog: Catalog
 
 
 def test_r01_passes_a_normal_request_and_one_at_the_limits() -> None:
-    assert check_request_length(FLAGSHIP_REQUEST) == []
+    assert check_request_length(VIX_CHF_REQUEST) == []
     assert check_request_length(" ".join(["word"] * MAX_REQUEST_WORDS)) == []
     assert check_request_length("x" * MAX_REQUEST_CHARS) == []
 

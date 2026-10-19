@@ -117,13 +117,12 @@ behaviour, and the protections QuantLab applies along the way. They run with
 canned plans in mock mode (`mock_scenarios.py`) or with the live planner, from the
 app or with `cli demo`.
 
-1. **Is the Swiss franc a safe haven?** (`chf_safe_haven_success`), the flagship:
-   does the Swiss franc strengthen after stress weeks? The request names the series,
-   a threshold from past data only, the comparison and the test; what "high" means,
-   the frequency and the return type are left to the planner, and the canned plan is
-   its reading (the live planner chose the same in our runs):
+1. **Is the Swiss franc a safe haven?** (`chf_safe_haven_success`): does the Swiss
+   franc strengthen after stress weeks? The request names the series, a threshold
+   from past data only and the test; what "high" means, the frequency and the return
+   type are left to the planner, and the canned plan is its reading:
 
-   > Flag the weeks when the VIX was high (using only past data), then compare USD/CHF returns the following week with other weeks and test whether they differ.
+   > Flag weeks when the VIX was high (using only past data), then test whether USD/CHF returns the following week differ from other weeks.
 
    Both series as weekly Friday closes by the same rule (the weekly VIX is its
    Friday close, the level known when the week ends), so each flag meets the USD/CHF
@@ -131,9 +130,9 @@ app or with `cli demo`.
    VIX level flagged directly (it is already a volatility) above the 90th percentile
    of its past levels only (expanding, after 52 weeks); the following week's simple USD/CHF return
    (`forward_return`, from the weekly rates: a mean of log returns would be lower
-   by about half the variance and bias the comparison against volatile weeks); a
-   descriptive comparison (`compare_groups`), then the significance test
-   (`hac_mean_difference`), both on the weeks the two series share. The analyst
+   by about half the variance and bias the comparison against volatile weeks); then
+   the significance test (`hac_mean_difference`), which reports both groups' means and
+   their difference, on the weeks the two series share. The analyst
    confirms the outcome's return method (V10). The VIX starts in 1990, so the
    earlier USD/CHF weeks are dropped when the two are aligned, and the run says so
    (E04 ALIGNMENT_LOSS, a warning). DEXSZUS is quoted in Swiss francs per US dollar
@@ -300,7 +299,7 @@ Two separate questions, measured separately:
   and correct refusal/block rate. Each case is also reported item by item (every
   step in order, every key parameter, the issues of each action), so a live
   mismatch shows exactly what the planner chose differently; `--case <id>` runs
-  one case, such as the fully specified flagship (`s1_chf_safe_haven`).
+  one case, such as example 1's (`s1_chf_safe_haven`).
   Reports go to `eval/reports/`. In mock mode this checks the harness only
   (the mock knows just the five examples); `--mode live` measures the real model.
 * **Does the planner refuse when it should, and only then?** Measured by

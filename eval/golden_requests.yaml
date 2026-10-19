@@ -25,19 +25,19 @@
 # The five example workflows come first, one entry each, with the plan and the
 # codes of their canned plans.
 
-# The flagship request names the series, a threshold from past data only, the
-# comparison and the test; what "high" means, the frequency and the return type are
-# the planner's reading. The canned plan reads them as the top 10% of past VIX levels,
-# weekly data and simple returns (as the live planner did in our runs), and has one
-# return-method approval, no warning and no block. Only what the request states is a
-# key parameter: the expanding threshold. The two load_series steps load different
-# datasets, so dataset_id is not one either (it is checked on every step of a
-# capability).
+# Example 1's request names the series, a threshold from past data only and the test;
+# what "high" means, the frequency and the return type are the planner's reading. The
+# canned plan reads them as the top 10% of past VIX levels, weekly data and simple
+# returns, ends with the test (which reports both groups' means, so no separate
+# comparison), and has one return-method approval, no warning and no block. Only what
+# the request states is a key parameter: the expanding threshold. The two load_series
+# steps load different datasets, so dataset_id is not one either (it is checked on
+# every step of a capability).
 - id: s1_chf_safe_haven
   scenario: chf_safe_haven_success
   expect: plan
   capabilities: [load_series, load_series, resample, resample, flag_regime, forward_return,
-                 compare_groups, hac_mean_difference]
+                 hac_mean_difference]
   key_params:
     flag_regime: {method: expanding}
   guardrails: {approve: [V10], warn: [], block: []}

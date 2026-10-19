@@ -55,7 +55,7 @@ def test_mock_planner_matches_by_keyword() -> None:
         "Is the franc safe when the VIX is high (only past data)?", []
     )
     flags = next(s for s in result.plan.steps if s.capability == "flag_regime")
-    assert flags.params["method"] == "expanding"  # scenario 1, the flagship
+    assert flags.params["method"] == "expanding"  # scenario 1
 
 
 def test_system_prompt_keeps_forward_returns_as_outcomes(catalog: Catalog) -> None:

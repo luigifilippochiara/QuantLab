@@ -289,7 +289,8 @@ def test_llm_narrative_with_a_wrong_p_value_fails_grounding(
 
 def hac_artifacts(p_value: float) -> tuple[Plan, dict[str, Artifact]]:
     """A one-step plan and a hand-made hac_mean_difference table with the given p-value."""
-    table = {"diff_means": -0.0012, "mean_normal": 0.0021, "se_hac": 0.0019, "t_stat": -0.63,
+    table = {"diff_means": -0.0012, "mean_flagged": 0.0009, "mean_normal": 0.0021,
+             "se_hac": 0.0019, "t_stat": -0.63,
              "p_value": p_value, "ci_low": -0.0049, "ci_high": 0.0025, "n_obs": 1500,
              "n_flagged": 240, "n_normal": 1260, "n_episodes_flagged": 23, "maxlags_used": 7,
              "horizon": 1, "start": "1996-12-27", "end": "2025-11-14"}  # fmt: skip

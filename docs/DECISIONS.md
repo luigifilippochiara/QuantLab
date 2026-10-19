@@ -793,13 +793,13 @@ its golden case were removed; the remaining canned requests and tests use explic
 dates. Alternative: decline relative periods and ask for explicit dates (G13),
 rejected as needlessly unhelpful when the dataset's last date is known.
 
-## The flagship analysis: what follows high-volatility weeks
+## Example 1's analysis: what follows high-volatility weeks
 
 This section partly reverses "Descriptive capabilities only" above: QuantLab
 again has one significance test, built to answer the brief's core question.
 
-**Example 1 answers the brief end to end.** Its request is the fully specified
-flagship request (see "The flagship request, fully specified" below). The canned
+**Example 1 answers the brief end to end.** Its request is fully specified (see
+"Example 1's request, fully specified" below). The canned
 plan: weekly Friday closes, weekly log returns, 12-week annualised volatility,
 flags above the expanding 90th percentile (52 weeks of history first), next-week
 simple forward returns from the weekly closes, then `compare_groups` and
@@ -917,19 +917,19 @@ tests". With the new registry version as well, no plan cached before is reused.
 name; a small word table (`ui.TITLE_ACRONYMS`) makes `hac_mean_difference` read
 "HAC mean difference" instead of "Hac mean difference".
 
-## The flagship request, fully specified
+## Example 1's request, fully specified
 
 **One request that states every choice.** Example 1's request now names the
 dataset, the frequency, both return methods, the window, the threshold and its
-history, the outcome horizon and the test. It is `FLAGSHIP_REQUEST` in
-`mock_scenarios.py`, defined once: the scenario, the app's example button, the
+history, the outcome horizon and the test. It is one constant in
+`mock_scenarios.py` (today `VIX_CHF_REQUEST`), defined once: the scenario, the app's example button, the
 CLI, the notebooks and the golden set (through its `scenario:` reference) read
 it, and the README quotes it on one line. A test checks the quote and that the
 text is written nowhere else. Why: a loosely worded request leaves the return
 methods, the threshold and the horizon to the planner, so mock and live plans
 could differ for legitimate reasons, and the evaluation could not tell a planner
 error from an interpretation. Alternative: keep the natural wording and accept
-variation, rejected for the flagship, which is the demo and the anchor of the
+variation, rejected for example 1, which is the main demo and the anchor of the
 tests; the other golden requests stay loosely worded on purpose, to measure
 interpretation.
 
@@ -945,7 +945,7 @@ threshold's use of past data only, in its planner notes, and each step carries a
 why-comment in the code. `compare_groups` comes before the test: describe the
 groups first, then test the difference.
 
-**The golden flagship entry is scored item by item.** It lists the exact
+**Example 1's golden entry is scored item by item.** It lists the exact
 capability sequence, six key parameters (the methods of both return steps, the
 window, the threshold method and quantile, the horizon) and the expected
 guardrail outcome, `{approval: [G12, G12], warn: [], block: []}`. The harness
@@ -957,7 +957,7 @@ the Markdown report includes it. A normal case is now correct only if its
 guardrail outcome matches too, where one is given. The planner prompt was not
 changed for this: live mode must reach the plan from the request alone.
 
-**Live results.** Three live runs of the flagship entry (OpenAI `gpt-6-luna`,
+**Live results.** Three live runs of example 1's entry (OpenAI `gpt-6-luna`,
 `planner-v5`, 2026-10-17) matched on every item, and the three plans were
 identical to the canned plan in every step, input and parameter (they leave
 `maxlags` unset, which fills in as the same default). Their planner notes differ
@@ -969,7 +969,7 @@ the prompt version, the model and the registry version), so the new request can
 never return a plan cached for the old one. The canned plans' version moved to
 `canned-scenarios-v8`, since their content changed.
 
-**The flagship request was shortened; registry defaults carry what it omits.**
+**Example 1's request was shortened; registry defaults carry what it omits.**
 The request now states only what has no sensible default: the dataset (NASDAQ),
 weekly log returns, the 12-week window, next-week simple returns as the outcome,
 and a test of the difference in means. Annualisation, the expanding 90th
@@ -988,7 +988,7 @@ than a question an analyst would ask, and the defaults make it unnecessary.
 ## Simplified registry and guardrails, renumbered codes
 
 **Capabilities removed: `filter_period`, `find_extremes` and `summary_stats`.**
-The menu is reduced to what the flagship analysis and its protections use: load,
+The menu is reduced to what example 1's analysis and its protections use: load,
 resample, returns, differences, spread, rolling volatility, regime flags, forward
 returns, the descriptive comparison and the one significance test. The rates
 capabilities (`difference`, `spread`) and all six datasets stay. Removed with them:
@@ -1127,7 +1127,7 @@ approval, so the example did not isolate the one protection it is about.
 **Matching.** Each example has its own keyword groups (2: "vix" and "entire history",
 "full sample", "full-sample" or "top 5%"; 3: "arima", "forecast" or "predict"; 5:
 "spread" and "treasury" or "yield"), tried in the order injection, forecast, spread,
-VIX, flagship. A test checks that every example's request matches its own keywords
+VIX, example 1. A test checks that every example's request matches its own keywords
 and no other example's, whatever the order.
 
 **A live edit for the demo.** In example 1, changing `load_series.dataset_id` from
@@ -1277,7 +1277,7 @@ example output, live mode, reproducibility, monitoring, testing, layout) moved t
 instead of code, the capability and guardrail tables, the model calls, the full
 limitations and roadmap) to `docs/ARCHITECTURE.md`. The tables are not duplicated in
 the README; `tests/test_docs.py` now checks them in `docs/ARCHITECTURE.md`, checks
-that the guide quotes the flagship request, and checks that every link and anchor in
+that the guide quotes example 1's request, and checks that every link and anchor in
 the README, and the logo path, resolve.
 
 **The logo is the app's icon, exported once.** The app has no image file: its logo
@@ -1661,12 +1661,12 @@ commits a typed value (and turns the button red in that run) would be lost, the
 two-click bug again. Alternative: treating 12 and 12.0 as equal, rejected because a
 planner's 12.0 for an int parameter (V03) would then show as nothing to apply.
 
-## New flagship: is the Swiss franc a safe haven?
+## A new example 1: is the Swiss franc a safe haven?
 
 **Example 1 is now `chf_safe_haven_success`**: does the Swiss franc strengthen after
 high-volatility weeks in US tech equities? It loads NASDAQCOM and DEXSZUS, resamples
 both to weekly Friday closes by the same rule, flags NASDAQ volatility as the earlier
-flagship did (log returns, 12-week annualised volatility, above the expanding 90th
+example 1 did (log returns, 12-week annualised volatility, above the expanding 90th
 percentile after 52 weeks) and compares the following week's simple USD/CHF return
 after flagged and normal weeks (`compare_groups`, then `hac_mean_difference`). It
 raises the two return-method approvals (V10 on s5 and s8) and nothing else. **No
@@ -1693,18 +1693,18 @@ the grounding check is unaffected, and it is not part of the planner prompt or t
 plan cache key. Alternative: state it only in the canned plan's rationales and
 notes, rejected because a live narrator could still get the direction wrong.
 
-**The earlier flagship is example 6, unchanged**, renamed `nasdaq_volatility_success`
+**The earlier example 1 is example 6, unchanged**, renamed `nasdaq_volatility_success`
 and labelled "NASDAQ after volatile weeks". Its keywords gain "weekly log returns"
 because the new request also names the NASDAQ and its volatility. With that, each
 example's request still matches only its own scenario, the NASDAQ variation in the
 golden set still gets this plan, and "Weekly log returns of the Swiss franc ..."
-still matches nothing. The flagship matches on a franc word plus the NASDAQ.
+still matches nothing. Example 1 matches on a franc word plus the NASDAQ.
 **Example 3 now asks for an ARIMA forecast of the S&P 500**, refused as before (P01).
 
 **Records and versions.**
-- A sixth golden record, `safe_haven_flagship`, holds all six examples and the mock
+- A sixth golden record, `scenario_1_nasdaq_vol_chf`, holds all six examples and the mock
   eval set.
-- A `FLAGSHIP_MOVE` migration renames the earlier flagship's ids in the older records,
+- A `SCENARIO_1_MOVE` migration renames the earlier example 1's ids in the older records,
   which still vouch for it as example 6. Example 3's recorded refusal is unchanged,
   since a refusal records no request text and no dataset.
 - The eval set gains `s1_chf_safe_haven`, and the earlier case becomes
@@ -1713,10 +1713,10 @@ still matches nothing. The flagship matches on a franc word plus the NASDAQ.
   unchanged, so cached live plans stay valid, and the new requests get their own cache
   entries (the request is part of the key).
 - `cli demo` titles its audit trail "Audit trail (traceability)", no longer
-  "Scenario 6", now an example's number. It traces the flagship's test to both
+  "Scenario 6", now an example's number. It traces example 1's test to both
   snapshot files.
 
-**Live edits on the flagship.** Switching the first dataset to DGS10 is blocked by
+**Live edits on example 1.** Switching the first dataset to DGS10 is blocked by
 V07 on s5, and a quantile of 1.5 by V03 on s7. The app's quantile field does not
 accept values outside the registry's range (0.5 to 0.99), so in the app the V03
 block only appears for an edit made through the engine.
@@ -1753,7 +1753,7 @@ all below −0.273 percentage points. Golden records: a `DIRECTION` migration ad
 `direction="above"` to every recorded flag step and marks example 2 and its eval case
 as replaced; the record `yield_curve_below` holds all six examples and the eval set.
 
-## The flagship flags stress with the VIX; example 5 is the same question over the whole history
+## Example 1 flags stress with the VIX; example 5 is the same question over the whole history
 
 **Example 1 flags stress weeks with the VIX level instead of NASDAQ volatility.** Its
 request (quoted in the guide) asks whether the Swiss franc is a safe haven: flag the
@@ -1788,9 +1788,9 @@ that the significance test is invalidated, plus the same V10. The earlier exampl
 (daily VIX days in the top 5%) is gone. Both examples keep their ids. The keywords tell
 them apart: "only past data" for example 1, "entire history" for example 5.
 
-**Records and versions.** The record `vix_flagship` holds all six examples and the eval
-set. A `VIX_FLAGSHIP` migration marks examples 1 and 5 and their eval cases as replaced in
-the older records. The canned plans are now `canned-scenarios-v13`. The flagship's
+**Records and versions.** The record `scenario_1_vix_chf` holds all six examples and the
+eval set. A `VIX_SCENARIO_1` migration marks examples 1 and 5 and their eval cases as
+replaced in the older records. The canned plans are now `canned-scenarios-v13`. Example 1's
 description is now "does the Swiss franc strengthen after stress weeks?", since the stress
 signal is no longer US tech equities.
 
@@ -1836,7 +1836,7 @@ spans weekly, about 700 if switched to daily), and adding one `add_vrect` per sp
 builds all the bands as one list of shapes in a single layout update, with the same
 extent, colour and layer (0.02 s for 258 spans). A test pins one band per span.
 
-## The flagship request is shorter and leaves "high" to the planner
+## Example 1's request is shorter and leaves "high" to the planner
 
 **Example 1's request** (quoted in the guide) now asks to flag the weeks when the VIX
 was high, using only past data, then compare USD/CHF returns the following week with
@@ -1865,13 +1865,13 @@ forecast, 4 the prompt injection, and 5 buy the dip (moved from 6).
 - **Look-ahead example removed:** the request, the canned plan, the eval case and the one
   cached plan tied only to it ("Flag the days when the VIX was in the top 5% of its entire
   history.").
-- **Flagship steps written out again:** the function that built them for both examples
-  had a parameter only that example used, so the flagship's steps are a plain list.
+- **Example 1's steps written out again:** the function that built them for both
+  examples had a parameter only that example used, so example 1's steps are a plain list.
 - **The look-ahead guardrail stays covered:**
   - a small fixture (`conftest.LOOK_AHEAD_PLAN`: the VIX, flagged above the full-sample
     95th percentile) now anchors the V09 tests that used the example, and the dry-run and
     narrator cases;
-  - a new test edits the flagship's threshold to the full history and checks V09 APPROVE
+  - a new test edits example 1's threshold to the full history and checks V09 APPROVE
     on s5, whose message says the test in s8 is invalidated;
   - example 2 still raises V09 too.
 - **Golden records:** a `LOOK_AHEAD_REMOVED` migration marks the example and its eval case
@@ -1935,7 +1935,7 @@ loosely worded. Each case expects `refuse` (P01) or `plan`.
 - **Adversarial set:** 33 of 33 (v6: 29 of 33), holdout 12 of 12, no false plans or
   refusals. About $0.02 per run.
 - **Golden set:** 8 of 11 under both versions. The three misses are unchanged:
-  - the flagship's steps in another order;
+  - example 1's steps in another order;
   - the yield-curve request, which the planner fixes by making both yields weekly;
   - the dip request planned without the descriptive comparison, because it asks only to
     "test".
@@ -2012,3 +2012,34 @@ Completed, Blocked, Planner refused (P01), Failed and Rejected by human. Each sh
   only, where they add up to 100.
 - **Unchanged:** no KPI target uses Blocked, and Recent errors still lists refusals by
   stage ("Planner · P01").
+
+## Example 1 tests without a separate comparison; the test reports both group means
+
+**Example 1 now ends with the significance test.** Its request reads "Flag weeks when the
+VIX was high (using only past data), then test whether USD/CHF returns the following week
+differ from other weeks.", and its plan drops `compare_groups`: `hac_mean_difference`
+becomes s7, on the same inputs (s6, s5). It did not depend on `compare_groups`: no input,
+validator rule or planner rule links them.
+- **`hac_mean_difference` reports both group means.** Without the comparison, the
+  narrative would have lost the high-VIX weeks' mean (the test gave only `mean_normal`,
+  a, and `diff_means`, b; the narrator does no arithmetic). The table gains
+  `mean_flagged`, a + b: the flagged periods' fitted value, which is their sample mean.
+  The standard deviations stay with `compare_groups` only. The narrator's template
+  names both means and both group sizes in its test sentences.
+- **The registry description is unchanged.** It is the planner's menu and already
+  lists only some outputs; changing it would change the registry version and make
+  every cached plan stale. The new request gets its own cache entry when it is first
+  planned live or cached; no entry was deleted. Alternative: list the new output in
+  the description, rejected for that cost.
+- **Golden records.** A `HAC_BOTH_MEANS` migration replaces example 1 and its eval
+  case, and example 5's results, whose test table (so its output hash and facts sheet)
+  gained the field. The record `hac_both_means` holds all five examples and the eval
+  set, and a test checks that example 5 changed only by the new field, its fact and
+  the test's output hash. Older runs with a test step no longer replay with matching
+  hashes on that step, since its output now has one more field.
+- **Example 1 is named by its number everywhere.** Constants, tests, golden records and
+  the docs call it example 1 (`VIX_CHF_REQUEST`, `test_scenario_1_*`, records
+  `scenario_1_nasdaq_vol_chf` and `scenario_1_vix_chf`; the records' content is
+  unchanged). Its title stays "Is the Swiss franc a safe haven?", a title only.
+- **Versions.** The canned plans are `canned-scenarios-v18`.
+

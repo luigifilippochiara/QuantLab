@@ -300,10 +300,10 @@ automatically against the computed results (N01)".
 * **Live mode coverage.** The OpenAI path is in use with `gpt-6-luna` for both
   the planner and the narrator. The Anthropic path is covered by automated tests
   with simulated responses only, and the full live planner evaluation (`eval
-  --mode live`) has not yet been run; the flagship case (with both the longer
-  and the current, shorter request) was run live three times and matched the
-  canned plan exactly each time. Mock mode, used by the tests, the CLI, the
-  notebooks and the app, is fully covered.
+  --mode live`) has not yet been run; example 1's case, with its two earlier
+  requests, was run live three times and matched the canned plan exactly each
+  time, and its current request (the test alone) has not been run live yet. Mock
+  mode, used by the tests, the CLI, the notebooks and the app, is fully covered.
 * **No plan -> observe -> replan loop.** Validation errors are shown to the
   analyst but not yet fed back to the model for a corrected plan.
 * **The grounding check is numeric.** It proves every number is a correct

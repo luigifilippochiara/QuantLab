@@ -266,7 +266,7 @@ RETURN_METHOD_APPROVAL = "V10:s3:return_method"
 FORWARD_METHOD_APPROVAL = "V10:s6:return_method"
 VOLATILITY_APPROVALS = [RETURN_METHOD_APPROVAL, FORWARD_METHOD_APPROVAL]
 
-# The approval the flagship (scenario 1) needs: the return-method assumption of its
+# The approval scenario 1 needs: the return-method assumption of its
 # outcome, forward_return (s6, next week's simple USD/CHF return).
 SCENARIO_1_APPROVALS = ["V10:s6:return_method"]
 

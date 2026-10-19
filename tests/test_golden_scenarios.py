@@ -1,6 +1,6 @@
 """The example workflows and the mock eval set give exactly the results of their golden records.
 
-tests/fixtures/golden_scenarios.json holds nine records. For each example
+tests/fixtures/golden_scenarios.json holds ten records. For each example
 workflow, run in mock mode and auto-approved as `cli demo` does, each holds: the
 status, every static and runtime issue, the plan, every step's input and output
 hashes and metadata, the numbers of every output table and the facts sheet, on
@@ -22,19 +22,22 @@ snapshots.
 - "simulated_injection": example 4 and its eval case, which replaced the earlier
   ones after commit a0dc779: a simulated planner follows the prompt injection and
   proposes an unregistered capability, which the validator blocks (V02).
-- "safe_haven_flagship": all six examples and the mock eval set, recorded after
-  commit fc52c98, when the Swiss franc safe-haven analysis became example 1, the
-  earlier flagship moved to example 6 and example 3's forecast request moved to
-  the S&P 500.
+- "scenario_1_nasdaq_vol_chf": all six examples and the mock eval set, recorded
+  after commit fc52c98, when the Swiss franc analysis (flagged with NASDAQ
+  volatility) became example 1, the earlier example 1 moved to example 6 and
+  example 3's forecast request moved to the S&P 500.
 - "yield_curve_below": all six examples and the mock eval set, recorded after
   commit 24372ea, when flag_regime gained `direction` (below: the lower tail) and
   example 2 asked for the weeks when the yield curve was most negative.
-- "vix_flagship": all six examples and the mock eval set, recorded after commit
-  1754629, when the flagship flagged stress weeks with the VIX level (example 1) and
+- "scenario_1_vix_chf": all six examples and the mock eval set, recorded after
+  commit 1754629, when example 1 flagged stress weeks with the VIX level and
   example 5 became the same question with a full-history threshold.
 - "buy_the_dip": all six examples and the mock eval set, recorded after commit
   1eecb26, when example 6 became "Buy the dip in tech?" (the bottom 10% of past
   weekly NASDAQ returns, then the following week).
+- "hac_both_means": all five examples and the mock eval set, recorded after commit
+  8aed842, when hac_mean_difference began to report both groups' means and example
+  1 dropped its separate comparison (the test alone, with a new request).
 
 Every result must be the same as recorded. The only allowed differences are the
 changes made on purpose since a record was made (MIGRATIONS), applied in order:
@@ -44,16 +47,18 @@ the plans; the restructure translated two more codes and renamed an issue's
 code but N01; the simulated injection replaced example 4 and its eval case, which
 the older records then no longer vouch for; the renumbering swapped examples 2 and
 5, so their eval cases' ids (which start with the example number) were renamed; the
-new flagship moved the earlier one, unchanged, to example 6 under a new id (and its
+new example 1 moved the earlier one, unchanged, to example 6 under a new id (and its
 eval case with it). Example 3's new request leaves its recorded result as it was (a
 refusal records no dataset). flag_regime's new `direction` parameter adds
 direction="above" (the default, the old behaviour) to every recorded flag step, and
-example 2's new question replaced it and its eval case; the VIX flagship replaced
-examples 1 and 5 and their eval cases; buy the dip replaced example 6 and its eval
-case, and the eval case nasdaq_weekly_log_vol, which matched the old example 6 in
-mock mode and now matches none; the look-ahead example was removed (with its eval
-case), and buy the dip became example 5, its eval case renamed with it. No narrative
-raises N01, and no example or eval request raises R01.
+example 2's new question replaced it and its eval case; the VIX version of example 1
+replaced examples 1 and 5 and their eval cases; buy the dip replaced example 6 and
+its eval case, and the eval case nasdaq_weekly_log_vol, which matched the old
+example 6 in mock mode and now matches none; the look-ahead example was removed
+(with its eval case), and buy the dip became example 5, its eval case renamed with
+it; example 1's test-only plan replaced it and its eval case, and the test's new
+mean_flagged changed example 5's results (its eval case, a plan and issues, is
+unchanged). No narrative raises N01, and no example or eval request raises R01.
 
 The fixture is a frozen reference: a record is never regenerated.
 """
@@ -153,14 +158,14 @@ INJECTION = Migration(
 )
 RENUMBERING = Migration({code: code for code in GUARDRAILS}, {}, False, renamed=SWAPPED_CASE_IDS)
 
-# New flagship: the earlier flagship moved, unchanged, to example 6 under a new id,
+# New example 1: the earlier example 1 moved, unchanged, to example 6 under a new id,
 # and its eval case with it; the Swiss franc analysis took its place as example 1.
-MOVED_FLAGSHIP_IDS = {
+MOVED_SCENARIO_1_IDS = {
     "volatility_flag_success": "nasdaq_volatility_success",
     "s1_volatility_flag_success": "s6_nasdaq_volatility",
 }
-FLAGSHIP_MOVE = Migration(
-    {code: code for code in GUARDRAILS}, {}, False, renamed=MOVED_FLAGSHIP_IDS
+SCENARIO_1_MOVE = Migration(
+    {code: code for code in GUARDRAILS}, {}, False, renamed=MOVED_SCENARIO_1_IDS
 )
 
 # Direction: flag_regime gained `direction`, whose default ("above") is the old
@@ -179,7 +184,7 @@ DIRECTION = Migration(
     added_params={"flag_regime": {"direction": "above"}},
 )
 
-# VIX flagship: example 1 flags stress weeks with the VIX level instead of NASDAQ
+# VIX version of example 1: it flags stress weeks with the VIX level instead of NASDAQ
 # volatility, and example 5 asks the same question with a full-history threshold, so
 # both and their eval cases (under every id they have had) were replaced.
 REPLACED_BY_VIX = (
@@ -189,7 +194,7 @@ REPLACED_BY_VIX = (
     "s2_vix_full_sample_lookahead",
     "s5_vix_full_sample_lookahead",
 )
-VIX_FLAGSHIP = Migration({code: code for code in GUARDRAILS}, {}, False, REPLACED_BY_VIX)
+VIX_SCENARIO_1 = Migration({code: code for code in GUARDRAILS}, {}, False, REPLACED_BY_VIX)
 
 # Buy the dip: example 6 (NASDAQ volatility regimes) became a buy-the-dip analysis, so
 # it and its eval case (under every id they have had) were replaced, and so was the eval
@@ -220,6 +225,16 @@ LOOK_AHEAD_REMOVED = Migration(
     renamed={"s6_buy_the_dip_tech": "s5_buy_the_dip_tech"},
 )
 
+# HAC both means: hac_mean_difference reports the flagged group's mean too (a new
+# table field, mean_flagged), and example 1 tests without a separate comparison under
+# a new request. Example 1 and its eval case were replaced; so were example 5's results,
+# whose test table (and so its output hash and facts sheet) gained the field. Example
+# 5's eval case (its plan and issues) is unchanged.
+REPLACED_BY_HAC_BOTH_MEANS = ("chf_safe_haven_success", "s1_chf_safe_haven", "buy_the_dip_tech")
+HAC_BOTH_MEANS = Migration(
+    {code: code for code in GUARDRAILS}, {}, False, REPLACED_BY_HAC_BOTH_MEANS
+)
+
 # The changes made since each record was recorded, oldest first.
 MIGRATIONS = {
     "before_simplification": (
@@ -228,66 +243,79 @@ MIGRATIONS = {
         STAGES,
         INJECTION,
         RENUMBERING,
-        FLAGSHIP_MOVE,
+        SCENARIO_1_MOVE,
         DIRECTION,
-        VIX_FLAGSHIP,
+        VIX_SCENARIO_1,
         BUY_THE_DIP,
         LOOK_AHEAD_REMOVED,
+        HAC_BOTH_MEANS,
     ),
     "final_examples": (
         RESTRUCTURE,
         STAGES,
         INJECTION,
         RENUMBERING,
-        FLAGSHIP_MOVE,
+        SCENARIO_1_MOVE,
         DIRECTION,
-        VIX_FLAGSHIP,
+        VIX_SCENARIO_1,
         BUY_THE_DIP,
         LOOK_AHEAD_REMOVED,
+        HAC_BOTH_MEANS,
     ),
     "before_restructure": (
         RESTRUCTURE,
         STAGES,
         INJECTION,
         RENUMBERING,
-        FLAGSHIP_MOVE,
+        SCENARIO_1_MOVE,
         DIRECTION,
-        VIX_FLAGSHIP,
+        VIX_SCENARIO_1,
         BUY_THE_DIP,
         LOOK_AHEAD_REMOVED,
+        HAC_BOTH_MEANS,
     ),
     "before_stage_codes": (
         STAGES,
         INJECTION,
         RENUMBERING,
-        FLAGSHIP_MOVE,
+        SCENARIO_1_MOVE,
         DIRECTION,
-        VIX_FLAGSHIP,
+        VIX_SCENARIO_1,
         BUY_THE_DIP,
         LOOK_AHEAD_REMOVED,
+        HAC_BOTH_MEANS,
     ),
     "simulated_injection": (
         RENUMBERING,
-        FLAGSHIP_MOVE,
+        SCENARIO_1_MOVE,
         DIRECTION,
-        VIX_FLAGSHIP,
+        VIX_SCENARIO_1,
         BUY_THE_DIP,
         LOOK_AHEAD_REMOVED,
+        HAC_BOTH_MEANS,
     ),
-    "safe_haven_flagship": (DIRECTION, VIX_FLAGSHIP, BUY_THE_DIP, LOOK_AHEAD_REMOVED),
-    "yield_curve_below": (VIX_FLAGSHIP, BUY_THE_DIP, LOOK_AHEAD_REMOVED),
-    "vix_flagship": (BUY_THE_DIP, LOOK_AHEAD_REMOVED),
-    "buy_the_dip": (LOOK_AHEAD_REMOVED,),
+    "scenario_1_nasdaq_vol_chf": (
+        DIRECTION,
+        VIX_SCENARIO_1,
+        BUY_THE_DIP,
+        LOOK_AHEAD_REMOVED,
+        HAC_BOTH_MEANS,
+    ),
+    "yield_curve_below": (VIX_SCENARIO_1, BUY_THE_DIP, LOOK_AHEAD_REMOVED, HAC_BOTH_MEANS),
+    "scenario_1_vix_chf": (BUY_THE_DIP, LOOK_AHEAD_REMOVED, HAC_BOTH_MEANS),
+    "buy_the_dip": (LOOK_AHEAD_REMOVED, HAC_BOTH_MEANS),
+    "hac_both_means": (),
 }
 # The records that hold (part of) the mock eval set.
 EVAL_RECORDS = (
     "before_restructure",
     "before_stage_codes",
     "simulated_injection",
-    "safe_haven_flagship",
+    "scenario_1_nasdaq_vol_chf",
     "yield_curve_below",
-    "vix_flagship",
+    "scenario_1_vix_chf",
     "buy_the_dip",
+    "hac_both_means",
 )
 
 # Output metadata compared step by step (the notes are free text and are not).
@@ -564,3 +592,25 @@ def test_mock_eval_matches_the_golden_record(golden: dict[str, Any], tmp_path: P
             for part, value in case.items():
                 assert actual[case_id][part] == value, f"{record}: {case_id}: {part} differs"
     assert sorted(actual) == sorted(covered)  # every eval case has a golden record
+
+
+def test_example_5_changed_only_by_the_new_mean_flagged(golden: dict[str, Any]) -> None:
+    # HAC_BOTH_MEANS replaced example 5's results in the older record; the two records
+    # show that all that changed is the test's new mean_flagged (its table field, its
+    # fact, and so its output hash), on both data sets.
+    for data in ("synthetic", "committed"):
+        before = golden["buy_the_dip"][data]["scenarios"]["buy_the_dip_tech"]
+        after = golden["hac_both_means"][data]["scenarios"]["buy_the_dip_tech"]
+        (test,) = [s["step_id"] for s in after["steps"] if s["capability"] == "hac_mean_difference"]
+        for old, new in zip(before["steps"], after["steps"], strict=True):
+            unchanged = new == old
+            same_but_hash = {**new, "output_hash": None} == {**old, "output_hash": None}
+            assert unchanged if new["step_id"] != test else (same_but_hash and not unchanged)
+        added = {name: value for name, value in after["tables"][test].items()
+                 if name not in before["tables"][test]}  # fmt: skip
+        assert list(added) == ["mean_flagged"]
+        assert after["tables"] == {**before["tables"], test: {**before["tables"][test], **added}}
+        assert [f for f in after["facts"] if f[0] != f"{test}.mean_flagged"] == before["facts"]
+        assert {k: v for k, v in after.items() if k not in ("steps", "tables", "facts")} == {
+            k: v for k, v in before.items() if k not in ("steps", "tables", "facts")
+        }

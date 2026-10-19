@@ -5,12 +5,12 @@ periods of unusual market behaviour, and the protections QuantLab applies along
 the way. They are the only examples: the sidebar, `cli demo`, the golden set and
 the MockPlanner know these five and nothing else.
 
-1. Is the Swiss franc a safe haven? (`chf_safe_haven_success`), the flagship: does
-   the Swiss franc strengthen after stress weeks? Weekly VIX levels flagged above an
-   expanding 90th percentile (past data only), then a comparison and a significance
-   test of the following week's USD/CHF return (quoted in francs per US dollar, so a
-   negative return means the franc strengthened). It runs to completion after the
-   analyst approves the outcome's return method (V10 MATERIAL_ASSUMPTION, on s6),
+1. Is the Swiss franc a safe haven? (`chf_safe_haven_success`): does the Swiss
+   franc strengthen after stress weeks? Weekly VIX levels flagged above an expanding
+   90th percentile (past data only), then a significance test of the following week's
+   USD/CHF return (quoted in francs per US dollar, so a negative return means the
+   franc strengthened), which reports both groups' means. It runs to completion after
+   the analyst approves the outcome's return method (V10 MATERIAL_ASSUMPTION, on s6),
    with an E04 warning: the VIX starts in 1990. Its result carries the audit trail.
 2. Frequency-alignment protection (`spread_frequency_mismatch_block`): when was
    the yield curve most negative? The spread of a weekly and a daily yield, planned
@@ -128,22 +128,21 @@ def _registry_menu() -> str:
     return ", ".join(names[:-1]) + " and " + names[-1]
 
 
-# The flagship request (example 1), titled "Is the Swiss franc a safe haven?": the
-# title poses the question, while the request itself asks only about past data, never
-# for advice. It states the series, a threshold from past data only, the comparison and
-# the test, and leaves the rest to the planner: what "high" means, the frequency, and
-# the return type. The canned plan below is the planner's reading (weekly data, the VIX
-# above its 90th percentile, next week's simple return), which the live planner also
-# chose in our runs; the golden set checks it item by item. Defined once: the app, the
-# CLI, the notebooks, the golden set and the tests read it from here; docs/GUIDE.md
-# quotes it, and a test checks the quote.
-FLAGSHIP_REQUEST = (
-    "Flag the weeks when the VIX was high (using only past data), then compare USD/CHF "
-    "returns the following week with other weeks and test whether they differ."
+# Example 1's request, titled "Is the Swiss franc a safe haven?": the title poses the
+# question, while the request itself asks only about past data, never for advice. It
+# states the series, a threshold from past data only and the test, and leaves the rest
+# to the planner: what "high" means, the frequency, and the return type. The canned
+# plan below is the planner's reading (weekly data, the VIX above its 90th percentile,
+# next week's simple return); the golden set checks it item by item. Defined once: the
+# app, the CLI, the notebooks, the golden set and the tests read it from here;
+# docs/GUIDE.md quotes it, and a test checks the quote.
+VIX_CHF_REQUEST = (
+    "Flag weeks when the VIX was high (using only past data), then test whether USD/CHF "
+    "returns the following week differ from other weeks."
 )
 
 # Example 1's plan. Every parameter is written out (no hidden defaults).
-FLAGSHIP_STEPS = [
+VIX_CHF_STEPS = [
     # The two series named in the request: the stress signal and the currency.
     _step("s1", "load_series", params={"dataset_id": "VIXCLS"},
           rationale="Load the VIX daily closes, the stress signal."),
@@ -152,7 +151,7 @@ FLAGSHIP_STEPS = [
     _step("s2", "load_series", params={"dataset_id": "DEXSZUS"},
           rationale="Load the USD/CHF rate, in Swiss francs per US dollar."),
     # Both to weekly Friday closes by the same rule, so a flag and the next-week
-    # return of the same week carry the same date when s7 and s8 align them. The
+    # return of the same week carry the same date when s7 aligns them. The
     # weekly VIX is its Friday close, the level known when the week ends (a weekly
     # mean would mix in the days before).
     _step("s3", "resample", {"series": "s1"}, {"freq": "W", "how": "last"},
@@ -175,19 +174,16 @@ FLAGSHIP_STEPS = [
     _step("s6", "forward_return", {"series": "s4"}, {"method": "simple"},
           rationale="Next week's simple USD/CHF return: negative when the franc strengthened."),
     # A flag on one series grouping the returns of another: both are weekly, and the
-    # two steps below keep only the weeks they share (from 1991: the VIX starts in
-    # 1990, and its flags after 52 weeks). Describe first...
-    _step("s7", "compare_groups", {"values": "s6", "flags": "s5"},
-          rationale="Describe next-week USD/CHF returns after high-VIX and other weeks."),
-    # ...then test that same difference (the registry's one significance test), with
-    # standard errors that allow for unequal variances and for clustered stress (lags
-    # set by the Newey-West rule).
-    _step("s8", "hac_mean_difference", {"outcome": "s6", "flags": "s5"},
+    # test keeps only the weeks they share (from 1991: the VIX starts in 1990, and its
+    # flags after 52 weeks). The registry's one significance test reports both groups'
+    # means and their difference, with standard errors that allow for unequal
+    # variances and for clustered stress (lags set by the Newey-West rule).
+    _step("s7", "hac_mean_difference", {"outcome": "s6", "flags": "s5"},
           rationale="Test the difference in means with Newey-West standard errors."),
 ]  # fmt: skip
 
 # The plan's declared assumptions, shown to the analyst as the planner's notes.
-FLAGSHIP_NOTES = (
+VIX_CHF_NOTES = (
     "Assumptions: a high VIX is read as the top 10% of its past levels: the weekly VIX (its "
     "Friday close) above the 90th percentile of its past levels only (expanding, at least 52 "
     "weeks), so every flag was known at the time. The following week is read as weekly data "
@@ -196,8 +192,8 @@ FLAGSHIP_NOTES = (
     "weekly Friday closes, so each flag meets the USD/CHF return of the following week; the "
     "VIX starts in 1990, so only the weeks both series cover are compared. USD/CHF is quoted "
     "in Swiss francs per US dollar: a negative return means the franc strengthened. "
-    "compare_groups describes the two groups first; hac_mean_difference then tests the "
-    "difference (default lags)."
+    "hac_mean_difference reports both groups' means and tests their difference (default "
+    "lags)."
 )
 
 
@@ -254,15 +250,15 @@ SCENARIOS: list[Scenario] = [
         id="chf_safe_haven_success",
         number=1,
         label="1 · Is the Swiss franc a safe haven?",
-        request=FLAGSHIP_REQUEST,
+        request=VIX_CHF_REQUEST,
         dataset_ids=("VIXCLS", "DEXSZUS"),
         expected_status="completed",
         expected_codes=("V10",),  # the return-method approval of the outcome (s6) only
         auto_approve=True,
         keywords=(("franc", "chf"), ("vix",), ("only past data", "past data only")),
-        # On the committed data it also warns E04 twice (s7, s8): the VIX starts in
+        # On the committed data it also warns E04 once (s7): the VIX starts in
         # 1990, so the earlier USD/CHF weeks are dropped. A warning, not an issue code.
-        plan=_plan(["VIXCLS", "DEXSZUS"], FLAGSHIP_STEPS, FLAGSHIP_NOTES),
+        plan=_plan(["VIXCLS", "DEXSZUS"], VIX_CHF_STEPS, VIX_CHF_NOTES),
     ),
     Scenario(
         id="spread_frequency_mismatch_block",

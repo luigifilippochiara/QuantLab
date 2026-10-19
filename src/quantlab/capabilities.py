@@ -563,8 +563,8 @@ def hac_mean_difference(outcome: Artifact, flags: Artifact) -> Artifact:
         flags: FLAGS artifact with the same frequency.
 
     Returns:
-        TABLE artifact: diff_means (b), mean_normal (a), se_hac, t_stat, p_value
-        (two-sided), ci_low, ci_high (95%), n_obs, n_flagged, n_normal,
+        TABLE artifact: diff_means (b), mean_flagged (a + b), mean_normal (a), se_hac,
+        t_stat, p_value (two-sided), ci_low, ci_high (95%), n_obs, n_flagged, n_normal,
         n_episodes_flagged, maxlags_used (L), horizon (forward returns only), start, end.
 
     Raises:
@@ -594,6 +594,9 @@ def hac_mean_difference(outcome: Artifact, flags: Artifact) -> Artifact:
     _, start, end = date_span(joined["outcome"])
     table: dict[str, Any] = {
         "diff_means": float(fit.params["flag"]),
+        # Both group means, so the test reports what it compares: a + b is the flagged
+        # periods' fitted value, their sample mean; a is the normal periods'.
+        "mean_flagged": float(fit.params["const"] + fit.params["flag"]),
         "mean_normal": float(fit.params["const"]),
         "se_hac": float(fit.bse["flag"]),
         "t_stat": float(fit.tvalues["flag"]),

@@ -19,7 +19,7 @@ from quantlab.data import load_catalog
 from quantlab.engine import Session, run_request
 from quantlab.guardrails import CATEGORY_DEFINITIONS, ENFORCERS, GUARDRAILS, Action, make_issue
 from quantlab.lineage import LLMInfo, RunRecord, load_runs, new_run_id, replay, save_run
-from quantlab.mock_scenarios import FLAGSHIP_REQUEST, SCENARIOS_BY_ID
+from quantlab.mock_scenarios import SCENARIOS_BY_ID, VIX_CHF_REQUEST
 from quantlab.monitoring import (
     guardrail_counts,
     monitored_events,
@@ -94,25 +94,27 @@ def test_scenario_1_full_flow(app_env: Settings) -> None:
     # Results and trace name each capability by code and name.
     results = [e.label for e in app.expander if e.label.startswith("s")]
     assert results[4].startswith("s5 · C07 · Flag regime · completed")
-    assert results[7].startswith("s8 · C10 · HAC mean difference · completed")
+    assert results[6].startswith("s7 · C10 · HAC mean difference · completed")
     # Under each USD/CHF result, and in the narrative: which way the rate reads.
     quote = "DEXSZUS is quoted as USD/CHF, in Swiss francs per US dollar"
-    assert sum(c.value.startswith(quote) for c in app.caption) == 5  # s2, s4, s6, s7, s8
+    assert sum(c.value.startswith(quote) for c in app.caption) == 4  # s2, s4, s6, s7
     assert any(quote in m.value for m in app.markdown)
-    # The significance test's table, every number formatted as in the facts sheet.
+    # The significance test's table, with both groups' means, every number formatted as
+    # in the facts sheet.
     test = next(
         d.value for d in app.dataframe
         if "statistic" in d.value.columns and "p-value" in d.value["statistic"].tolist()
     )  # fmt: skip
-    for statistic in ["Difference in means", "HAC standard error", "p-value", "Flagged episodes",
+    for statistic in ["Difference in means", "Mean (flagged)", "Mean (other)",
+                      "HAC standard error", "p-value", "Flagged episodes",
                       "Newey-West lags"]:  # fmt: skip
         assert statistic in test["statistic"].tolist()
     # The trace starts at the final result, the test with its p-value.
     picker = next(b for b in app.selectbox if b.label == "Step to trace")
-    assert picker.value == "s8" and picker.options[-1] == "s8 · C10 · HAC mean difference"
+    assert picker.value == "s7" and picker.options[-1] == "s7 · C10 · HAC mean difference"
     trace = next(d.value for d in app.dataframe if "library call" in d.value.columns)
     assert trace[["step", "code", "capability"]].values.tolist()[:3] == [
-        ["s8", "C10", "HAC mean difference"],
+        ["s7", "C10", "HAC mean difference"],
         ["s6", "C08", "Forward return"],
         ["s5", "C07", "Flag regime"],
     ]
@@ -124,13 +126,13 @@ def test_scenario_1_full_flow(app_env: Settings) -> None:
     assert len(app.get("plotly_chart")) >= 5  # daily, weekly, returns, volatility, forward
 
     button(app, "Replay this run").click().run()
-    assert any("8 of 8 step outputs match" in s.value for s in app.success)
+    assert any("7 of 7 step outputs match" in s.value for s in app.success)
 
 
-def test_example_1_button_fills_in_the_flagship_request(app_env: Settings) -> None:
+def test_example_1_button_fills_in_its_request(app_env: Settings) -> None:
     app = open_page("analysis.py")
     app.sidebar.button(key="scenario-chf_safe_haven_success").click().run()
-    assert app.text_area(key="request_text").value == FLAGSHIP_REQUEST
+    assert app.text_area(key="request_text").value == VIX_CHF_REQUEST
 
 
 def test_the_examples_caption_matches_their_order(app_env: Settings) -> None:

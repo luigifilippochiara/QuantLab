@@ -18,9 +18,9 @@ from quantlab.guardrails import Action, fill_defaults, validate_plan
 from quantlab.lineage import replay
 from quantlab.mock_scenarios import (
     DIP_REQUEST,
-    FLAGSHIP_REQUEST,
     SCENARIOS,
     SCENARIOS_BY_ID,
+    VIX_CHF_REQUEST,
     Scenario,
     match_scenario,
 )
@@ -40,7 +40,7 @@ def start(scenario_id: str, settings: Settings) -> Session:
 
 
 def test_examples_are_numbered_in_list_order() -> None:
-    # The order of the sidebar buttons and of `cli demo`: the flagship analysis, the
+    # The order of the sidebar buttons and of `cli demo`: the Swiss franc analysis, the
     # three blocks, then buy the dip.
     assert [(s.number, s.id) for s in SCENARIOS] == [
         (1, "chf_safe_haven_success"),
@@ -85,10 +85,10 @@ def test_every_request_matches_only_its_own_scenario(scenario: Scenario) -> None
     assert by_keywords == [scenario.id]  # and by keywords, whatever the matching order
 
 
-# --- the flagship (example 1): the canned plan is the planner's reading -------------
+# --- example 1: the canned plan is the planner's reading -----------------------------
 
-# (step id, capability, inputs, params): the plan the flagship request specifies.
-FLAGSHIP_PLAN = [
+# (step id, capability, inputs, params): the plan example 1's request specifies.
+SCENARIO_1_PLAN = [
     ("s1", "load_series", {}, {"dataset_id": "VIXCLS"}),
     ("s2", "load_series", {}, {"dataset_id": "DEXSZUS"}),
     ("s3", "resample", {"series": "s1"}, {"freq": "W", "how": "last"}),
@@ -96,15 +96,14 @@ FLAGSHIP_PLAN = [
     ("s5", "flag_regime", {"series": "s3"},
      {"method": "expanding", "quantile": 0.90, "min_periods": 52, "direction": "above"}),
     ("s6", "forward_return", {"series": "s4"}, {"method": "simple"}),
-    ("s7", "compare_groups", {"values": "s6", "flags": "s5"}, {}),
-    ("s8", "hac_mean_difference", {"outcome": "s6", "flags": "s5"}, {}),
+    ("s7", "hac_mean_difference", {"outcome": "s6", "flags": "s5"}, {}),
 ]  # fmt: skip
 
 
-def test_flagship_plan_is_exactly_the_specified_plan() -> None:
+def test_scenario_1_plan_is_exactly_the_specified_plan() -> None:
     plan = SCENARIOS_BY_ID["chf_safe_haven_success"].plan
     steps = [(s["id"], s["capability"], s["inputs"], s["params"]) for s in plan["steps"]]
-    assert steps == FLAGSHIP_PLAN
+    assert steps == SCENARIO_1_PLAN
     assert plan["dataset_ids"] == ["VIXCLS", "DEXSZUS"] and not plan["cannot_fulfill"]
     # The assumptions the plan declares to the analyst: how it read "high" and "the
     # following week" (the request leaves them open), and which way USD/CHF reads.
@@ -134,9 +133,9 @@ def test_requests_rely_on_these_registry_defaults() -> None:
     assert REGISTRY["hac_mean_difference"].params == ()
 
 
-def test_flagship_validates_with_exactly_one_v10_approval(catalog: Catalog) -> None:
+def test_scenario_1_validates_with_exactly_one_v10_approval(catalog: Catalog) -> None:
     raw = SCENARIOS_BY_ID["chf_safe_haven_success"].plan
-    plan = fill_defaults(Plan(plan_id="p", request=FLAGSHIP_REQUEST, **raw))
+    plan = fill_defaults(Plan(plan_id="p", request=VIX_CHF_REQUEST, **raw))
     report = validate_plan(plan, catalog)
     # The outcome's return method, and nothing else: the VIX level is flagged directly
     # (no returns), both series are weekly, and the threshold uses past data only.
@@ -144,8 +143,8 @@ def test_flagship_validates_with_exactly_one_v10_approval(catalog: Catalog) -> N
     assert "method='simple'" in report.issues[0].message
 
 
-def test_flagship_runs_end_to_end_and_replays_identically(settings: Settings) -> None:
-    session = run_request(FLAGSHIP_REQUEST, ["VIXCLS", "DEXSZUS"], "mock", approve=True,
+def test_scenario_1_runs_end_to_end_and_replays_identically(settings: Settings) -> None:
+    session = run_request(VIX_CHF_REQUEST, ["VIXCLS", "DEXSZUS"], "mock", approve=True,
                           settings=settings)  # fmt: skip
     assert session.status == "completed"
     assert [a.issue_id for a in session.approvals] == SCENARIO_1_APPROVALS
@@ -153,10 +152,10 @@ def test_flagship_runs_end_to_end_and_replays_identically(settings: Settings) ->
     report = replay(session.run_id, settings)
     assert report.all_match, report.message
     original = [r.output_hash for r in session.execution.step_records]
-    assert [s.replay_hash for s in report.steps] == original and len(original) == 8
+    assert [s.replay_hash for s in report.steps] == original and len(original) == 7
 
 
-def test_flagship_groups_usd_chf_returns_by_vix_flags(settings: Settings) -> None:
+def test_scenario_1_tests_usd_chf_returns_by_vix_flags(settings: Settings) -> None:
     session = start("chf_safe_haven_success", settings)
     session.approve(SCENARIO_1_APPROVALS)
     artifacts = session.execute().artifacts
@@ -164,21 +163,27 @@ def test_flagship_groups_usd_chf_returns_by_vix_flags(settings: Settings) -> Non
     assert artifacts["s3"].meta.kind == "index_level" and artifacts["s3"].meta.frequency == "W"
     assert artifacts["s5"].meta.source_dataset_ids == ["VIXCLS"]
     assert artifacts["s6"].meta.source_dataset_ids == ["DEXSZUS"]
-    test = artifacts["s8"].value
+    test = artifacts["s7"].value
     # Every flagged week but the last, which has no next-week return yet.
     flags = artifacts["s5"].value
     assert test["horizon"] == 1 and test["n_flagged"] == int(flags.iloc[:-1].sum())
-    assert artifacts["s8"].meta.source_dataset_ids == ["DEXSZUS", "VIXCLS"]
+    assert artifacts["s7"].meta.source_dataset_ids == ["DEXSZUS", "VIXCLS"]
+    # The test reports both groups' means: the flagged weeks' and the other weeks'.
+    assert test["mean_flagged"] == pytest.approx(test["mean_normal"] + test["diff_means"])
     # The narrative states which way USD/CHF reads, and quotes only computed numbers.
     narrative = session.narrate()
     assert (
         "DEXSZUS is quoted as USD/CHF, in Swiss francs per US dollar: a negative return "
         "means the franc strengthened against the dollar" in narrative.text
     )
+    # Both means and both group sizes, as computed by the test (s7).
+    facts = {fact.fact_id: fact.display for fact in narrative.facts}
+    for key in ("mean_flagged", "mean_normal", "n_flagged", "n_normal"):
+        assert facts[f"s7.{key}"] in narrative.text, key
     assert narrative.grounding.grounded and narrative.issues == []
 
 
-def test_flagship_demo_edit_full_history_threshold_needs_the_look_ahead_approval(
+def test_scenario_1_demo_edit_full_history_threshold_needs_the_look_ahead_approval(
     settings: Settings,
 ) -> None:
     session = start("chf_safe_haven_success", settings)
@@ -191,14 +196,14 @@ def test_flagship_demo_edit_full_history_threshold_needs_the_look_ahead_approval
     ]
     v09 = report.issues[0]
     assert v09.name == "LOOK_AHEAD"
-    assert "It also invalidates the significance test in s8" in v09.message
+    assert "It also invalidates the significance test in s7" in v09.message
     with pytest.raises(ExecutionRefusedError, match="V09:s5"):
         session.execute()  # not without the analyst's decision
     session.approve(["V09:s5", "V10:s6:return_method"])
     assert session.execute().status == "completed"
 
 
-def test_flagship_demo_edit_dataset_to_a_yield_is_blocked(settings: Settings) -> None:
+def test_scenario_1_demo_edit_dataset_to_a_yield_is_blocked(settings: Settings) -> None:
     session = start("chf_safe_haven_success", settings)
     report = session.apply_param_edits({"s2": {"dataset_id": "DGS10"}})
     # A legal edit (a parameter value), which the re-validation blocks: a forward
@@ -210,7 +215,7 @@ def test_flagship_demo_edit_dataset_to_a_yield_is_blocked(settings: Settings) ->
         session.execute()
 
 
-def test_flagship_demo_edit_quantile_out_of_range_is_blocked(settings: Settings) -> None:
+def test_scenario_1_demo_edit_quantile_out_of_range_is_blocked(settings: Settings) -> None:
     session = start("chf_safe_haven_success", settings)
     report = session.apply_param_edits({"s5": {"quantile": 1.5}})
     (v03,) = report.blocks

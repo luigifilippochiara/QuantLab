@@ -333,9 +333,11 @@ def test_newey_west_lag_rule() -> None:
 
 def test_hac_coefficients_are_the_group_means() -> None:
     test = cap.hac_mean_difference(*pattern_inputs()).value
-    # b = mean(flagged) - mean(normal) = 5.8 - 5.4, and a = mean(normal).
+    # b = mean(flagged) - mean(normal) = 5.8 - 5.4, a = mean(normal), and a + b is
+    # the flagged group's own mean.
     assert test["diff_means"] == pytest.approx(0.4)
     assert test["mean_normal"] == pytest.approx(5.4)
+    assert test["mean_flagged"] == pytest.approx(5.8)
     assert (test["n_obs"], test["n_flagged"], test["n_normal"]) == (10, 5, 5)
     assert test["n_episodes_flagged"] == 3
     assert test["maxlags_used"] == 2  # floor(4 * 0.1^(2/9)) for T = 10
