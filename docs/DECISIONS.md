@@ -1980,7 +1980,8 @@ codes too.
   detection are unaffected: choosing the label already shown leaves Apply white.
 - **Datasets are now named first, with the id in brackets,** for example "NASDAQ Composite
   Index (NASDAQCOM)". This reverses the earlier id-first labels. The id stays visible,
-  because it is what links the data to its source.
+  because it is what links the data to its source. (Reversed again, ticker first: see
+  "Dataset labels: ticker first, the ticker alone when picked" below.)
 - **The registry page** adds a "shown as" column and each code's label.
 
 ## Monitoring: planner refusals are their own outcome; completed runs with warnings
@@ -2147,4 +2148,30 @@ now matches the golden case step by step.
 - **Records and versions.** A `SCENARIO_1_LIVE_ORDER` migration replaces example 1 and
   its eval case; the record `scenario_1_live_order` holds all five examples and the
   eval set. The canned plans are `canned-scenarios-v21`.
+
+## Dataset labels: ticker first, the ticker alone when picked
+
+**Every dataset is labelled "TICKER - description"** (e.g. "NASDAQCOM - NASDAQ
+Composite Index": the FRED id, then the catalog's `title`), and the Datasets picker
+shows the ticker alone, in its list and in the selected chips. Its **?** lists every
+dataset by its full label, and the line under each selected dataset keeps its full
+label and details, with the official name (`full_name`, also ticker first) on hover.
+- **Why it changed again.** "<FRED id> — <display name>" (`8cea0df`) was reversed to
+  "Title (ID)" by the plain-English labels change (`cb385b7`), and no test checked
+  the format.
+- **The picker.** A multiselect has one `format_func` for its list and its chips, so
+  it cannot show the full label in one and the ticker in the other without styling
+  Streamlit internals. Alternatives: checkboxes with full labels and ticker chips, or a
+  popover of checkboxes; chosen instead: tickers in the picker, the full labels in its
+  help and under the selection.
+- **Both labels come from one module.** `labels.dataset_label` (full) and
+  `labels.dataset_ticker` (short), reading the catalog; every view calls one of them.
+  The trace's separate "FRED id" column is gone: the label starts with it. The CLI's
+  trace line (ids only) is outside the app and unchanged.
+- **The guard.** Tests check both formats for every dataset in the committed catalog
+  and in each view (picker, help, selected line, plan, editor, results, trace, replay,
+  Run history). An AST test fails if any file in `app/` other than `labels.py` reads a
+  catalog entry's name fields (`fred_id`, `full_name`, `title`; `st.title` aside), the
+  mistake that let a view format names itself; it ignores formatting and quoting,
+  which a text search would not.
 

@@ -51,10 +51,13 @@ with st.sidebar:
         "Datasets available to the planner",
         catalog.ids(),
         key="dataset_select",
-        format_func=lambda d: ui.dataset_label(catalog, d),
-        help="Full names of the available datasets:\n\n" + ui.dataset_names_help(catalog),
+        # Tickers in the list and in the selected chips; the help and the line under
+        # each selected dataset give the full label.
+        format_func=lambda d: labels.dataset_ticker(catalog, d),
+        help="The available datasets:\n\n" + ui.dataset_names_help(catalog),
     )
-    # Hovering a selected dataset's line shows its full name.
+    # The full label and details of each selected dataset; hovering shows its official
+    # name.
     for dataset_id in datasets:
         st.caption(ui.dataset_caption(catalog, dataset_id), unsafe_allow_html=True)
 
@@ -215,7 +218,9 @@ else:
                     if not ui.same_value(value, current):
                         st.caption(":orange[changed, not applied yet]")
                     elif not ui.same_value(current, original):
-                        was = labels.param_value_label(step.capability, spec_param.name, original)
+                        was = labels.param_value_label(
+                            step.capability, spec_param.name, original, catalog
+                        )
                         st.caption(f":blue[edited (was {ui.escape_md(was)})]")
 
     # Drawn after every field, so this run already sees each change, and a change set

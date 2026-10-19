@@ -16,7 +16,8 @@ Display names follow the official FRED series titles, shortened when long: FRED
 titles DGS10 "Market Yield on U.S. Treasury Securities at 10-Year Constant
 Maturity, Quoted on an Investment Basis". The full name is kept in the catalog's
 `full_name` and shown on hover in the app, where every dataset is labelled
-"<FRED id> — <display name>", e.g. "SP500 — S&P 500 Index".
+"<FRED id> - <display name>", e.g. "SP500 - S&P 500 Index", and picked by its FRED
+id alone.
 
 **Retrieved:** 2026-10-14, SP500 on 2026-10-16 (UTC timestamps per series are in
 `catalog.json`). FRED distributes only the last 10 years of the S&P 500 Index.

@@ -71,7 +71,9 @@ with st.container(border=True):
         capabilities = {s["id"]: s["capability"] for s in steps}
 
         def shown(change, value):  # a value as the plan editor labels it
-            return labels.param_value_label(capabilities.get(change.step_id), change.param, value)
+            return labels.param_value_label(
+                capabilities.get(change.step_id), change.param, value, catalog
+            )
 
         st.dataframe(
             pd.DataFrame(

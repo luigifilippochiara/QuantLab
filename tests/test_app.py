@@ -6,6 +6,7 @@ an ungrounded LLM narrative is withheld (N01); the other pages render; the
 header, mock-only example workflows and full dataset names on hover.
 """
 
+import ast
 import dataclasses
 import json
 import re
@@ -252,35 +253,94 @@ def test_no_dataset_is_selected_when_the_app_opens(app_env: Settings) -> None:
     assert app.sidebar.multiselect[0].value == ["VIXCLS", "DEXSZUS"]
 
 
-def test_datasets_are_labelled_id_first_with_full_names_on_hover(app_env: Settings) -> None:
+def test_datasets_are_picked_by_ticker_and_listed_ticker_first(app_env: Settings) -> None:
     app = open_page("analysis.py")
+    catalog = load_catalog(app_env.catalog_path)
     # Synthetic catalog (conftest): title "Synthetic equity index", full name with ", full name".
     datasets = app.sidebar.multiselect[0]
-    assert "Synthetic equity index (NASDAQCOM)" in datasets.options
-    assert "- Synthetic VIX, full name (VIXCLS)" in datasets.help
+    # The list and the selected chips show tickers; the help lists every full label.
+    assert datasets.options == [catalog.entries[d].fred_id for d in catalog.ids()]
+    assert "- VIXCLS - Synthetic VIX" in datasets.help
     datasets.select("NASDAQCOM").run()
+    assert datasets.value == ["NASDAQCOM"]
+    # The line under each selected dataset: the full label, its official name on hover.
     (line,) = [c.value for c in app.sidebar.caption if "title=" in c.value]
-    assert 'title="Synthetic equity index, full name (NASDAQCOM)"' in line
-    assert "<b>Synthetic equity index (NASDAQCOM)</b>" in line
+    assert 'title="NASDAQCOM - Synthetic equity index, full name"' in line
+    assert "<b>NASDAQCOM - Synthetic equity index</b>" in line
 
     app.text_area(key="request_text").input(SCENARIO_5_REQUEST).run()
     button(app, "Generate plan").click().run()
+    # The header is Markdown: "-" is escaped there and shows as "-".
+    assert step_headers(app)[0][0] == (
+        "Step 1 · C01 · Load series · NASDAQCOM \\- Synthetic equity index"
+    )
     load = next(s for s in app.selectbox if s.key.endswith("-s1-dataset_id"))
     assert load.value == "NASDAQCOM"  # the plan still holds the id
-    assert "Synthetic equity index (NASDAQCOM)" in load.options
-    assert "- Synthetic S&P 500, full name (SP500)" in load.help
+    assert "NASDAQCOM - Synthetic equity index" in load.options
+    assert "- SP500 - Synthetic S&P 500" in load.help
 
     approve_all(app)
     button(app, "Execute").click().run()
-    assert any(c.value == "Source: Synthetic equity index (NASDAQCOM)" for c in app.caption)
+    label = ui_escaped("NASDAQCOM - Synthetic equity index")  # captions are Markdown
+    assert any(c.value == f"Source: {label}" for c in app.caption)
     sources = next(d.value for d in app.dataframe if "file sha256" in d.value.columns)
-    assert sources["dataset"].tolist() == ["Synthetic equity index (NASDAQCOM)"]
+    assert sources["dataset"].tolist() == ["NASDAQCOM - Synthetic equity index"]
+    assert "FRED id" not in sources.columns  # the label starts with it
+    trace = next(d.value for d in app.dataframe if "library call" in d.value.columns)
+    params = dict(zip(trace["step"], trace["params"], strict=True))
+    assert params["s1"] == "Dataset: NASDAQCOM - Synthetic equity index"
     button(app, "Replay this run").click().run()
     checks = next(d.value for d in app.dataframe if "recorded sha256" in d.value.columns)
-    assert checks["dataset"].tolist() == ["Synthetic equity index (NASDAQCOM)"]
+    assert checks["dataset"].tolist() == ["NASDAQCOM - Synthetic equity index"]
 
     history = open_page("run_history.py")
-    assert any(c.value == "Datasets: Synthetic equity index (NASDAQCOM)" for c in history.caption)
+    assert any(c.value == f"Datasets: {label}" for c in history.caption)
+
+
+def test_every_catalog_dataset_has_a_ticker_first_label_and_a_ticker(app_env: Settings) -> None:
+    import labels  # importable once app_env has put app/ on the path
+
+    # The committed catalog, the one the app ships with.
+    catalog = load_catalog(PROJECT_ROOT / "data" / "catalog.json")
+    for dataset_id in catalog.ids():
+        entry = catalog.entries[dataset_id]
+        assert labels.dataset_label(catalog, dataset_id) == f"{entry.fred_id} - {entry.title}"
+        assert labels.dataset_ticker(catalog, dataset_id) == entry.fred_id
+    assert labels.dataset_label(catalog, "NASDAQCOM") == "NASDAQCOM - NASDAQ Composite Index"
+    assert labels.dataset_ticker(catalog, "NASDAQCOM") == "NASDAQCOM"
+    # An id that is not in the catalog is shown as it is.
+    assert labels.dataset_label(catalog, "BITCOIN") == labels.dataset_ticker(catalog, "BITCOIN")
+    assert labels.dataset_ticker(catalog, "BITCOIN") == "BITCOIN"
+
+
+# The fields of a catalog entry a dataset label is made of.
+DATASET_NAME_FIELDS = {"fred_id", "full_name", "title"}
+
+
+def dataset_name_reads(source: str) -> list[str]:
+    """Where a source reads a dataset's name fields (st.title, a page heading, aside)."""
+    found = []
+    for node in ast.walk(ast.parse(source)):
+        if isinstance(node, ast.Attribute) and node.attr in DATASET_NAME_FIELDS:
+            if isinstance(node.value, ast.Name) and node.value.id == "st":
+                continue
+            found.append(f"line {node.lineno}: .{node.attr}")
+    return found
+
+
+def test_only_labels_py_builds_dataset_labels() -> None:
+    # Regression guard: a page that formats a dataset's name itself is what reversed
+    # the labels before; only app/labels.py may read the name fields.
+    assert dataset_name_reads('label = f"{entry.title} ({entry.fred_id})"') == [
+        "line 1: .title", "line 1: .fred_id"]  # fmt: skip
+    assert dataset_name_reads('st.title("Run history")') == []
+    offenders = {
+        str(path.relative_to(PROJECT_ROOT)): found
+        for path in sorted((PROJECT_ROOT / "app").rglob("*.py"))
+        if path.name != "labels.py"
+        and (found := dataset_name_reads(path.read_text(encoding="utf-8")))
+    }
+    assert offenders == {}
 
 
 @pytest.mark.parametrize(
@@ -663,7 +723,7 @@ def test_plan_steps_are_collapsed_and_approvals_stay_in_validation(app_env: Sett
     app = plan_scenario_5(app_env)
     headers = step_headers(app)
     assert [is_open for _, is_open in headers] == [False] * 6  # the V10 steps too
-    assert headers[0][0] == "Step 1 · C01 · Load series · Synthetic equity index (NASDAQCOM)"
+    assert headers[0][0] == "Step 1 · C01 · Load series · NASDAQCOM \\- Synthetic equity index"
     assert (
         headers[2][0] == "Step 3 · C03 · Compute returns · Return type: Simple, periods: 1"
     )  # no badge; periods is the registry's default, shown filled in

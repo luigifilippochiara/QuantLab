@@ -97,8 +97,8 @@ def escape_md(text: str) -> str:
 
 
 def dataset_names_help(catalog: Catalog) -> str:
-    """Tooltip text listing the full name of every catalog dataset, one per line."""
-    return "\n".join(f"- {dataset_full_name(catalog, d)}" for d in catalog.ids())
+    """Tooltip text listing every catalog dataset by its full label, one per line."""
+    return "\n".join(f"- {dataset_label(catalog, d)}" for d in catalog.ids())
 
 
 def dataset_caption(catalog: Catalog, dataset_id: str) -> str:
@@ -613,14 +613,16 @@ def table_frame(table: dict[str, Any]) -> pd.DataFrame:
     )
 
 
-def describe_params(capability: str, params: dict[str, Any], edited: dict[str, Any]) -> str:
+def describe_params(
+    capability: str, params: dict[str, Any], edited: dict[str, Any], catalog: Catalog
+) -> str:
     """Parameters as text, labelled, marking user-edited ones.
 
-    E.g. "Frequency: Daily (edited, was Weekly), How: Last".
+    E.g. "Frequency: Daily (edited, was Weekly), How: Last"; a dataset by its full label.
     """
 
     def shown(name: str, value: Any) -> str:
-        return param_value_label(capability, name, value)
+        return param_value_label(capability, name, value, catalog)
 
     return ", ".join(
         f"{param_label(capability, name)}: {shown(name, value)}"
@@ -638,7 +640,7 @@ def render_trace(result: TraceResult, catalog: Catalog) -> None:
                 "code": s.capability_code or "-",
                 "capability": capability_title(s.capability),
                 "inputs": ", ".join(f"{k} <- {v}" for k, v in s.inputs.items()) or "-",
-                "params": describe_params(s.capability, s.params, s.edited) or "-",
+                "params": describe_params(s.capability, s.params, s.edited, catalog) or "-",
                 "library call": s.library_calls,
                 "rows": s.n_obs,
                 "range": f"{s.start} to {s.end}",
@@ -654,8 +656,7 @@ def render_trace(result: TraceResult, catalog: Catalog) -> None:
     sources = pd.DataFrame(
         [
             {
-                "dataset": dataset_label(catalog, s.dataset_id),
-                "FRED id": s.fred_id,
+                "dataset": dataset_label(catalog, s.dataset_id),  # the ticker leads
                 "file sha256": s.sha256,
                 "retrieved": s.retrieved_at,
                 "range used": f"{s.start} to {s.end}",

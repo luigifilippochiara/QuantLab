@@ -105,11 +105,17 @@ def param_label(capability: str | None, name: str) -> str:
     return PARAM_LABELS.get((capability, name)) or PARAM_LABELS.get((None, name)) or name
 
 
-def param_value_label(capability: str | None, name: str, value: Any) -> str:
+def param_value_label(
+    capability: str | None, name: str, value: Any, catalog: Catalog | None = None
+) -> str:
     """A parameter value's label, e.g. ("resample", "freq", "W") -> "Weekly".
 
-    Booleans read "yes" or "no"; a value without a label is shown as it is.
+    A dataset id gets its full dataset label when the catalog is given (e.g.
+    "NASDAQCOM - NASDAQ Composite Index"). Booleans read "yes" or "no"; a value
+    without a label is shown as it is.
     """
+    if name == "dataset_id" and catalog is not None and isinstance(value, str):
+        return dataset_label(catalog, value)
     if isinstance(value, bool):
         return "yes" if value else "no"
     labels = VALUE_LABELS.get((capability, name)) or VALUE_LABELS.get((None, name)) or {}
@@ -185,20 +191,33 @@ def capability_label(name: str, code: str | None = None) -> str:
     return f"{code} · {capability_title(name)}" if code else capability_title(name)
 
 
+# Dataset labels: 'TICKER - description' in lists, 'TICKER' when selected. Do not change without updating tests.  # noqa: E501
 def dataset_label(catalog: Catalog, dataset_id: str) -> str:
-    """A dataset's display name with its id, e.g. "NASDAQ Composite Index (NASDAQCOM)".
+    """A dataset's full label, ticker first: e.g. "NASDAQCOM - NASDAQ Composite Index".
 
-    The id stays visible: it is what links the data to its source (FRED). An id that
-    is not in the catalog is shown as it is.
+    Used wherever datasets are listed or described: the picker's help, the line under
+    each selected dataset, the plan, the editor, results, the trace, replay and Run
+    history. The ticker (the FRED id) leads: it is what links the data to its source.
+    An id that is not in the catalog is shown as it is.
     """
     entry = catalog.get(dataset_id)
-    return f"{entry.title} ({entry.fred_id})" if entry else dataset_id
+    return f"{entry.fred_id} - {entry.title}" if entry else dataset_id
+
+
+def dataset_ticker(catalog: Catalog, dataset_id: str) -> str:
+    """A dataset's short label, its ticker: e.g. "NASDAQCOM". Used for selected datasets.
+
+    An id that is not in the catalog is shown as it is.
+    """
+    entry = catalog.get(dataset_id)
+    return entry.fred_id if entry else dataset_id
 
 
 def dataset_full_name(catalog: Catalog, dataset_id: str) -> str:
-    """A dataset's full name with its id, for hover text, e.g. "Standard & Poor's 500 (SP500)"."""
+    """A dataset's official name, ticker first, for hover text: e.g. "SP500 - Standard &
+    Poor's 500". An id that is not in the catalog is shown as it is."""
     entry = catalog.get(dataset_id)
-    return f"{entry.full_name} ({entry.fred_id})" if entry else dataset_id
+    return f"{entry.fred_id} - {entry.full_name}" if entry else dataset_id
 
 
 def fact_label(fact_id: str, capability: str | None) -> str:
