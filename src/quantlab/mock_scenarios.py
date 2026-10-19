@@ -52,6 +52,22 @@ from quantlab.registry import REGISTRY
 
 
 @dataclass(frozen=True)
+class RecordedNarrative:
+    """A narrative an LLM wrote for an example's plan in a live run, replayed in mock mode.
+
+    Fields:
+        text: the narrative, word for word.
+        run_id: the live run it comes from.
+        dataset_sha256: dataset id -> SHA-256 of the file that run loaded. Its numbers
+            hold for this data only, so it is replayed only on the same files.
+    """
+
+    text: str
+    run_id: str
+    dataset_sha256: dict[str, str]
+
+
+@dataclass(frozen=True)
 class Scenario:
     """One example workflow.
 
@@ -69,6 +85,9 @@ class Scenario:
         plan: the canned planner output (LLM-shaped plan dict).
         note: shown with the plan in mock mode, when the canned output simulates a
             planner behaviour (e.g. a misbehaving planner), or None.
+        narrative: a narrative an LLM wrote for this plan in a live run, replayed in mock
+            mode when the canned plan runs unedited on the same data (narrator.narrate
+            checks it like any LLM narrative, N01 included), or None for the template.
     """
 
     id: str
@@ -82,6 +101,7 @@ class Scenario:
     keywords: tuple[tuple[str, ...], ...]
     plan: dict[str, Any]
     note: str | None = None
+    narrative: RecordedNarrative | None = None
 
 
 def _step(
@@ -144,42 +164,45 @@ VIX_CHF_REQUEST = (
 
 # Example 1's plan. Every parameter is written out (no hidden defaults).
 VIX_CHF_STEPS = [
-    # The two series named in the request: the stress signal and the currency.
+    # The live planner's order (run 20261019-102244-eb33f1): the stress signal first,
+    # from the raw series to its flags, then the currency, from the raw series to the
+    # outcome, then the test that joins them. The same steps and parameters in any
+    # order give the same numbers; this one matches what the live planner proposes.
     _step("s1", "load_series", params={"dataset_id": "VIXCLS"},
           rationale="Load the VIX daily closes, the stress signal."),
-    # DEXSZUS is quoted in Swiss francs per US dollar (USD/CHF): a fall means the
-    # franc strengthened against the dollar.
-    _step("s2", "load_series", params={"dataset_id": "DEXSZUS"},
-          rationale="Load the USD/CHF rate, in Swiss francs per US dollar."),
-    # Both to weekly Friday closes by the same rule, so a flag and the next-week
-    # return of the same week carry the same date when s7 aligns them. The
-    # weekly VIX is its Friday close, the level known when the week ends (a weekly
-    # mean would mix in the days before).
-    _step("s3", "resample", {"series": "s1"}, {"freq": "W", "how": "last"},
+    # Weekly Friday closes: the weekly VIX is its Friday close, the level known when the
+    # week ends (a weekly mean would mix in the days before). USD/CHF is resampled by
+    # the same rule (s5), so a flag and the next-week return of the same week carry the
+    # same date when s7 aligns them.
+    _step("s2", "resample", {"series": "s1"}, {"freq": "W", "how": "last"},
           rationale="Weekly VIX: the Friday close."),
-    _step("s4", "resample", {"series": "s2"}, {"freq": "W", "how": "last"},
-          rationale="Weekly Friday USD/CHF rates, on the same weeks as the VIX."),
     # The VIX is already a volatility (the market's expected 30-day volatility of the
     # S&P 500, annualised, in percent), so its level is flagged directly: no returns
     # and no rolling volatility. "High" is read as the top 10%: above the 90th
     # percentile; with the expanding method each threshold uses past weeks only
     # (after 52 weeks of history), so every flag could have been set at the time.
-    _step("s5", "flag_regime", {"series": "s3"},
+    _step("s3", "flag_regime", {"series": "s2"},
           {"method": "expanding", "quantile": 0.90, "min_periods": 52, "direction": "above"},
           rationale="Flag weeks when the VIX is above the 90th percentile of its past levels."),
-    # The outcome: next week's SIMPLE USD/CHF return, from the weekly rates (s4), so it
+    # DEXSZUS is quoted in Swiss francs per US dollar (USD/CHF): a fall means the
+    # franc strengthened against the dollar.
+    _step("s4", "load_series", params={"dataset_id": "DEXSZUS"},
+          rationale="Load the USD/CHF rate, in Swiss francs per US dollar."),
+    _step("s5", "resample", {"series": "s4"}, {"freq": "W", "how": "last"},
+          rationale="Weekly Friday USD/CHF rates, on the same weeks as the VIX."),
+    # The outcome: next week's SIMPLE USD/CHF return, from the weekly rates (s5), so it
     # starts at the close of the flagged week. Simple, not log: a mean of log returns
     # is lower by about half the variance, which would bias the comparison against
     # the more volatile weeks. forward_return turns the levels into the return
     # itself: no compute_returns step is needed.
-    _step("s6", "forward_return", {"series": "s4"}, {"method": "simple"},
+    _step("s6", "forward_return", {"series": "s5"}, {"method": "simple"},
           rationale="Next week's simple USD/CHF return: negative when the franc strengthened."),
     # A flag on one series grouping the returns of another: both are weekly, and the
     # test keeps only the weeks they share (from 1991: the VIX starts in 1990, and its
     # flags after 52 weeks). The registry's one significance test reports both groups'
     # means and their difference, with standard errors that allow for unequal
     # variances and for clustered stress (lags set by the Newey-West rule).
-    _step("s7", "hac_mean_difference", {"outcome": "s6", "flags": "s5"},
+    _step("s7", "hac_mean_difference", {"outcome": "s6", "flags": "s3"},
           rationale="Test the difference in means with Newey-West standard errors."),
 ]  # fmt: skip
 
@@ -195,6 +218,32 @@ VIX_CHF_NOTES = (
     "in Swiss francs per US dollar: a negative return means the franc strengthened. "
     "hac_mean_difference reports both groups' means and tests their difference (default "
     "lags)."
+)
+
+
+# Example 1's narrative in mock mode, word for word from live run 20261019-102244-eb33f1
+# (OpenAI gpt-6-luna, narrator-v7; it passed N01). That run's plan is the canned plan
+# above, step for step and parameter for parameter, and it loaded the committed
+# snapshots, so on them every number in it is one the mock run computes; N01 checks
+# that again on every mock run. On other data (e.g. the tests' synthetic series) the
+# template is written instead.
+VIX_CHF_NARRATIVE_TEXT = (
+    "Using the expanding high-VIX rule based only on past data, the two-sided test finds "
+    "that next-week USD/CHF returns do not differ at a statistically significant level: no "
+    "statistically significant difference. The flagged weeks had a higher sample mean return "
+    "(0.0006591) than other weeks (-0.0002255); the difference in means was 0.0008846, with a "
+    "p-value of 0.5069, across 63 distinct flagged episodes. Returns are simple returns, as "
+    "chosen; for USD/CHF, a positive return means the franc weakened against the dollar, and "
+    "a negative return means it strengthened. Alignment kept 1866 of 2908 outcome rows, with "
+    "36% dropped."
+)
+VIX_CHF_NARRATIVE = RecordedNarrative(
+    text=VIX_CHF_NARRATIVE_TEXT,
+    run_id="20261019-102244-eb33f1",
+    dataset_sha256={
+        "VIXCLS": "90b0099e6536c38d8ed72ef4347977722f33648bb7458827f6c6e5b17a18332c",
+        "DEXSZUS": "b6dd77b9c99e658326e1488c0d887876af16c8da7ce5ef93235495b417c4215d",
+    },
 )
 
 
@@ -262,6 +311,7 @@ SCENARIOS: list[Scenario] = [
         # On the committed data it also warns E04 once (s7): the VIX starts in
         # 1990, so the earlier USD/CHF weeks are dropped. A warning, not an issue code.
         plan=_plan(["VIXCLS", "DEXSZUS"], VIX_CHF_STEPS, VIX_CHF_NOTES),
+        narrative=VIX_CHF_NARRATIVE,
     ),
     Scenario(
         id="spread_frequency_mismatch_block",

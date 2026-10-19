@@ -2117,3 +2117,34 @@ selected does nothing: the selector's `on_change` fires only when its value chan
   rejected because the page would then show, and offer to execute, a plan made in a
   mode that is no longer selected.
 
+## Example 1 takes the live planner's step order; mock mode replays its live narrative
+
+**Example 1's mock narrative is the one an LLM wrote in a live run**, word for word
+(run 20261019-102244-eb33f1, gpt-6-luna, narrator-v7; 95 words against the
+template's 198). That run's plan had the same seven steps and parameters as the
+canned plan in another order, so the canned plan now takes the live order: the VIX to
+its flags (s1-s3), USD/CHF to its next-week return (s4-s6), then the test (s7). The
+flags moved from s5 to s3 (a full-history edit raises `V09:s3`) and the USD/CHF load
+from s2 to s4; V10 stays on s6 and E04 on s7. A live planner proposing this order
+now matches the golden case step by step.
+- **Replayed only where its numbers hold.** `Scenario.narrative` is a
+  `RecordedNarrative`: the text, the live run id and the SHA-256 of each dataset that
+  run loaded. `narrator.recorded_narrative` returns it only when the request matches
+  the example, the plan ran exactly as canned (defaults filled in) and the run loaded
+  the same files; after an edit, or on other data (the tests' synthetic series), the
+  template is written. Alternative: replay it whenever the example runs, rejected
+  because an edit or new data would then raise N01 on a correct run.
+- **Checked like any LLM narrative.** It goes through the same N01 check; one that
+  failed would be withheld, with N01 raised and the template shown. Its source is
+  "mock" (`recorded-narratives-v1`, no model: nothing is called), the app writes
+  "Written by: mock narrator (an LLM narrative recorded from a live run)", and the
+  AI-written note applies, since an LLM wrote it. The narrator prompt, the template,
+  N01 and the facts sheet are unchanged.
+- **What it says and does not.** It reports both means, the difference, the p-value,
+  the 63 episodes, the quote convention and the alignment loss; it does not give the
+  group sizes, the standard error or the confidence interval, which stay in the
+  results table and the facts sheet.
+- **Records and versions.** A `SCENARIO_1_LIVE_ORDER` migration replaces example 1 and
+  its eval case; the record `scenario_1_live_order` holds all five examples and the
+  eval set. The canned plans are `canned-scenarios-v21`.
+

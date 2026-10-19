@@ -175,7 +175,7 @@ and **Guardrails** pages, where the guardrails can be searched and filtered.
 |---|---|---|
 | **live** | Calls the model every time, and caches the plan | Calls the model |
 | **cached** (default with an API key) | Reuses the cached plan for an identical planning call, otherwise calls the model | Calls the model |
-| **mock** (default without a key) | Canned plans for the five example workflows; anything else is declined | Deterministic template |
+| **mock** (default without a key) | Canned plans for the five example workflows; anything else is declined | Deterministic template; example 1, unedited on the committed data, replays the narrative an LLM wrote for it in a live run, still checked by N01 |
 
 **What makes the cache exact.** A plan is cached under a SHA-256 key of five
 things: the request text, character for character; the selected datasets (in

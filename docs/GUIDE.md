@@ -117,7 +117,10 @@ mode the sidebar hides them and you type the request. Together they cover one
 realistic task, a market-risk analyst identifying periods of unusual market
 behaviour, and the protections QuantLab applies along the way. They run with
 canned plans in mock mode (`mock_scenarios.py`) or with the live planner, from the
-app or with `cli demo`.
+app or with `cli demo`. In mock mode the narrative is the deterministic template,
+except for example 1: run unedited on the committed snapshots, it replays the
+narrative an LLM wrote for the same plan and data in a live run (shown as "mock
+narrator"), and N01 checks its numbers again on every run.
 
 1. **Is the Swiss franc a safe haven?** (`chf_safe_haven_success`): does the Swiss
    franc strengthen after stress weeks? The request names the series, a threshold
@@ -247,9 +250,9 @@ marked "all numbers verified". An authentication error means the key is wrong;
 uv run python -m quantlab.cli demo --mode live
 ```
 
-Typing exactly these requests in **cached** mode (or picking one in mock mode,
-then switching to cached: the request stays in the box) then returns their
-plans instantly and identically, even on a slow network (the
+Typing exactly these requests in **cached** mode (switching mode clears the page,
+so type or paste the request after switching) then returns their plans instantly
+and identically, even on a slow network (the
 narrator still calls the model, and falls back to the deterministic template if
 it cannot). A live model may decline a request for a different reason than the
 canned plan (for example refuse example 2 outright with P01, rather than

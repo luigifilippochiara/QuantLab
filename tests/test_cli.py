@@ -27,9 +27,10 @@ def test_demo_behaves_as_expected(cli_env: Settings, capsys: pytest.CaptureFixtu
         assert scenario_id in output
     # The audit trail: scenario 1's significance test traced down to both files.
     trace = output.split("Audit trail (traceability)")[1]
-    for line in ["s7 C10 hac_mean_difference", "s6 C08 forward_return", "s5 C07 flag_regime",
-                 "s4 C02 resample", "s3 C02 resample", "s2 C01 load_series", "s1 C01 load_series",
-                 "VIXCLS (FRED VIXCLS) sha256", "DEXSZUS (FRED DEXSZUS) sha256"]:  # fmt: skip
+    for line in ["s7 C10 hac_mean_difference", "s6 C08 forward_return", "s5 C02 resample",
+                 "s4 C01 load_series", "s3 C07 flag_regime", "s2 C02 resample",
+                 "s1 C01 load_series", "VIXCLS (FRED VIXCLS) sha256",
+                 "DEXSZUS (FRED DEXSZUS) sha256"]:  # fmt: skip
         assert line in trace
 
 

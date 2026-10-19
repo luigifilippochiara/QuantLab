@@ -36,7 +36,7 @@
 - id: s1_chf_safe_haven
   scenario: chf_safe_haven_success
   expect: plan
-  capabilities: [load_series, load_series, resample, resample, flag_regime, forward_return,
+  capabilities: [load_series, resample, flag_regime, load_series, resample, forward_return,
                  hac_mean_difference]
   key_params:
     flag_regime: {method: expanding}

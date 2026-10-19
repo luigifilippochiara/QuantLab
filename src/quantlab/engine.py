@@ -502,6 +502,7 @@ class Session:
             extra_texts=titles,
             dataset_notes=quotes,
             client=self.client,
+            data_sha256={entry.dataset_id: entry.sha256 for entry in used},
         )
         self.narrative = narrative
         withheld = narrative.withheld

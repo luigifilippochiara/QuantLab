@@ -33,7 +33,8 @@ from pydantic import BaseModel, Field
 
 from quantlab.capabilities import count_episodes
 from quantlab.config import Settings
-from quantlab.guardrails import PERIOD_NAMES, Action, Issue, make_issue
+from quantlab.guardrails import PERIOD_NAMES, Action, Issue, fill_defaults, make_issue
+from quantlab.mock_scenarios import match_scenario
 from quantlab.plan import Plan, describe_plan
 from quantlab.planner import (
     FALLBACK_BETA,
@@ -44,6 +45,8 @@ from quantlab.planner import (
 from quantlab.types import ANNUALISATION_FACTORS, Artifact, DataType, TokenUsage
 
 NARRATOR_PROMPT_VERSION = "narrator-v7"
+# The narratives an LLM wrote in live runs and mock mode replays (Scenario.narrative).
+RECORDED_NARRATIVES_VERSION = "recorded-narratives-v1"
 
 # The note shown directly under the narrative (app and CLI) and kept in the run
 # record: who wrote it and, only when the grounding check passed, that its numbers
@@ -142,7 +145,8 @@ class NarrativeResult(BaseModel):
 
     Fields:
         text: the narrative.
-        source: "llm" or "template".
+        source: "llm", "mock" (an LLM narrative recorded from a live run, replayed in
+            mock mode) or "template".
         model: model that wrote it (None for the template).
         prompt_version: narrator prompt version.
         latency_ms: time spent writing it.
@@ -566,25 +570,29 @@ def narrate(
     extra_texts: list[str] | None = None,
     dataset_notes: dict[str, str] | None = None,
     client: Any = None,
+    data_sha256: dict[str, str] | None = None,
 ) -> NarrativeResult:
-    """Write the narrative (LLM, or template in mock mode / on failure) and check its numbers.
+    """Write the narrative (LLM, recorded or template) and check its numbers.
 
     Args:
         request: the user's request.
         plan: the executed plan.
         artifacts: step id -> output artifact.
         issues: WARN issues and approved APPROVE issues to mention.
-        mode: "live" or "cached" use the LLM; "mock" uses the template.
+        mode: "live" or "cached" use the LLM; "mock" replays the narrative recorded
+            for an unedited example workflow (recorded_narrative), else the template.
         settings: settings (narrator model, effort, tokens, timeout).
         extra_texts: other trusted texts whose numbers are allowed (e.g. dataset titles).
         dataset_notes: dataset id -> quote convention, for the datasets used that have
             one: the template states it, and the LLM is told to follow it.
         client: optional OpenAI or Anthropic client (tests inject a fake one).
+        data_sha256: dataset id -> SHA-256 of each dataset the run loaded; a recorded
+            narrative is replayed only on the data it was written from.
 
     Returns:
         A NarrativeResult including the grounding check and any N01 issues. An
-        LLM narrative that fails the check is in `withheld`, and the template is
-        the narrative returned.
+        LLM or recorded narrative that fails the check is in `withheld`, and the
+        template is the narrative returned.
     """
     facts = build_facts_sheet(plan, artifacts)
     trusted_texts = [request, *(i.message for i in issues), *(extra_texts or [])]
@@ -596,35 +604,77 @@ def narrate(
     )
     template.grounding = check_grounding(template.text, facts, plan, trusted_texts)
     result = template
-    usage = TokenUsage()  # mock mode calls no LLM
-    if mode != "mock":
-        llm_result, error, usage = _llm_narrative(
+    candidate, usage = None, TokenUsage()  # mock mode calls no LLM
+    if mode == "mock":
+        recorded = recorded_narrative(request, plan, data_sha256 or {})
+        if recorded is not None:
+            candidate = NarrativeResult(
+                text=recorded,
+                source="mock",
+                prompt_version=RECORDED_NARRATIVES_VERSION,
+                facts=facts,
+            )
+    else:
+        candidate, error, usage = _llm_narrative(
             request, plan, facts, issues, dataset_notes, settings, client
         )
-        if llm_result is None:
+        if candidate is None:
             template.error = error  # keep the template, record why the LLM was not used
+    if candidate is not None:
+        # The same check for a live and a recorded narrative.
+        candidate.grounding = check_grounding(candidate.text, facts, plan, trusted_texts)
+        if candidate.grounding.grounded:
+            result = candidate
         else:
-            llm_result.grounding = check_grounding(llm_result.text, facts, plan, trusted_texts)
-            if llm_result.grounding.grounded:
-                result = llm_result
-            else:
-                # N01: a narrative quoting a number the run did not produce is never
-                # shown as the summary; the checked template replaces it.
-                template.withheld = llm_result
-                template.error = "The LLM narrative was withheld by N01 UNGROUNDED_NARRATIVE."
+            # N01: a narrative quoting a number the run did not produce is never
+            # shown as the summary; the checked template replaces it.
+            template.withheld = candidate
+            written = "recorded" if candidate.source == "mock" else "LLM"
+            template.error = f"The {written} narrative was withheld by N01 UNGROUNDED_NARRATIVE."
     result.issues = check_narrative_grounding(result)
     result.note = narrative_note(result)
     result.usage = usage
     return result
 
 
+def recorded_narrative(request: str, plan: Plan, data_sha256: dict[str, str]) -> str | None:
+    """The narrative recorded for an example workflow, when this run is that example unedited.
+
+    An example's canned plan may come with a narrative an LLM wrote for it in a live
+    run (mock_scenarios.Scenario.narrative). It describes that run's results only, so
+    it is used only when the request matches the example, the plan ran exactly as
+    canned (the same steps, inputs and parameters, defaults filled in) and on the same
+    data files. After any edit, or on other data, the numbers differ and the template
+    is written instead.
+
+    Args:
+        request: the user's request.
+        plan: the executed plan (defaults filled in).
+        data_sha256: dataset id -> SHA-256 of each dataset the run loaded.
+
+    Returns:
+        The recorded text, or None.
+    """
+    scenario = match_scenario(request)
+    if scenario is None or scenario.narrative is None:
+        return None
+    canned = fill_defaults(Plan(plan_id="canned", request=request, **scenario.plan))
+
+    def shape(p: Plan) -> list[tuple[Any, ...]]:
+        return [(s.id, s.capability, s.inputs, s.params) for s in p.steps]
+
+    same_data = data_sha256 == scenario.narrative.dataset_sha256
+    return scenario.narrative.text if same_data and shape(plan) == shape(canned) else None
+
+
 def narrative_note(result: NarrativeResult) -> str:
     """The note shown under a narrative: who wrote it, and whether its numbers were checked.
 
-    The AI sentence applies only to an LLM narrative: the template is not written
-    by an AI. The numbers sentence is added only when the grounding check passed
-    and raised no N01 issue, so the note never claims the numbers were verified
-    when they were not (after an N01, the issue is shown instead).
+    The AI sentence applies only to a narrative an LLM wrote (live, or recorded from a
+    live run and replayed in mock mode): the template is not written by an AI. The
+    numbers sentence is added only when the grounding check passed and raised no N01
+    issue, so the note never claims the numbers were verified when they were not
+    (after an N01, the issue is shown instead).
 
     Args:
         result: the narrative, with its grounding checked and its N01 issues set.
@@ -633,7 +683,7 @@ def narrative_note(result: NarrativeResult) -> str:
         The note, or "" when neither sentence applies.
     """
     sentences = []
-    if result.source == "llm":
+    if result.source in ("llm", "mock"):
         sentences.append(AI_WRITTEN_NOTE)
     if result.grounding is not None and result.grounding.grounded and not result.issues:
         sentences.append(NUMBERS_CHECKED_NOTE)

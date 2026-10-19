@@ -6,13 +6,15 @@ out-of-scope and an unsafe request QuantLab stops (3, 4). The audit trail of exa
 1 (the trace) is tested in test_cli.py and test_app.py.
 """
 
+import dataclasses
 import os
 import subprocess
+from pathlib import Path
 
 import pytest
 
-from quantlab.config import Settings
-from quantlab.data import Catalog
+from quantlab.config import PROJECT_ROOT, Settings
+from quantlab.data import Catalog, load_catalog
 from quantlab.engine import ExecutionRefusedError, Session, run_request
 from quantlab.guardrails import Action, fill_defaults, validate_plan
 from quantlab.lineage import replay
@@ -20,10 +22,12 @@ from quantlab.mock_scenarios import (
     DIP_REQUEST,
     SCENARIOS,
     SCENARIOS_BY_ID,
+    VIX_CHF_NARRATIVE,
     VIX_CHF_REQUEST,
     Scenario,
     match_scenario,
 )
+from quantlab.narrator import AI_WRITTEN_NOTE, NUMBERS_CHECKED_NOTE
 from quantlab.plan import Plan
 from quantlab.registry import REGISTRY
 
@@ -87,16 +91,18 @@ def test_every_request_matches_only_its_own_scenario(scenario: Scenario) -> None
 
 # --- example 1: the canned plan is the planner's reading -----------------------------
 
-# (step id, capability, inputs, params): the plan example 1's request specifies.
+# (step id, capability, inputs, params): the plan example 1's request specifies, in the
+# order the live planner proposed it (run 20261019-102244-eb33f1, whose narrative mock
+# mode replays): the VIX to its flags, then USD/CHF to its next-week return, then the test.
 SCENARIO_1_PLAN = [
     ("s1", "load_series", {}, {"dataset_id": "VIXCLS"}),
-    ("s2", "load_series", {}, {"dataset_id": "DEXSZUS"}),
-    ("s3", "resample", {"series": "s1"}, {"freq": "W", "how": "last"}),
-    ("s4", "resample", {"series": "s2"}, {"freq": "W", "how": "last"}),
-    ("s5", "flag_regime", {"series": "s3"},
+    ("s2", "resample", {"series": "s1"}, {"freq": "W", "how": "last"}),
+    ("s3", "flag_regime", {"series": "s2"},
      {"method": "expanding", "quantile": 0.90, "min_periods": 52, "direction": "above"}),
-    ("s6", "forward_return", {"series": "s4"}, {"method": "simple"}),
-    ("s7", "hac_mean_difference", {"outcome": "s6", "flags": "s5"}, {}),
+    ("s4", "load_series", {}, {"dataset_id": "DEXSZUS"}),
+    ("s5", "resample", {"series": "s4"}, {"freq": "W", "how": "last"}),
+    ("s6", "forward_return", {"series": "s5"}, {"method": "simple"}),
+    ("s7", "hac_mean_difference", {"outcome": "s6", "flags": "s3"}, {}),
 ]  # fmt: skip
 
 
@@ -163,12 +169,12 @@ def test_scenario_1_tests_usd_chf_returns_by_vix_flags(settings: Settings) -> No
     session.approve(SCENARIO_1_APPROVALS)
     artifacts = session.execute().artifacts
     # The flags come from the weekly VIX level, the outcome from USD/CHF.
-    assert artifacts["s3"].meta.kind == "index_level" and artifacts["s3"].meta.frequency == "W"
-    assert artifacts["s5"].meta.source_dataset_ids == ["VIXCLS"]
+    assert artifacts["s2"].meta.kind == "index_level" and artifacts["s2"].meta.frequency == "W"
+    assert artifacts["s3"].meta.source_dataset_ids == ["VIXCLS"]
     assert artifacts["s6"].meta.source_dataset_ids == ["DEXSZUS"]
     test = artifacts["s7"].value
     # Every flagged week but the last, which has no next-week return yet.
-    flags = artifacts["s5"].value
+    flags = artifacts["s3"].value
     assert test["horizon"] == 1 and test["n_flagged"] == int(flags.iloc[:-1].sum())
     assert artifacts["s7"].meta.source_dataset_ids == ["DEXSZUS", "VIXCLS"]
     # The test reports both groups' means: the flagged weeks' and the other weeks'.
@@ -186,33 +192,92 @@ def test_scenario_1_tests_usd_chf_returns_by_vix_flags(settings: Settings) -> No
     assert narrative.grounding.grounded and narrative.issues == []
 
 
+def committed_snapshots(runs_dir: Path) -> Settings:
+    """Settings for the committed FRED snapshots, the data example 1's narrative was
+    recorded on (skips the test if the snapshots changed since)."""
+    settings = Settings(anthropic_api_key=None, planner_model="test-model",
+                        narrator_model="test-model", llm_mode="mock",
+                        data_dir=PROJECT_ROOT / "data", runs_dir=runs_dir)  # fmt: skip
+    catalog = load_catalog(settings.catalog_path)
+    if any(catalog.entries[d].sha256 != h for d, h in VIX_CHF_NARRATIVE.dataset_sha256.items()):
+        pytest.skip("the committed snapshots changed since example 1's narrative was recorded")
+    return settings
+
+
+def test_scenario_1_replays_its_recorded_narrative_on_the_committed_data(tmp_path: Path) -> None:
+    settings = committed_snapshots(tmp_path / "runs")
+    session = run_request(VIX_CHF_REQUEST, ["VIXCLS", "DEXSZUS"], "mock", approve=True,
+                          settings=settings)  # fmt: skip
+    narrative = session.narrative
+    # Word for word the live run's narrative, and its numbers checked again (N01).
+    assert narrative.text == VIX_CHF_NARRATIVE.text and len(narrative.text.split()) == 95
+    assert narrative.source == "mock" and narrative.model is None
+    assert narrative.grounding.grounded and narrative.issues == [] and narrative.withheld is None
+    assert narrative.note == f"{AI_WRITTEN_NOTE} {NUMBERS_CHECKED_NOTE}"
+
+
+def test_an_edited_scenario_1_plan_gets_the_template(tmp_path: Path) -> None:
+    session = start("chf_safe_haven_success", committed_snapshots(tmp_path / "runs"))
+    session.apply_param_edits({"s3": {"quantile": 0.95}})  # other numbers than recorded
+    session.approve(SCENARIO_1_APPROVALS)
+    session.execute()
+    narrative = session.narrate()
+    assert narrative.source == "template" and narrative.issues == []
+
+
+def test_scenario_1_on_other_data_gets_the_template(settings: Settings) -> None:
+    # The synthetic test data: not the files the narrative was recorded on.
+    session = run_request(VIX_CHF_REQUEST, ["VIXCLS", "DEXSZUS"], "mock", approve=True,
+                          settings=settings)  # fmt: skip
+    assert session.narrative.source == "template" and session.narrative.issues == []
+
+
+def test_a_recorded_narrative_that_fails_n01_is_withheld(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # A recorded text with one wrong number is treated like an LLM narrative that
+    # fails the check: withheld, N01 raised, the template shown.
+    wrong = dataclasses.replace(
+        VIX_CHF_NARRATIVE, text=VIX_CHF_NARRATIVE.text.replace("0.5069", "0.4069")
+    )
+    scenario = dataclasses.replace(SCENARIOS_BY_ID["chf_safe_haven_success"], narrative=wrong)
+    monkeypatch.setattr("quantlab.narrator.match_scenario", lambda request: scenario)
+    session = run_request(VIX_CHF_REQUEST, ["VIXCLS", "DEXSZUS"], "mock", approve=True,
+                          settings=committed_snapshots(tmp_path / "runs"))  # fmt: skip
+    narrative = session.narrative
+    assert narrative.source == "template" and narrative.withheld.source == "mock"
+    assert narrative.withheld.grounding.ungrounded == ["0.4069"]
+    assert [i.code for i in narrative.issues] == ["N01"]
+    assert narrative.error == "The recorded narrative was withheld by N01 UNGROUNDED_NARRATIVE."
+
+
 def test_scenario_1_demo_edit_full_history_threshold_needs_the_look_ahead_approval(
     settings: Settings,
 ) -> None:
     session = start("chf_safe_haven_success", settings)
-    report = session.apply_param_edits({"s5": {"method": "full_sample"}})
+    report = session.apply_param_edits({"s3": {"method": "full_sample"}})
     # The VIX threshold from its entire history: V09, an approval (not a block), which
     # also says the significance test is invalidated; the return-method approval stays.
     assert [(i.issue_id, i.action) for i in report.issues] == [
-        ("V09:s5", "APPROVE"),
+        ("V09:s3", "APPROVE"),
         ("V10:s6:return_method", "APPROVE"),
     ]
     v09 = report.issues[0]
     assert v09.name == "LOOK_AHEAD"
     assert "It also invalidates the significance test in s7" in v09.message
-    with pytest.raises(ExecutionRefusedError, match="V09:s5"):
+    with pytest.raises(ExecutionRefusedError, match="V09:s3"):
         session.execute()  # not without the analyst's decision
-    session.approve(["V09:s5", "V10:s6:return_method"])
+    session.approve(["V09:s3", "V10:s6:return_method"])
     assert session.execute().status == "completed"
 
 
 def test_scenario_1_demo_edit_dataset_to_a_yield_is_blocked(settings: Settings) -> None:
     session = start("chf_safe_haven_success", settings)
-    report = session.apply_param_edits({"s2": {"dataset_id": "DGS10"}})
+    report = session.apply_param_edits({"s4": {"dataset_id": "DGS10"}})
     # A legal edit (a parameter value), which the re-validation blocks: a forward
     # "return" needs a price level, and a yield is a rate. (V07 RETURNS_ON_RATES needs
     # a compute_returns step: the same edit on example 5 shows it.)
-    assert session.plan.steps[1].params["dataset_id"] == "DGS10"
+    assert session.plan.steps[3].params["dataset_id"] == "DGS10"
     assert [(i.issue_id, i.name) for i in report.blocks] == [("V04:s6:series", "TYPE_MISMATCH")]
     with pytest.raises(ExecutionRefusedError):
         session.execute()
@@ -220,9 +285,9 @@ def test_scenario_1_demo_edit_dataset_to_a_yield_is_blocked(settings: Settings) 
 
 def test_scenario_1_demo_edit_quantile_out_of_range_is_blocked(settings: Settings) -> None:
     session = start("chf_safe_haven_success", settings)
-    report = session.apply_param_edits({"s5": {"quantile": 1.5}})
+    report = session.apply_param_edits({"s3": {"quantile": 1.5}})
     (v03,) = report.blocks
-    assert (v03.code, v03.name, v03.step_id) == ("V03", "INVALID_PARAM", "s5")
+    assert (v03.code, v03.name, v03.step_id) == ("V03", "INVALID_PARAM", "s3")
     assert "'quantile'=1.5 is outside [0.01, 0.99]" in v03.message
     with pytest.raises(ExecutionRefusedError):
         session.execute()

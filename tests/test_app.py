@@ -19,7 +19,7 @@ from quantlab.data import load_catalog
 from quantlab.engine import Session, run_request
 from quantlab.guardrails import CATEGORY_DEFINITIONS, ENFORCERS, GUARDRAILS, Action, make_issue
 from quantlab.lineage import LLMInfo, RunRecord, load_run, load_runs, new_run_id, replay, save_run
-from quantlab.mock_scenarios import SCENARIOS_BY_ID, VIX_CHF_REQUEST
+from quantlab.mock_scenarios import SCENARIOS_BY_ID, VIX_CHF_NARRATIVE, VIX_CHF_REQUEST
 from quantlab.monitoring import (
     guardrail_counts,
     monitored_events,
@@ -95,11 +95,11 @@ def test_scenario_1_full_flow(app_env: Settings) -> None:
     assert NUMBERS_CHECKED_NOTE in captions
     # Results and trace name each capability by code and name.
     results = [e.label for e in app.expander if e.label.startswith("s")]
-    assert results[4].startswith("s5 · C07 · Flag regime · completed")
+    assert results[2].startswith("s3 · C07 · Flag regime · completed")
     assert results[6].startswith("s7 · C10 · HAC mean difference · completed")
     # Under each USD/CHF result, and in the narrative: which way the rate reads.
     quote = "DEXSZUS is quoted as USD/CHF, in Swiss francs per US dollar"
-    assert sum(c.value.startswith(quote) for c in app.caption) == 4  # s2, s4, s6, s7
+    assert sum(c.value.startswith(quote) for c in app.caption) == 4  # s4, s5, s6, s7
     assert any(quote in m.value for m in app.markdown)
     # The significance test's table, with both groups' means, every number formatted as
     # in the facts sheet.
@@ -118,7 +118,7 @@ def test_scenario_1_full_flow(app_env: Settings) -> None:
     assert trace[["step", "code", "capability"]].values.tolist()[:3] == [
         ["s7", "C10", "HAC mean difference"],
         ["s6", "C08", "Forward return"],
-        ["s5", "C07", "Flag regime"],
+        ["s5", "C02", "Resample"],
     ]
     subheaders = [h.value for h in app.subheader]
     # The narrative (with its note) comes right after the results, then the trace.
@@ -146,6 +146,34 @@ def plan_scenario_1(app_env: Settings) -> AppTest:
     return app
 
 
+def test_scenario_1_shows_its_recorded_narrative_on_the_committed_data(
+    app_env: Settings, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # The committed FRED snapshots: the data example 1's narrative was recorded on.
+    monkeypatch.setenv("QUANTLAB_DATA_DIR", str(PROJECT_ROOT / "data"))
+    catalog = load_catalog(PROJECT_ROOT / "data" / "catalog.json")
+    if any(catalog.entries[d].sha256 != h for d, h in VIX_CHF_NARRATIVE.dataset_sha256.items()):
+        pytest.skip("the committed snapshots changed since example 1's narrative was recorded")
+    app = plan_scenario_1(app_env)
+    approve_all(app)
+    button(app, "Execute").click().run()
+    assert not app.exception, app.exception
+    assert any(m.value == ui_escaped(VIX_CHF_NARRATIVE.text) for m in app.markdown)
+    assert any("numbers verified" in s.value for s in app.success)
+    captions = [c.value for c in app.caption]
+    assert any(
+        c.startswith("Written by: mock narrator (an LLM narrative recorded from a live run)")
+        for c in captions
+    )
+
+
+def ui_escaped(text: str) -> str:
+    """Text as the page writes it in Markdown (dollar signs and the like escaped)."""
+    import ui  # importable once app_env has put app/ on the path
+
+    return ui.escape_md(text)
+
+
 def test_switching_the_llm_mode_resets_the_analysis_page(app_env: Settings) -> None:
     import ui  # importable once app_env has put app/ on the path
 
@@ -154,7 +182,7 @@ def test_switching_the_llm_mode_resets_the_analysis_page(app_env: Settings) -> N
     saved = load_run(session.run_id, app_env.runs_dir)
     assert app.multiselect(key="dataset_select").value == ["VIXCLS", "DEXSZUS"]
     # A change typed but not applied yet.
-    next(n for n in app.number_input if n.key.endswith("-s5-quantile")).set_value(0.95).run()
+    next(n for n in app.number_input if n.key.endswith("-s3-quantile")).set_value(0.95).run()
 
     app.segmented_control(key="llm_mode").set_value("cached").run()
     assert not app.exception, app.exception
