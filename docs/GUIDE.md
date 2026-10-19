@@ -60,6 +60,11 @@ The **Analysis** page follows the safety model step by step:
 3. Read the validation results. Blocking issues must be resolved, approvals must
    be ticked, and warnings are shown for context. If the plan is not what you
    want, click **Reject plan**: nothing runs, and the decision is recorded.
+   Two stops come before validation and are shown where they happen: a request
+   the request check refuses (R01, too long) is shown under **Request check**,
+   above where the plan would be, since the planner is never called; a request the
+   planner declines (P01) is shown in the **Plan** section. Neither has a
+   Validation section or anything to execute or reject.
 4. Click **Execute** (your approval of the plan). Results appear per step: charts for series (with flagged
    periods shaded), tables for statistics, and a plain-English narrative marked
    "all numbers verified" when every number checks out. A short note under the

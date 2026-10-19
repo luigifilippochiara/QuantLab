@@ -2215,3 +2215,21 @@ follows the request instead of reading it into "the weeks when the curve was mos
 negative"; "most negative" is still the bottom 10%, the plan's choice. The plan and
 outcome are unchanged (V08 BLOCK, V09 to approve), and so are the golden records, which
 hold no request text. The canned plans are `canned-scenarios-v23`.
+
+## R01 and P01 are shown at their own stage, not under Validation
+
+**On the Analysis page, a request check block (R01) and a planner refusal (P01) are no
+longer listed under Validation.** R01 is shown in its own "Request check" section, above
+where the plan would be, with no Plan section (the planner was never called) and the
+caption "The planner was not called and nothing was executed". P01's card is shown in the
+Plan section, under the refusal. Neither run shows a Validation section or the Execute
+and Reject plan buttons (both were disabled anyway); the page ends with "Nothing was
+executed. Write a new request to continue.", as for a plan rejected as a whole.
+- **Why:** the code prefix names the stage (CLAUDE.md), and neither request reached the
+  validator; listing them under Validation said it had.
+- **Unchanged:** the engine still returns them in the run's `ValidationReport` and logs
+  them as `validation_issue` events, so run records, monitoring and replay are as before.
+  Only where the page draws them changed. A stepless P01 now reads "· request", like R01,
+  rather than "· whole plan": a refusal has no plan.
+- **Alternative:** keep them under Validation with a stage label, rejected because the
+  section's name would still be wrong.

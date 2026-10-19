@@ -10,7 +10,7 @@ import streamlit as st
 
 from quantlab.config import LLM_MODES
 from quantlab.engine import Session
-from quantlab.guardrails import Action
+from quantlab.guardrails import ENFORCERS, Action
 from quantlab.lineage import replay
 from quantlab.mock_scenarios import SCENARIOS, match_scenario
 from quantlab.registry import REGISTRY
@@ -145,11 +145,28 @@ finished = session.status in ("completed", "rejected")
 # editing, approving or executing, and no Reject button (the validator already
 # rejected it). Only a new request goes on.
 rejected = session.report is not None and session.report.is_rejected
+# The request check (R01) runs before the planner, and the planner's refusal (P01)
+# before the validator: neither is a validation finding, so each is shown where its
+# stage is (R01 above the plan, P01 in the Plan section), never under Validation.
+stage_issues = session.report.issues if session.report else []
+request_issues = [i for i in stage_issues if i.enforced_by == ENFORCERS["R"]]
+refusal_issues = [i for i in stage_issues if i.enforced_by == ENFORCERS["P"]]
 # step id -> {param: value} for widget values that differ from the plan: changes
 # the user has made but not applied (and re-validated) yet.
 pending: dict[str, dict] = {}
 # step id -> {param: value} for every parameter field, as it is now.
 values: dict[str, dict] = {}
+
+if request_issues:
+    # Stopped by the request check: the planner was never called, so there is no plan,
+    # no validation and no decision to show.
+    st.subheader("Request check")
+    for issue in request_issues:
+        with st.container(border=True):
+            ui.render_issue(issue)
+    st.caption("The planner was not called and nothing was executed. Write a new request to "
+               "continue.")  # fmt: skip
+    st.stop()
 
 st.subheader("Plan")
 # A canned plan that simulates a planner behaviour (e.g. one that follows an
@@ -161,6 +178,9 @@ if plan is None:
     st.error(result.error if result else "No plan.", title="The planner returned no usable plan")
 elif plan.cannot_fulfill:
     st.error(ui.escape_md(plan.refusal_reason or ""), title="The planner declined this request")
+    for issue in refusal_issues:
+        with st.container(border=True):
+            ui.render_issue(issue)
 else:
     if rejected:
         ui.render_rejection(session.report, plan)
@@ -294,6 +314,11 @@ if plan is not None and plan.planner_notes:
         f"Planner notes (shown for context, never trusted): {ui.escape_md(plan.planner_notes)}"
     )
 
+if plan is not None and plan.cannot_fulfill:
+    # A refusal never reaches the validator: no Validation section, nothing to decide.
+    st.caption("Nothing was executed. Write a new request to continue.")
+    st.stop()
+
 # ---------------------------------------------------------------- validation
 
 st.subheader("Validation")
@@ -340,8 +365,6 @@ if finished:
     reason = ""
 elif report is None or plan is None:
     reason = "There is no plan to execute."
-elif plan.cannot_fulfill:
-    reason = "The planner declined this request, so there is nothing to run."
 elif pending:
     reason = "Apply or reset your parameter changes to continue."
 elif blocking:
@@ -349,8 +372,8 @@ elif blocking:
 elif unticked:
     reason = f"Resolve {len(unticked)} approval{'' if len(unticked) == 1 else 's'} to continue."
 already_approved = {a.issue_id for a in session.approvals}
-# Rejecting is the reviewer's other decision; a refusal or a missing plan has nothing to reject.
-can_reject = not finished and plan is not None and not plan.cannot_fulfill
+# Rejecting is the reviewer's other decision; a missing plan has nothing to reject.
+can_reject = not finished and plan is not None
 execute_col, reject_col = st.columns(2)
 if execute_col.button(
     "Execute",

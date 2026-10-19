@@ -62,7 +62,11 @@ STEP_BADGES = {
 }
 EDITED_BADGE = ":blue-badge[:material/edit: edited]"
 # What a stepless issue concerns, by who enforces it (anything else: the whole plan).
-STEPLESS_PLACES = {ENFORCERS["R"]: "request", ENFORCERS["N"]: "narrative"}
+STEPLESS_PLACES = {
+    ENFORCERS["R"]: "request",
+    ENFORCERS["P"]: "request",
+    ENFORCERS["N"]: "narrative",
+}
 
 STATUS_BADGE = {
     "completed": ":green-badge[completed]",
@@ -570,7 +574,8 @@ def render_issue(issue: Issue, titles: dict[str, str] | None = None) -> None:
         titles: step id -> step name (see step_titles), e.g. "Step 3 · C03 ·
             Compute returns"; the step is then named as in the plan, with its id.
     """
-    # Issues without a step concern the whole plan, the request (R01) or the narrative (N01).
+    # Issues without a step concern the whole plan, the request (R01, P01) or the
+    # narrative (N01).
     where = STEPLESS_PLACES.get(issue.enforced_by, "whole plan")
     if issue.step_id:
         title = (titles or {}).get(issue.step_id)

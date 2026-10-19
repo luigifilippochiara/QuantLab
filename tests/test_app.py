@@ -18,7 +18,14 @@ from streamlit.testing.v1 import AppTest
 from quantlab.config import PROJECT_ROOT, Settings
 from quantlab.data import load_catalog
 from quantlab.engine import Session, run_request
-from quantlab.guardrails import CATEGORY_DEFINITIONS, ENFORCERS, GUARDRAILS, Action, make_issue
+from quantlab.guardrails import (
+    CATEGORY_DEFINITIONS,
+    ENFORCERS,
+    GUARDRAILS,
+    MAX_REQUEST_WORDS,
+    Action,
+    make_issue,
+)
 from quantlab.lineage import LLMInfo, RunRecord, load_run, load_runs, new_run_id, replay, save_run
 from quantlab.mock_scenarios import SCENARIOS_BY_ID, VIX_CHF_NARRATIVE, VIX_CHF_REQUEST
 from quantlab.monitoring import (
@@ -363,22 +370,48 @@ def test_only_labels_py_builds_dataset_labels() -> None:
     assert offenders == {}
 
 
-@pytest.mark.parametrize(
-    "scenario_id",
-    [
-        "arima_forecast_block",
-        "spread_frequency_mismatch_block",
-    ],
-)
-def test_blocked_scenario_cannot_execute(scenario_id: str, app_env: Settings) -> None:
+def test_blocked_scenario_cannot_execute(app_env: Settings) -> None:
     app = open_page("analysis.py")
-    app.sidebar.button(key=f"scenario-{scenario_id}").click().run()
+    app.sidebar.button(key="scenario-spread_frequency_mismatch_block").click().run()
     button(app, "Generate plan").click().run()
     assert button(app, "Execute").disabled
     assert any("blocked" in m.value for m in app.markdown if "Run `" in m.value)
-    # A blocked plan can still be rejected; a refusal holds no plan to reject.
-    refusal = scenario_id == "arima_forecast_block"
-    assert button(app, "Reject plan").disabled is refusal
+    # A blocked plan can still be rejected.
+    assert not button(app, "Reject plan").disabled
+
+
+def test_a_planner_refusal_is_shown_in_the_plan_not_in_validation(app_env: Settings) -> None:
+    app = open_page("analysis.py")
+    app.sidebar.button(key="scenario-arima_forecast_block").click().run()
+    button(app, "Generate plan").click().run()
+    assert any("blocked" in m.value for m in app.markdown if "Run `" in m.value)
+    # P01 is the planner's: its card is in the Plan section, under the refusal. The
+    # validator never ran, so there is no Validation section and nothing to decide.
+    assert [h.value for h in app.subheader] == ["Plan"]
+    assert app.error[0].proto.title == "The planner declined this request"
+    (card,) = [m.value for m in app.markdown if "PLANNER_REFUSED" in m.value]
+    assert card.endswith("**P01 PLANNER_REFUSED** · request")
+    labels = [b.label for b in app.button]
+    assert not any(label.startswith(("Execute", "Reject plan")) for label in labels)
+    assert app.main.caption[-1].value == "Nothing was executed. Write a new request to continue."
+
+
+def test_a_request_too_long_is_shown_before_the_plan(app_env: Settings) -> None:
+    app = open_page("analysis.py")
+    app.text_area(key="request_text").input(" ".join(["word"] * (MAX_REQUEST_WORDS + 1)))
+    button(app.run(), "Generate plan").click().run()
+    assert any("blocked" in m.value for m in app.markdown if "Run `" in m.value)
+    # R01 stops the request before the planner: its card is in its own section, with
+    # no Plan (no planner error either), no Validation and nothing to decide.
+    assert [h.value for h in app.subheader] == ["Request check"]
+    (card,) = [m.value for m in app.markdown if "REQUEST_TOO_LONG" in m.value]
+    assert card.endswith("**R01 REQUEST_TOO_LONG** · request")
+    assert not app.error
+    labels = [b.label for b in app.button]
+    assert not any(label.startswith(("Execute", "Reject plan")) for label in labels)
+    assert app.main.caption[-1].value == (
+        "The planner was not called and nothing was executed. Write a new request to continue."
+    )
 
 
 def test_scenario_4_is_rejected_whole_with_a_banner_and_no_controls(app_env: Settings) -> None:
