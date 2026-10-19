@@ -69,18 +69,6 @@ Ready-made in the sidebar in mock mode ([details](docs/GUIDE.md#example-workflow
 5. **Buy the dip in tech?** Completed analysis: the biggest weekly NASDAQ drops, then
    a test of whether the next week differs.
 
-## Limitations
-
-- **Valid is not correct:** a plan can pass every check and still answer the wrong
-  question, which is why a person reviews every plan.
-- **LLM variability:** the same request can produce different plans; the cache and
-  replay make recorded runs reproducible, not fresh plans predictable.
-- **Narrow scope:** a few frozen FRED series, descriptive analysis plus one test, no
-  forecasts, and an evaluation set that catches regressions but cannot measure
-  planner accuracy with confidence.
-
-More limitations: [ARCHITECTURE.md](docs/ARCHITECTURE.md#limitations-and-roadmap).
-
 ## Roadmap and next steps
 
 Next steps:
