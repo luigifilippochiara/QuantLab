@@ -8,9 +8,6 @@ answers they can audit.
 
 ![QuantLab architecture: a request goes to the planner (LLM), the validator, human approval, the executor and the results; the narrator (LLM) summarises them, and the run record keeps everything for replay and trace.](assets/architecture.png)
 
-*Red: the LLM proposes and summarises, never computes. Black: deterministic code
-validates, computes and records. Dashed: a person asks and approves. Shields mark
-where guardrails act (R, P, V, E, N); H is the human approval step.*
 
 ## How it works
 
