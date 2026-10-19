@@ -617,7 +617,7 @@ def test_edits_are_marked_and_period_counts_follow_the_frequency(app_env: Settin
     button(app, "Apply changes").click().run()
     headers = step_headers(app)
     assert headers[1] == (
-        "Step 2 · C02 · Resample · Frequency: Daily, how: Last :blue-badge[:material/edit: edited]",
+        "Step 2 · C02 · Resample · Frequency: Daily, How: Last :blue-badge[:material/edit: edited]",
         False,
     )
     # min_periods 52 now counts trading days: its tooltip says it is counted in periods
@@ -698,12 +698,12 @@ def test_every_registered_choice_has_a_label_that_round_trips(app_env: Settings)
         "Daily", "Weekly", "Monthly",
     ]  # fmt: skip
     assert labels.param_label("resample", "freq") == "Frequency"
-    # resample's `how`: its values are capitalised, its name is kept.
+    # resample's `how`: its name and its values are capitalised.
     how = REGISTRY["resample"].param("how")
     assert [labels.param_value_label("resample", "how", c) for c in how.choices] == [
         "Last", "Mean",
     ]  # fmt: skip
-    assert labels.param_label("resample", "how") == "how"
+    assert labels.param_label("resample", "how") == "How"
     # Every labelled parameter: each allowed code has its own label, and the label leads
     # back to the code (label -> code -> label), so the editor can show labels and
     # still write codes.
@@ -743,7 +743,7 @@ def test_every_registered_choice_has_a_label_that_round_trips(app_env: Settings)
 def test_the_editor_shows_labels_but_the_plan_keeps_its_codes(app_env: Settings) -> None:
     app = plan_scenario_5(app_env)
     headers = step_headers(app)
-    assert headers[1][0] == "Step 2 · C02 · Resample · Frequency: Weekly, how: Last"
+    assert headers[1][0] == "Step 2 · C02 · Resample · Frequency: Weekly, How: Last"
     freq = next(s for s in app.selectbox if s.key.endswith("-s2-freq"))
     assert freq.label == "Frequency" and freq.options == ["Daily", "Weekly", "Monthly"]
     assert freq.value == "W"  # the field's value is the code
@@ -753,11 +753,11 @@ def test_the_editor_shows_labels_but_the_plan_keeps_its_codes(app_env: Settings)
     # The same for `how`: the field shows "Last" and holds "last"; choosing "Last" again
     # marks nothing as edited or pending.
     how = next(s for s in app.selectbox if s.key.endswith("-s2-how"))
-    assert how.options == ["Last", "Mean"] and how.value == "last"
+    assert how.label == "How" and how.options == ["Last", "Mean"] and how.value == "last"
     how.select_index(how.options.index("Last")).run()
     assert app.button(key="apply-edits").proto.type == "secondary"
     assert not any("not applied yet" in c.value for c in app.caption)
-    assert step_headers(app)[1][0] == "Step 2 · C02 · Resample · Frequency: Weekly, how: Last"
+    assert step_headers(app)[1][0] == "Step 2 · C02 · Resample · Frequency: Weekly, How: Last"
     assert app.session_state["session"].plan.steps[1].params["how"] == "last"
     # A real edit stores the code.
     next(s for s in app.selectbox if s.key.endswith("-s2-freq")).select("D").run()

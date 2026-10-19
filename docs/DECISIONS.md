@@ -2058,7 +2058,7 @@ are `canned-scenarios-v19`.
 - **resample's `how` values read "Last" and "Mean"** everywhere they are shown (the
   step summary, the editor, the trace, run-history edits, the registry page). The plan
   keeps `last` and `mean`; the editor's select box stores the code, so choosing the
-  label already shown is no edit. The parameter's name stays `how`.
+  label already shown is no edit. The parameter's name reads "How" (`how` in the plan).
 - **"Minimum history" (and "Window") lose their suffix** "(in periods of the series
   frequency)". In the editor, the field's tooltip is the registry's description, which
   already says what the number is counted in ("52 = 52 weeks on weekly data, 52 trading

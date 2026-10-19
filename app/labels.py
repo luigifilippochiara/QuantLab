@@ -17,11 +17,11 @@ from quantlab.registry import REGISTRY, capability_code
 # Parameter names: (capability, parameter) -> label, or (None, parameter) for a
 # parameter that means the same in every capability. `method` means different things
 # (a return type, a threshold's window), so it is labelled per capability. Parameters
-# without an entry (e.g. resample's `how`, `periods`) keep their names, though their
-# values may have labels.
+# without an entry (e.g. compute_returns' `periods`) keep their names.
 PARAM_LABELS: dict[tuple[str | None, str], str] = {
     (None, "dataset_id"): "Dataset",
     (None, "freq"): "Frequency",
+    ("resample", "how"): "How",
     ("compute_returns", "method"): "Return type",
     ("forward_return", "method"): "Return type",
     ("flag_regime", "method"): "Threshold from",

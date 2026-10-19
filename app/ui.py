@@ -584,7 +584,7 @@ def table_frame(table: dict[str, Any]) -> pd.DataFrame:
 def describe_params(capability: str, params: dict[str, Any], edited: dict[str, Any]) -> str:
     """Parameters as text, labelled, marking user-edited ones.
 
-    E.g. "Frequency: Daily (edited, was Weekly), how: last".
+    E.g. "Frequency: Daily (edited, was Weekly), How: Last".
     """
 
     def shown(name: str, value: Any) -> str:
