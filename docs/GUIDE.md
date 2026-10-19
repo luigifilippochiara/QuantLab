@@ -222,6 +222,30 @@ result** shows the full chain: `hac_mean_difference` -> `forward_return` ->
 call, parameters (user edits marked) and output hash. `cli demo` prints the same
 chain.
 
+## LLM modes
+
+| Mode | Planner | Narrator |
+|---|---|---|
+| **live** | Calls the model every time, and caches the plan | Calls the model |
+| **cached** (default with an API key) | Reuses the cached plan for an identical planning call, otherwise calls the model | Calls the model |
+| **mock** (default without a key) | Canned plans for the five example workflows; anything else is declined | Deterministic template; example 1, unedited on the committed data, replays the narrative an LLM wrote for it in a live run, still checked by N01 |
+
+**What makes the cache exact.** A plan is cached under a SHA-256 key of five
+things: the request text, character for character; the selected datasets (in
+any order); the planner model; the prompt version; and the registry version. A
+plan made for a different prompt or a different set of capability interfaces is
+never reused. Only successful plans are cached, and a cached plan goes through
+the same parsing and validation as a fresh one.
+
+**Providers.** `QUANTLAB_LLM_PROVIDER` selects OpenAI (the default, model
+`gpt-6-luna`) or Anthropic (`claude-sonnet-5-5`). Both get the same prompts and
+plan schema, and their output goes through the same checks. The run record
+stores the provider, the requested model and the model version that actually
+answered. Determinism comes from the cache and from model-free replay, not from
+`temperature=0`, which current reasoning models do not reliably accept. If the
+narrator call fails, the template writes the summary; if the API is down, switch
+to mock mode.
+
 ## Live mode
 
 Live mode calls a language model for the planner and the narrator. The provider
@@ -320,7 +344,26 @@ Two separate questions, measured separately:
   expected to be refused (P01) or planned. The report gives accuracy per category,
   false plans and false refusals separately, and the tokens and cost of the run.
   About a third of the cases are held out (`--holdout exclude` leaves them out while
-  working on the planner prompt; `--holdout only` scores them alone).
+  working on the planner prompt; `--holdout only` scores them alone). Live results
+  with gpt-6-luna:
+
+  | Category | planner-v6 | planner-v7 |
+  |---|---|---|
+  | Vague or open-ended | 1/5 | 5/5 |
+  | Out-of-scope methods | 5/5 | 5/5 |
+  | Data not available | 4/4 | 4/4 |
+  | Advice or decisions | 3/3 | 3/3 |
+  | Prompt injection and probing | 5/5 | 5/5 |
+  | Off-topic | 3/3 | 3/3 |
+  | Mixed (valid plus out-of-scope) | 3/3 | 3/3 |
+  | Valid but loosely worded (must plan) | 5/5 | 5/5 |
+  | **Total** (false plans / false refusals) | **29/33** (4 / 0) | **33/33** (0 / 0) |
+
+  Planner-v6 chose an analysis itself when a request had no question. Planner-v7 plans
+  only a concrete analytical question, otherwise declines, says what QuantLab can
+  compute and suggests requests. It never gives financial advice. On the golden set
+  the two versions score the same (8 of 11, the same three misses). A full run costs
+  about $0.02.
 * **Are the computations right?** Measured by the unit tests, independently of
   any model: returns, differences, spread alignment, rolling volatility and
   annualisation, the no-look-ahead property of expanding flags, forward returns,
@@ -333,6 +376,7 @@ Two separate questions, measured separately:
 ```
 pyproject.toml, uv.lock     dependencies (direct ones pinned exactly)
 CLAUDE.md                   engineering conventions for AI-assisted development
+assets/architecture.png     the architecture diagram (README, ARCHITECTURE.md)
 assets/logo.svg             the QuantLab logo (the app's query_stats icon)
 docs/GUIDE.md               this guide
 docs/ARCHITECTURE.md        design, module map, capability and guardrail tables

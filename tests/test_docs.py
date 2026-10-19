@@ -45,10 +45,12 @@ def github_anchor(heading: str) -> str:
     return re.sub(r"[^\w\- ]", "", heading.strip().lower()).replace(" ", "-")
 
 
-def test_readme_links_and_logo_resolve() -> None:
-    # The logo comes first and is the committed SVG, so it renders on GitHub.
-    assert README.startswith('<p align="center">\n  <img src="assets/logo.svg"')
-    assert (PROJECT_ROOT / "assets" / "logo.svg").read_text(encoding="utf-8").startswith("<svg")
+def test_readme_links_and_architecture_image_resolve() -> None:
+    # The architecture is shown by the committed image, right under the title and the
+    # description, by a relative path so it renders on GitHub.
+    assert "\n![QuantLab architecture" in README.split("\n## ")[0]
+    assert "](assets/architecture.png)" in README
+    assert (PROJECT_ROOT / "assets" / "architecture.png").read_bytes().startswith(b"\x89PNG")
     links = re.findall(r"\]\(([^)#\s]+)(?:#([\w-]+))?\)", README)
     assert links, "the README links to the docs"
     for target, anchor in links:

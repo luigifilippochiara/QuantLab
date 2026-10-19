@@ -57,24 +57,7 @@ QuantLab also runs fully offline in **mock mode**, which needs no API key.
 
 ## Pipeline and modules
 
-```mermaid
-flowchart LR
-    U[User request] --> P["Planner LLM<br/>planner.py"]
-    R[("Capability registry<br/>registry.py")] -. generated summary .-> P
-    C[("Dataset catalog<br/>metadata only")] -. id, kind, frequency, dates .-> P
-    P -->|"plan: inert JSON"| V["Validator<br/>static guardrails<br/>guardrails.py"]
-    V -->|"BLOCK / APPROVE / WARN"| H["Human review<br/>edit params, approve"]
-    H -->|"edits: same validator"| V
-    H -->|approved plan| E["Executor<br/>runtime guardrails<br/>executor.py"]
-    R -->|"REGISTRY[name].func"| E
-    D[("FRED snapshot<br/>SHA-256 verified")] --> E
-    E -->|"facts sheet (numbers only)"| N["Narrator LLM<br/>+ grounding check (N01)"]
-    E --> L[("Run record<br/>manifest + outputs")]
-    N --> L
-    L --> RP["Replay<br/>no LLM, hash comparison"]
-    L --> T["Trace<br/>step -> source file"]
-    P & V & E & N --> M[("events.jsonl<br/>monitoring")]
-```
+![QuantLab architecture: a request goes to the planner (LLM), the validator, human approval, the executor and the results; the narrator (LLM) summarises them, and the run record keeps everything for replay and trace.](../assets/architecture.png)
 
 | Module (`src/quantlab/`) | Role |
 |---|---|
@@ -330,6 +313,20 @@ automatically against the computed results (N01)".
 * **Data licences.** SP500 and NASDAQCOM are marked "Copyrighted: Pre-Approval
   Required" on FRED; see `data/README.md` before redistributing the data.
 * **Short S&P 500 Index history.** FRED distributes only the last 10 years.
+* **Valid ≠ correct.** A plan can pass every check and still answer the wrong
+  question. The guardrails guarantee a plan is safe and well-formed, not that it
+  is the analysis the user meant; that is why a human reviews every plan.
+* **LLM variability.** The same request can produce different plans. Every plan
+  is validated and approved, and the evaluation measures planner accuracy, but
+  runs are not guaranteed to match. The plan cache returns the same plan for an
+  identical request, and replay reproduces a recorded run exactly; neither makes
+  a fresh live plan predictable.
+* **Multiple testing.** Repeated requests can p-hack, and nothing tracks tests
+  across runs.
+* **Approval fatigue.** A human reviewer can rubber-stamp plans, the classic
+  weakness of human-in-the-loop controls.
+* **A block is a dead end today.** Unless the problem is a parameter value the
+  analyst can edit, the user has to rephrase and start again.
 
 Roadmap:
 
@@ -342,10 +339,20 @@ Roadmap:
   change with tests, never generated at runtime.
 * **New guardrails.** Further validation rules as new risks are identified, each with a
   defined action (BLOCK, APPROVE or WARN), enforcer, category and test coverage.
-* **Replan loop.** Validator feedback sent back to the planner for a corrected plan.
+* **Replan loop.** Validator feedback sent back to the planner for a corrected plan:
+  the planner proposes a fix or next step, after a block or a result, and the human
+  approves. Every proposal goes back through the validator; never an auto-fix. After
+  a frequency mismatch (V08), for example, the planner could propose the missing
+  resampling step for the analyst to approve.
 * **Access control.** Authentication and role-based access, with named approvers and
   four-eyes approvals.
 * **Persistent store** for runs and events.
 * **Continuous integration** running the tests, lint, the example workflows, the
-  notebooks and the live evaluation.
+  notebooks and the live evaluation, so planner accuracy and block rates are tracked
+  over time; the live evaluation would run on every prompt, model or registry change.
+* **Multiple-testing control.** Track tests across runs and flag or correct for
+  multiple testing.
+* **Approval interface** that highlights assumptions and edits, to reduce
+  rubber-stamping.
+* **Live data feeds** that are still hashed and versioned like the snapshots.
 * **Cost control.** Per-run cost tracking and prompt caching for the planner.
