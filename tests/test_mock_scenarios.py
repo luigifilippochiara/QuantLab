@@ -117,8 +117,11 @@ def test_scenario_1_plan_is_exactly_the_specified_plan() -> None:
 
 def test_requests_rely_on_these_registry_defaults() -> None:
     # The requests leave them to the registry (example 1 its direction, every example
-    # its minimum history), so a planner that omits them gets the canned plan.
+    # its minimum history; example 5's canned plan omits every parameter with a
+    # default), so a planner that omits them gets the canned plan.
     defaults = {
+        ("resample", "how"): "last",
+        ("compute_returns", "periods"): 1,
         ("flag_regime", "method"): "expanding",
         ("flag_regime", "quantile"): 0.90,
         ("flag_regime", "min_periods"): 52,
@@ -227,16 +230,15 @@ def test_scenario_1_demo_edit_quantile_out_of_range_is_blocked(settings: Setting
 
 # --- example 5, buy the dip: the bottom tail of past weekly returns ---------------
 
-# (step id, capability, inputs, params): the plan example 5's request specifies.
+# (step id, capability, inputs, params): the plan example 5's request specifies. Only
+# the parameters the request states or the registry requires; the defaults fill the rest.
 DIP_PLAN = [
     ("s1", "load_series", {}, {"dataset_id": "NASDAQCOM"}),
-    ("s2", "resample", {"series": "s1"}, {"freq": "W", "how": "last"}),
-    ("s3", "compute_returns", {"series": "s2"}, {"method": "simple", "periods": 1}),
-    ("s4", "flag_regime", {"series": "s3"},
-     {"method": "expanding", "quantile": 0.10, "min_periods": 52, "direction": "below"}),
+    ("s2", "resample", {"series": "s1"}, {"freq": "W"}),
+    ("s3", "compute_returns", {"series": "s2"}, {"method": "simple"}),
+    ("s4", "flag_regime", {"series": "s3"}, {"quantile": 0.10, "direction": "below"}),
     ("s5", "forward_return", {"series": "s2"}, {"method": "simple"}),
-    ("s6", "compare_groups", {"values": "s5", "flags": "s4"}, {}),
-    ("s7", "hac_mean_difference", {"outcome": "s5", "flags": "s4"}, {}),
+    ("s6", "hac_mean_difference", {"outcome": "s5", "flags": "s4"}, {}),
 ]  # fmt: skip
 
 
@@ -247,7 +249,14 @@ def test_scenario_5_plan_is_exactly_the_specified_plan() -> None:
     assert plan["dataset_ids"] == ["NASDAQCOM"] and not plan["cannot_fulfill"]
     notes = plan["planner_notes"]
     assert "below the 10th percentile of past weekly returns only" in notes
-    assert "simple weekly returns" in notes
+    assert "simple weekly returns" in notes and "default expanding threshold" in notes
+    # The plan the analyst reviews has every default filled in: past data only.
+    filled = fill_defaults(Plan(plan_id="p", request=DIP_REQUEST, **plan))
+    assert filled.steps[1].params == {"freq": "W", "how": "last"}
+    assert filled.steps[2].params == {"method": "simple", "periods": 1}
+    assert filled.steps[3].params == {
+        "quantile": 0.10, "direction": "below", "method": "expanding", "min_periods": 52,
+    }  # fmt: skip
 
 
 def test_scenario_5_validates_with_exactly_two_v10_approvals(catalog: Catalog) -> None:
@@ -268,7 +277,7 @@ def test_scenario_5_runs_end_to_end_and_replays_identically(settings: Settings) 
     report = replay(session.run_id, settings)
     assert report.all_match, report.message
     original = [r.output_hash for r in session.execution.step_records]
-    assert [s.replay_hash for s in report.steps] == original and len(original) == 7
+    assert [s.replay_hash for s in report.steps] == original and len(original) == 6
 
 
 def test_scenario_5_flags_the_biggest_drops_from_past_data_only(settings: Settings) -> None:
@@ -280,11 +289,16 @@ def test_scenario_5_flags_the_biggest_drops_from_past_data_only(settings: Settin
     threshold = returns.shift(1).expanding(min_periods=52).quantile(0.10)
     assert flags.any() and (returns[flags.index][flags] < threshold[flags.index][flags]).all()
     assert (returns[flags.index][flags] < 0).all()  # every dip is a drop
-    # The narrative answers the question directly, in grounded numbers.
+    # The narrative answers the two-sided question ("differ"), then says which mean was
+    # higher with both means, in grounded numbers.
     narrative = session.narrate()
-    test = artifacts["s7"].value
-    direction = "higher" if test["diff_means"] > 0 else "lower"
-    assert f"Next-week returns were {direction} after flagged weeks than after" in narrative.text
+    test = artifacts["s6"].value
+    assert "The test asks whether next-week returns after flagged weeks differ" in narrative.text
+    higher = "flagged weeks" if test["diff_means"] > 0 else "the other weeks"
+    assert f"The mean was higher after {higher}:" in narrative.text
+    facts = {fact.fact_id: fact.display for fact in narrative.facts}
+    for key in ("mean_flagged", "mean_normal", "n_flagged", "n_normal", "n_episodes_flagged"):
+        assert facts[f"s6.{key}"] in narrative.text, key
     assert narrative.grounding.grounded and narrative.issues == []
 
 

@@ -170,21 +170,24 @@ app or with `cli demo`.
    example 3); this example shows the wall that holds when it does not, and
    automated tests confirm that nothing from the request reaches a shell or a
    subprocess.
-5. **Buy the dip in tech?** (`buy_the_dip_tech`): does the NASDAQ bounce back the
-   week after its biggest drops?
+5. **Buy the dip in tech?** (`buy_the_dip_tech`): does the NASDAQ's following
+   week differ after its biggest drops?
 
-   > Using weekly NASDAQ returns, flag the weeks in the bottom 10%, the biggest drops, using only past data. Then test whether next week's return is higher after those weeks than after the other weeks.
+   > Flag the weeks when NASDAQ returns were in the bottom 10%, then test whether the following week's return differs from other weeks.
 
-   Weekly Friday closes; weekly simple returns, so a dip is the percentage lost in
-   the week; the dips are the weeks below the 10th percentile of past weekly returns
-   only (`flag_regime` with direction below, expanding, after 52 weeks), so every
-   dip could have been seen at the time; the following week's simple return
-   (`forward_return`); a descriptive comparison (`compare_groups`), then the
-   significance test (`hac_mean_difference`). The analyst confirms the two
-   return-method choices (V10); there is no warning and no block. The narrative
-   answers the question first: whether the following week's return was higher or
-   lower after a dip, by how much on average, and whether the difference is
-   statistically significant.
+   The canned plan writes only what the request states or the registry requires
+   (the dataset, weekly data, both return methods, the bottom 10%) and leaves the
+   rest to the registry's defaults, which the reviewer sees filled in: weekly Friday
+   closes (`how` Last); weekly simple returns, so a dip is the percentage lost in the
+   week; the dips are the weeks below the 10th percentile of past weekly returns
+   only (`flag_regime` with direction below and the default expanding threshold,
+   after 52 weeks), so every dip could have been seen at the time and no look-ahead
+   approval is needed; the following week's simple return (`forward_return`); then
+   the significance test (`hac_mean_difference`), which reports both groups' means.
+   The analyst confirms the two return-method choices (V10); there is no warning and
+   no block. The test is two-sided, so the narrative first says whether the
+   following week's return differs after a dip and whether that is statistically
+   significant, then which group's mean was higher, with both means.
 
 **Example output.** For example workflow 1 on the committed snapshots, QuantLab
 flags 221 of 1,867 weeks (11.8%) whose VIX close was above the 90th percentile of
@@ -197,11 +200,12 @@ percentage points, has a Newey-West standard error of 0.133 percentage points (7
 lags) and a p-value of 0.51, so there is no statistically significant difference:
 in this sample the franc does not strengthen in the week after a stress week. The
 test looks at the following week, not at the stress week itself. Example 5 finds
-no bounce after the biggest NASDAQ drops: 334 dip weeks (below the 10th percentile
-of past weekly returns, from -1.5% in 1972 to -2.9% today), and the following
-week's return averaged -0.124% after a dip against +0.275% after other weeks, lower
-by 0.40 percentage points, with a p-value of 0.068: not statistically significant
-at the 5% level.
+no statistically significant difference after the biggest NASDAQ drops: 334 dip
+weeks (below the 10th percentile of past weekly returns, from -1.5% in 1972 to
+-2.9% today), and the following week's return averaged -0.124% after a dip against
++0.275% after other weeks, so the mean was higher after the other weeks, by 0.40
+percentage points, with a p-value of 0.068: not statistically significant at the
+5% level.
 
 **Audit trail.** For any executed result, such as example 1's p-value, **Trace a
 result** shows the full chain: `hac_mean_difference` -> `forward_return` ->

@@ -43,7 +43,7 @@ from quantlab.planner import (
 )
 from quantlab.types import ANNUALISATION_FACTORS, Artifact, DataType, TokenUsage
 
-NARRATOR_PROMPT_VERSION = "narrator-v6"
+NARRATOR_PROMPT_VERSION = "narrator-v7"
 
 # The note shown directly under the narrative (app and CLI) and kept in the run
 # record: who wrote it and, only when the grounding check passed, that its numbers
@@ -70,12 +70,13 @@ write a decimal as a percentage (0.1275 as 12.75%).
 6. Describe what was computed; do not claim causes or forecasts. Never say that a flag causes \
 or predicts returns: a comparison or test shows an association in this sample, nothing more.
 7. Claim statistical significance only from a significance test (hac_mean_difference); \
-compare_groups is descriptive. For a test, first answer the question plainly: was the outcome \
-higher or lower after flagged periods, by how much on average, and is the difference \
-statistically significant. Then state the difference in means and its p-value, and \
-always the number of distinct flagged episodes. If the p-value is 0.05 or more, write "no \
-statistically significant difference" (never "no difference"); below 0.05, write "a \
-statistically significant difference at the 5% level".
+compare_groups is descriptive. The test is two-sided: it asks whether the outcome differs \
+between flagged and other periods, not which is higher. First answer that plainly: does it \
+differ, and is the difference statistically significant. Then say which group's mean was \
+higher, giving both means, as a description of the sample. Then state the difference in \
+means and its p-value, and always the number of distinct flagged episodes. If the p-value \
+is 0.05 or more, write "no statistically significant difference" (never "no difference"); \
+below 0.05, write "a statistically significant difference at the 5% level".
 8. If DATASET NOTES say how a series is quoted, every direction you state (for example which \
 currency strengthened) must follow them.
 9. Write 3 to 6 sentences as one paragraph. No headings, no bullet points.
@@ -450,27 +451,33 @@ def template_narrative(
                 if significant
                 else "no statistically significant difference at the 5% level"
             )
-            # The answer first, in plain words: which way the outcome moved after the
-            # flagged periods, by how much on average, and whether that is significant.
-            # The direction comes from the exact difference; the size is its displayed
-            # value without the sign (the grounding check accepts absolute values).
+            # The answer first, in plain words. The test is two-sided: it asks whether the
+            # means DIFFER, not which is higher, so that is what the first sentence says.
+            # Which group's mean is higher is then described from the two means (the
+            # sign of the exact difference), not claimed as what the test showed.
             difference = artifacts[sid].value["diff_means"]
             period = PERIOD_NAMES.get(artifacts[sid].meta.frequency, "period")
             if "horizon" in d:  # forward returns: the period after each flag
-                subject, when = f"Next-{period} returns", "after"
+                subject, when = f"next-{period} returns", "after"
             else:  # returns of the flagged periods themselves
-                subject, when = "Returns", "in"
-            direction = "higher" if difference > 0 else "lower" if difference < 0 else "the same"
+                subject, when = "returns", "in"
             sentences.append(
-                f"{subject} were {direction} {when} flagged {period}s than {when} the other "
-                f"{period}s, by {d['diff_means'].lstrip('-')} on average, and the difference "
-                f"is{'' if significant else ' not'} statistically significant at the 5% level."
+                f"The test asks whether {subject} {when} flagged {period}s differ from those "
+                f"{when} the other {period}s (two-sided): the difference is"
+                f"{'' if significant else ' not'} statistically significant at the 5% level."
             )
+            if difference == 0:
+                sentences.append(f"The two means are equal: {d['mean_flagged']}.")
+            else:
+                higher = f"flagged {period}s" if difference > 0 else f"the other {period}s"
+                sentences.append(
+                    f"The mean was higher {when} {higher}: {d['mean_flagged']} {when} flagged "
+                    f"{period}s against {d['mean_normal']} {when} the others."
+                )
             outcome = f"{d['horizon']}-period forward returns" if "horizon" in d else "returns"
             sentences.append(
                 f"The significance test ({sid}) finds {verdict} in {outcome} between flagged "
-                f"and normal periods: the difference in means is {d['diff_means']} (flagged "
-                f"periods {d['mean_flagged']}, normal periods {d['mean_normal']}), with a "
+                f"and normal periods: the difference in means is {d['diff_means']}, with a "
                 f"Newey-West standard error of {d['se_hac']} ({d['maxlags_used']} lags), a "
                 f"p-value of {d['p_value']} and a 95% confidence interval from {d['ci_low']} "
                 f"to {d['ci_high']}."

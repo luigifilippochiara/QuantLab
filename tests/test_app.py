@@ -590,17 +590,17 @@ def step_headers(app: AppTest) -> list[tuple[str, bool]]:
 def test_plan_steps_are_collapsed_and_approvals_stay_in_validation(app_env: Settings) -> None:
     app = plan_scenario_5(app_env)
     headers = step_headers(app)
-    assert [is_open for _, is_open in headers] == [False] * 7  # the V10 steps too
+    assert [is_open for _, is_open in headers] == [False] * 6  # the V10 steps too
     assert headers[0][0] == "Step 1 · C01 · Load series · Synthetic equity index (NASDAQCOM)"
     assert (
         headers[2][0] == "Step 3 · C03 · Compute returns · Return type: Simple, periods: 1"
-    )  # no badge
+    )  # no badge; periods is the registry's default, shown filled in
     assert headers[3][0] == (
         "Step 4 · C07 · Flag regime · Quantile: 0\\.1, Threshold from: Past data only, Flag: Below "
         "the threshold"
     )
     assert headers[4][0] == "Step 5 · C08 · Forward return · Return type: Simple"
-    assert headers[6][0] == "Step 7 · C10 · HAC mean difference"  # no parameters: no summary
+    assert headers[5][0] == "Step 6 · C10 · HAC mean difference"  # no parameters: no summary
     # The V10 approvals are still required, in the Validation section, naming their steps.
     v10 = [m.value for m in app.markdown if "**V10 MATERIAL_ASSUMPTION**" in m.value]
     assert v10[0].endswith("· Step 3 · C03 · Compute returns (s3)")

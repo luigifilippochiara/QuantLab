@@ -26,11 +26,12 @@ the MockPlanner know these five and nothing else.
    capability (`run_python`); the validator blocks it deterministically (V02
    UNKNOWN_CAPABILITY) before approval, so nothing is ever executed. Example 3 shows
    the planner refusing; this one shows the wall that holds when it does not.
-5. Buy the dip in tech? (`buy_the_dip_tech`): does the NASDAQ bounce back the week
-   after its biggest drops? The weeks whose return is in the bottom 10% of past
-   weekly returns (`flag_regime` with direction below, an expanding threshold), then
-   a comparison and a significance test of the following week's return. It runs
-   after the two return-method approvals (V10, on s3 and s5).
+5. Buy the dip in tech? (`buy_the_dip_tech`): does the NASDAQ's following week
+   differ after its biggest drops? The weeks whose return is in the bottom 10% of
+   past weekly returns (`flag_regime` with direction below and the registry's
+   expanding threshold), then a significance test of the following week's return,
+   which reports both groups' means. It runs after the two return-method approvals
+   (V10, on s3 and s5).
 
 Role in the architecture: data, shared by
 - the MockPlanner (returns these plans instead of calling an LLM, so the whole
@@ -198,51 +199,53 @@ VIX_CHF_NOTES = (
 
 
 # Example 5's request, titled "Buy the dip in tech?": as for example 1, the title
-# poses the question and the request asks only about past data.
+# poses the question and the request asks only about past data. It asks whether the
+# following week differs (the test is two-sided), not whether it is higher.
 DIP_REQUEST = (
-    "Using weekly NASDAQ returns, flag the weeks in the bottom 10%, the biggest drops, using "
-    "only past data. Then test whether next week's return is higher after those weeks than "
-    "after the other weeks."
+    "Flag the weeks when NASDAQ returns were in the bottom 10%, then test whether the "
+    "following week's return differs from other weeks."
 )
 
-# Example 5's plan. Every parameter is written out (no hidden defaults).
+# Example 5's plan. Only what the request states or the registry requires is written:
+# the dataset, the weekly frequency ("the weeks"), both return methods (no default),
+# and the bottom 10% (quantile 0.10, direction below). The registry's defaults fill the
+# rest before validation, and the reviewer sees them filled in: resample how="last",
+# compute_returns periods=1, and an expanding threshold (past data only) after 52 weeks.
 DIP_STEPS = [
     _step("s1", "load_series", params={"dataset_id": "NASDAQCOM"},
           rationale="Load the NASDAQ Composite daily closes."),
-    # Weekly Friday closes: the drops and the following week are whole weeks.
-    _step("s2", "resample", {"series": "s1"}, {"freq": "W", "how": "last"},
+    # Weekly Friday closes (the default how="last"): the drops and the following week
+    # are whole weeks.
+    _step("s2", "resample", {"series": "s1"}, {"freq": "W"},
           rationale="Weekly Friday closes."),
     # SIMPLE returns: a drop is the percentage an investor lost in the week, and the
     # outcome below is a simple return too, so both are read the same way.
-    _step("s3", "compute_returns", {"series": "s2"}, {"method": "simple", "periods": 1},
+    _step("s3", "compute_returns", {"series": "s2"}, {"method": "simple"},
           rationale="Weekly simple returns, whose lowest values are the biggest drops."),
-    # "The bottom 10%, the biggest drops, using only past data": below the 10th
-    # percentile of past weekly returns (direction below, expanding), after 52 weeks
-    # of history, so every dip could have been seen at the time.
-    _step("s4", "flag_regime", {"series": "s3"},
-          {"method": "expanding", "quantile": 0.10, "min_periods": 52, "direction": "below"},
+    # "The bottom 10%": below the 10th percentile of weekly returns. The registry's
+    # default threshold is expanding (past data only, after 52 weeks of history), so
+    # every dip could have been seen at the time and no look-ahead approval is needed.
+    _step("s4", "flag_regime", {"series": "s3"}, {"quantile": 0.10, "direction": "below"},
           rationale="Flag weeks below the 10th percentile of past weekly returns: the dips."),
     # The outcome: next week's SIMPLE return, from the weekly prices (s2), so it starts
     # at the close of the dip week and never overlaps the drop itself.
     _step("s5", "forward_return", {"series": "s2"}, {"method": "simple"},
           rationale="Simple return over the following week, stamped on the week it follows."),
-    # Describe first: both groups' means, spreads and number of episodes...
-    _step("s6", "compare_groups", {"values": "s5", "flags": "s4"},
-          rationale="Describe next-week returns after dips and after other weeks."),
-    # ...then test that same difference (the registry's one significance test), with
-    # standard errors that allow for the higher variance after dips and for clustering
-    # (lags set by the Newey-West rule).
-    _step("s7", "hac_mean_difference", {"outcome": "s5", "flags": "s4"},
-          rationale="Test the difference in means with Newey-West standard errors."),
+    # The registry's one significance test, two-sided: it reports both groups' means and
+    # their difference, with standard errors that allow for the higher variance after
+    # dips and for clustering (lags set by the Newey-West rule).
+    _step("s6", "hac_mean_difference", {"outcome": "s5", "flags": "s4"},
+          rationale="Test whether the mean next-week return differs after dips."),
 ]  # fmt: skip
 
 # The plan's declared assumptions, shown to the analyst as the planner's notes.
 DIP_NOTES = (
-    "Assumptions: simple weekly returns, so a dip is the percentage lost in the week; dips "
-    "are the weeks below the 10th percentile of past weekly returns only (expanding, at "
-    "least 52 weeks), so every dip was known at the time; the next-week return runs from "
-    "each Friday close to the next, after the drop. compare_groups describes the two groups "
-    "first; hac_mean_difference then tests the difference (default lags)."
+    "Assumptions: weekly Friday closes and simple weekly returns, so a dip is the "
+    "percentage lost in the week; dips are the weeks below the 10th percentile of past "
+    "weekly returns only (the default expanding threshold, after 52 weeks), so every dip "
+    "was known at the time; the next-week return runs from each Friday close to the next, "
+    "after the drop. hac_mean_difference reports both groups' means and tests whether they "
+    "differ (two-sided, default lags)."
 )
 
 SCENARIOS: list[Scenario] = [
@@ -399,7 +402,7 @@ SCENARIOS: list[Scenario] = [
         expected_status="completed",
         expected_codes=("V10",),  # the two return-method approvals (s3 and s5), nothing else
         auto_approve=True,
-        keywords=(("dip", "biggest drops"), ("nasdaq", "tech")),
+        keywords=(("dip", "biggest drops", "bottom"), ("nasdaq", "tech")),
         plan=_plan(["NASDAQCOM"], DIP_STEPS, DIP_NOTES),
     ),
 ]

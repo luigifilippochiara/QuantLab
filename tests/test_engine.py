@@ -51,7 +51,11 @@ def test_end_to_end_scenario_5_with_manifest_and_replay(settings: Settings) -> N
     assert [a.issue_id for a in record.approvals] == SCENARIO_5_APPROVALS
     assert record.llm.provider == "mock" and record.registry_version
     assert record.plan_original["steps"][3]["params"]["quantile"] == 0.10  # as proposed
-    assert record.plan_final["steps"] == record.plan_original["steps"]  # no hidden defaults
+    # The planner's plan is kept as it came (example 5's omits parameters with a
+    # default); the plan that ran has the registry's defaults filled in, nothing else.
+    original, final = record.plan_original["steps"][3], record.plan_final["steps"][3]
+    assert "min_periods" not in original["params"] and final["params"]["min_periods"] == 52
+    assert final["params"] == {**original["params"], "method": "expanding", "min_periods": 52}
     assert set(record.stage_timings_ms) == {"planning", "validation", "execution", "narration"}
 
     report = replay(session.run_id, settings)

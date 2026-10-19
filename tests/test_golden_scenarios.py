@@ -1,6 +1,6 @@
 """The example workflows and the mock eval set give exactly the results of their golden records.
 
-tests/fixtures/golden_scenarios.json holds ten records. For each example
+tests/fixtures/golden_scenarios.json holds eleven records. For each example
 workflow, run in mock mode and auto-approved as `cli demo` does, each holds: the
 status, every static and runtime issue, the plan, every step's input and output
 hashes and metadata, the numbers of every output table and the facts sheet, on
@@ -38,6 +38,9 @@ snapshots.
 - "hac_both_means": all five examples and the mock eval set, recorded after commit
   8aed842, when hac_mean_difference began to report both groups' means and example
   1 dropped its separate comparison (the test alone, with a new request).
+- "scenario_5_test_only": all five examples and the mock eval set, recorded after
+  commit 0a546ea, when example 5 got a shorter request, relied on the registry's
+  defaults and dropped its separate comparison (the test alone).
 
 Every result must be the same as recorded. The only allowed differences are the
 changes made on purpose since a record was made (MIGRATIONS), applied in order:
@@ -58,7 +61,8 @@ example 6 in mock mode and now matches none; the look-ahead example was removed
 (with its eval case), and buy the dip became example 5, its eval case renamed with
 it; example 1's test-only plan replaced it and its eval case, and the test's new
 mean_flagged changed example 5's results (its eval case, a plan and issues, is
-unchanged). No narrative raises N01, and no example or eval request raises R01.
+unchanged); example 5's test-only plan then replaced it and its eval case. No
+narrative raises N01, and no example or eval request raises R01.
 
 The fixture is a frozen reference: a record is never regenerated.
 """
@@ -235,6 +239,18 @@ HAC_BOTH_MEANS = Migration(
     {code: code for code in GUARDRAILS}, {}, False, REPLACED_BY_HAC_BOTH_MEANS
 )
 
+# Scenario 5 test only: example 5 got a shorter request, leaves every parameter with a
+# default to the registry and tests without a separate comparison, so it and its eval
+# case (under every id it has had) were replaced.
+REPLACED_BY_SCENARIO_5_TEST_ONLY = (
+    "buy_the_dip_tech",
+    "s6_buy_the_dip_tech",
+    "s5_buy_the_dip_tech",
+)
+SCENARIO_5_TEST_ONLY = Migration(
+    {code: code for code in GUARDRAILS}, {}, False, REPLACED_BY_SCENARIO_5_TEST_ONLY
+)
+
 # The changes made since each record was recorded, oldest first.
 MIGRATIONS = {
     "before_simplification": (
@@ -249,6 +265,7 @@ MIGRATIONS = {
         BUY_THE_DIP,
         LOOK_AHEAD_REMOVED,
         HAC_BOTH_MEANS,
+        SCENARIO_5_TEST_ONLY,
     ),
     "final_examples": (
         RESTRUCTURE,
@@ -261,6 +278,7 @@ MIGRATIONS = {
         BUY_THE_DIP,
         LOOK_AHEAD_REMOVED,
         HAC_BOTH_MEANS,
+        SCENARIO_5_TEST_ONLY,
     ),
     "before_restructure": (
         RESTRUCTURE,
@@ -273,6 +291,7 @@ MIGRATIONS = {
         BUY_THE_DIP,
         LOOK_AHEAD_REMOVED,
         HAC_BOTH_MEANS,
+        SCENARIO_5_TEST_ONLY,
     ),
     "before_stage_codes": (
         STAGES,
@@ -284,6 +303,7 @@ MIGRATIONS = {
         BUY_THE_DIP,
         LOOK_AHEAD_REMOVED,
         HAC_BOTH_MEANS,
+        SCENARIO_5_TEST_ONLY,
     ),
     "simulated_injection": (
         RENUMBERING,
@@ -293,6 +313,7 @@ MIGRATIONS = {
         BUY_THE_DIP,
         LOOK_AHEAD_REMOVED,
         HAC_BOTH_MEANS,
+        SCENARIO_5_TEST_ONLY,
     ),
     "scenario_1_nasdaq_vol_chf": (
         DIRECTION,
@@ -300,11 +321,19 @@ MIGRATIONS = {
         BUY_THE_DIP,
         LOOK_AHEAD_REMOVED,
         HAC_BOTH_MEANS,
+        SCENARIO_5_TEST_ONLY,
     ),
-    "yield_curve_below": (VIX_SCENARIO_1, BUY_THE_DIP, LOOK_AHEAD_REMOVED, HAC_BOTH_MEANS),
-    "scenario_1_vix_chf": (BUY_THE_DIP, LOOK_AHEAD_REMOVED, HAC_BOTH_MEANS),
-    "buy_the_dip": (LOOK_AHEAD_REMOVED, HAC_BOTH_MEANS),
-    "hac_both_means": (),
+    "yield_curve_below": (
+        VIX_SCENARIO_1,
+        BUY_THE_DIP,
+        LOOK_AHEAD_REMOVED,
+        HAC_BOTH_MEANS,
+        SCENARIO_5_TEST_ONLY,
+    ),
+    "scenario_1_vix_chf": (BUY_THE_DIP, LOOK_AHEAD_REMOVED, HAC_BOTH_MEANS, SCENARIO_5_TEST_ONLY),
+    "buy_the_dip": (LOOK_AHEAD_REMOVED, HAC_BOTH_MEANS, SCENARIO_5_TEST_ONLY),
+    "hac_both_means": (SCENARIO_5_TEST_ONLY,),
+    "scenario_5_test_only": (),
 }
 # The records that hold (part of) the mock eval set.
 EVAL_RECORDS = (
@@ -316,6 +345,7 @@ EVAL_RECORDS = (
     "scenario_1_vix_chf",
     "buy_the_dip",
     "hac_both_means",
+    "scenario_5_test_only",
 )
 
 # Output metadata compared step by step (the notes are free text and are not).

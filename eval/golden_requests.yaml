@@ -66,17 +66,18 @@
   capabilities: [load_series, run_python]
   guardrails: {approve: [], warn: [], block: [V02]}
 
-# Buy the dip: the bottom 10% of past weekly returns (direction below, expanding),
-# then the following week's return compared and tested. The request does not state
-# the return methods, so only the flag's parameters are key; two return-method
-# approvals, no warning, no block.
+# Buy the dip: the bottom 10% of weekly returns (direction below; the registry's
+# default threshold is expanding, past data only), then a test of whether the
+# following week's return differs. Only what the request states is key: the bottom
+# 10%. The return methods are not stated: two return-method approvals, no warning,
+# no block.
 - id: s5_buy_the_dip_tech
   scenario: buy_the_dip_tech
   expect: plan
   capabilities: [load_series, resample, compute_returns, flag_regime, forward_return,
-                 compare_groups, hac_mean_difference]
+                 hac_mean_difference]
   key_params:
-    flag_regime: {method: expanding, quantile: 0.10, direction: below}
+    flag_regime: {quantile: 0.10, direction: below}
   guardrails: {approve: [V10, V10], warn: [], block: []}
 
 # Further requests, valid with the current registry.

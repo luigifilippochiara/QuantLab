@@ -321,18 +321,27 @@ def test_template_reads_the_test_without_overclaiming(p_value: float, verdict: s
     assert check_grounding(text, facts, plan).grounded
 
 
-@pytest.mark.parametrize(("difference", "direction"), [(-0.0012, "lower"), (0.0012, "higher")])
-def test_template_answers_the_question_first(difference: float, direction: str) -> None:
+@pytest.mark.parametrize(
+    ("difference", "mean_flagged", "higher"),
+    [(-0.0012, 0.0009, "the other weeks"), (0.0012, 0.0033, "flagged weeks")],
+)
+def test_template_says_the_means_differ_then_which_is_higher(
+    difference: float, mean_flagged: float, higher: str
+) -> None:
     plan, artifacts = hac_artifacts(0.4321)
-    artifacts["s8"].value["diff_means"] = difference
+    artifacts["s8"].value.update(diff_means=difference, mean_flagged=mean_flagged)
     facts = build_facts_sheet(plan, artifacts)
     text = template_narrative(plan, artifacts, facts, [])
-    # The direction, the size without its sign, and the verdict, before the details.
+    # The test is two-sided: the answer says whether the means differ and whether that
+    # is significant; only then which mean was higher, as a description with both means.
     assert text.startswith(
-        f"Next-week returns were {direction} after flagged weeks than after the other weeks, "
-        "by 0.001200 on average, and the difference is not statistically significant at the "
-        "5% level."
+        "The test asks whether next-week returns after flagged weeks differ from those after "
+        "the other weeks (two-sided): the difference is not statistically significant at the "
+        f"5% level. The mean was higher after {higher}: {format_number(mean_flagged)} after "
+        f"flagged weeks against {format_number(0.0021)} after the others."
     )
+    # No direction is claimed as the test's finding.
+    assert "were higher" not in text and "were lower" not in text
     assert check_grounding(text, facts, plan).grounded
 
 

@@ -2067,3 +2067,31 @@ are `canned-scenarios-v19`.
   `labels.PERIODS_NOTE`, for the parameters the registry marks `counted_in_periods`.
   The step summary already writes the unit ("Window: 12 weeks").
 
+## Example 5: a shorter request, registry defaults, the test alone; "differs" first
+
+**Example 5's request** is now "Flag the weeks when NASDAQ returns were in the bottom
+10%, then test whether the following week's return differs from other weeks." Its plan
+ends with `hac_mean_difference` (s6) and no `compare_groups`, as example 1's does.
+- **The canned plan writes only what the request states or the registry requires:** the
+  dataset, weekly data (`freq` has no default), both return methods (no default; each
+  still needs its V10 approval) and the bottom 10% (`quantile` 0.10, `direction`
+  below). The registry fills the rest before validation, and the reviewer sees it
+  filled in: `how` last, `periods` 1, and the expanding threshold after 52 weeks. The
+  default threshold is expanding (past data only), so no look-ahead approval fires.
+  The run record keeps the planner's plan as it came, without those defaults; the
+  edits diff compares against the filled-in proposal.
+- **What the narrative loses:** compare_groups' two standard deviations. The test
+  reports both groups' means and sizes and the number of flagged episodes.
+- **The test is two-sided, so the narrative says "differ".** Its first sentence asks
+  whether the outcome differs after flagged periods and says whether that is
+  statistically significant; the next says which group's mean was higher, giving both
+  means, as a description of the sample. It replaces "Next-week returns were higher
+  (lower) after flagged weeks", which read as a direction the test had checked. The
+  same holds for every test, example 1's included, and for the LLM narrator (rule 7,
+  `narrator-v7`).
+- **Matching and records.** The keywords accept "bottom" as well as "dip" or "biggest
+  drops". A `SCENARIO_5_TEST_ONLY` migration replaces example 5 and its eval case in the
+  older records; the record `scenario_5_test_only` holds all five examples and the eval
+  set; the eval case's key parameters are the bottom 10% only. The canned plans are
+  `canned-scenarios-v20`.
+

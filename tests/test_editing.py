@@ -137,7 +137,9 @@ def test_edited_run_records_the_diff_traces_it_and_replays_identically(
     session.save_record()
 
     record = load_run(session.run_id, settings.runs_dir)
-    assert record.plan_original["steps"][3]["params"]["min_periods"] == 52  # as proposed
+    # The planner left the minimum history to the registry's default (52), which is
+    # what the diff shows as proposed.
+    assert "min_periods" not in record.plan_original["steps"][3]["params"]
     assert record.plan_final["steps"][3]["params"]["min_periods"] == 104  # as run
     (change,) = record.param_diff
     assert (change.step_id, change.param, change.original, change.final) == (
@@ -145,7 +147,7 @@ def test_edited_run_records_the_diff_traces_it_and_replays_identically(
     assert change.edited_at
     assert record.approvals[0].plan_hash == record.plan_hash
 
-    chain = {step.step_id: step for step in session.trace("s7").chain}
+    chain = {step.step_id: step for step in session.trace("s6").chain}
     assert chain["s4"].edited == {"min_periods": 52}  # user-edited, planner proposed 52
     assert chain["s3"].edited == {}  # planner-proposed values only
 
