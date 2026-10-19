@@ -1044,7 +1044,7 @@ def test_monitoring_page_sections_cards_and_charts(app_env: Settings) -> None:
         "Capabilities", "Guardrails", "Cost", "Latency", "Recent errors"]  # fmt: skip
     assert not app.info  # there are counted runs
     cards = {m.proto.label: m.proto for m in app.metric}
-    outcomes = ("Completed", "Blocked", "Planner refused (P01)", "Failed", "Rejected by human")
+    outcomes = ("Completed", "Blocked", "Planner refused (P01)", "Rejected by human", "Failed")
     values = {label: cards[label].body for label in ("Total runs", *outcomes)}
     # The undecided and headless runs are left out. The five outcomes do not overlap, and
     # their whole percentages add up to 100% (rounded on their own, 33 + 4 x 17 = 101).

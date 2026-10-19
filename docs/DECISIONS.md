@@ -1987,7 +1987,7 @@ codes too.
 ## Monitoring: planner refusals are their own outcome; completed runs with warnings
 
 **Activity now has five outcomes that do not overlap** and add up to Total runs:
-Completed, Blocked, Planner refused (P01), Failed and Rejected by human. Each shows
+Completed, Blocked, Planner refused (P01), Rejected by human and Failed. Each shows
 "count (share)" and "of N runs"; with Total runs they fill two rows of three.
 - **Why:** Blocked mixed two things, the planner declining a request and a guardrail
   stopping a plan, and refusals were shown twice (in Blocked and as a Quality card).

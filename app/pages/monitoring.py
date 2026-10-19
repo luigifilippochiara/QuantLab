@@ -217,8 +217,8 @@ outcomes = [
      "Runs a deterministic guardrail stopped: the request check, the validator or the executor."),
     ("planner_refused", "Planner refused (P01)",
      "Runs whose request the planner declined (P01 PLANNER_REFUSED)."),
-    ("failed", "Failed", "Runs that stopped on an error (a step raised one)."),
     ("rejected", "Rejected by human", "Plans the reviewer turned down."),
+    ("failed", "Failed", "Runs that stopped on an error (a step raised one)."),
 ]  # fmt: skip
 for column, (outcome, label, explained) in zip(outcome_cols, outcomes, strict=True):
     with column:
