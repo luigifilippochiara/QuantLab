@@ -200,6 +200,26 @@ def test_switching_the_llm_mode_resets_the_analysis_page(app_env: Settings) -> N
     assert load_run(session.run_id, app_env.runs_dir) == saved and saved.status == "ready"
 
 
+def test_refresh_resets_the_analysis_page_and_keeps_the_mode(app_env: Settings) -> None:
+    import ui  # importable once app_env has put app/ on the path
+
+    app = plan_scenario_1(app_env)
+    session = app.session_state["session"]
+    saved = load_run(session.run_id, app_env.runs_dir)
+
+    button(app, "Refresh").click().run()
+    assert not app.exception, app.exception
+    # Every key of the page is back to its starting value, drawn empty on this run.
+    assert all(app.session_state[k] == v for k, v in ui.analysis_defaults().items())
+    assert app.session_state["llm_mode"] == "mock"
+    assert app.text_area(key="request_text").value == ""
+    assert app.multiselect(key="dataset_select").value == []
+    assert not app.subheader and not app.number_input and not app.checkbox
+    assert app.info[0].value.startswith("Type a request")
+    # The run that was waiting for a decision is left as it was saved: undecided.
+    assert load_run(session.run_id, app_env.runs_dir) == saved and saved.status == "ready"
+
+
 def test_clicking_the_selected_llm_mode_keeps_the_page(app_env: Settings) -> None:
     app = plan_scenario_1(app_env)
     run_id = app.session_state["session"].run_id

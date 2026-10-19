@@ -46,9 +46,10 @@ The **Analysis** page follows the safety model step by step:
 1. Choose the datasets the planner may use. The picker lists them by ticker; its
    **?** lists each as "TICKER - description", and the line under each selected
    dataset gives its details (hover it for the official name). Then type a request, or in mock mode pick one of the example workflows in the
-   sidebar, and click **Generate plan**. Switching the LLM mode starts a clean page:
-   the datasets, the request and any plan or result on screen are cleared (a plan
-   still awaiting a decision stays undecided in Run history).
+   sidebar, and click **Generate plan**. Switching the LLM mode, or clicking
+   **Refresh** (on the right of the same row), starts a clean page: the datasets, the
+   request and any plan or result on screen are cleared (a plan still awaiting a
+   decision stays undecided in Run history). Refresh keeps the LLM mode.
 2. Review the plan. Each step is a collapsible block whose header names the step
    and its main parameters (e.g. "Step 4 · C06 · Rolling volatility · window: 12
    weeks, annualize: yes"); open it for its inputs, predicted output and editable

@@ -103,9 +103,22 @@ with st.sidebar:
 
 ui.render_header()
 request = st.text_area("Request", key="request_text", height=110)
-if st.button(
-    "Generate plan", type="primary", icon=":material/auto_awesome:", disabled=not request.strip()
-):
+# Generate plan on the left, Refresh on the right edge of the same row.
+with st.container(horizontal=True, horizontal_alignment="distribute"):
+    generate = st.button(
+        "Generate plan",
+        type="primary",
+        icon=":material/auto_awesome:",
+        disabled=not request.strip(),
+    )
+    st.button(
+        "Refresh",
+        icon=":material/refresh:",
+        on_click=ui.reset_analysis,
+        help="Start a clean page: clear the request, the datasets and any plan or result "
+        "on screen. The LLM mode is kept.",
+    )
+if generate:
     with st.spinner("Planning..."):
         session = Session.start(request, datasets, mode, settings, interactive=True)
         session.create_plan()

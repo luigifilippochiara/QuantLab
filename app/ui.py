@@ -299,9 +299,10 @@ def analysis_defaults() -> dict[str, Any]:
 
 
 def reset_analysis() -> None:
-    """Mode-selector callback: back to an empty Analysis page in the new mode.
+    """Mode-selector and Refresh callback: back to an empty Analysis page.
 
-    A plan made in one mode is not carried into another. Streamlit runs a callback
+    A plan made in one mode is not carried into another; Refresh starts over in the
+    same mode (the mode is not among the reset keys). Streamlit runs a callback
     before the page redraws, so the text box and the dataset selection are already
     empty when they are drawn. The per-run widgets (step editors, approval boxes, the
     trace picker) are not drawn without a session, so Streamlit drops their state, and
