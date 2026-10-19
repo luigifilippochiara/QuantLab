@@ -167,12 +167,14 @@ narrator"), and N01 checks its numbers again on every run.
 4. **Prompt injection, simulated planner** (`prompt_injection_unknown_capability`):
    a request that tells the assistant to ignore its rules and run Python. Here
    the mock planner is a *simulated misbehaving planner*: it follows the
-   injection and proposes a well-formed plan whose second step names an
+   injection and proposes a well-formed plan of one step that calls an
    unregistered capability, `run_python`, with the request's code as its
-   parameter. The validator blocks it deterministically (V02 UNKNOWN_CAPABILITY)
-   before approval, so the executor is never reached; even if it were, no
-   function is registered under that name. The app labels this planner output as
-   simulated. A real planner is expected to refuse such a request (P01, as in
+   parameter. The validator rejects the whole plan deterministically (V02
+   UNKNOWN_CAPABILITY, a terminal block): the app shows a "Plan rejected" banner
+   listing every unregistered step, with no editor, approval, Execute or Reject
+   controls, and nothing is executed or loaded; only a new request goes on. A
+   fixable block such as example 2's V08 keeps its editing flow. The app labels
+   this planner output as simulated. A real planner is expected to refuse such a request (P01, as in
    example 3); this example shows the wall that holds when it does not, and
    automated tests confirm that nothing from the request reaches a shell or a
    subprocess.

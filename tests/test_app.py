@@ -347,7 +347,6 @@ def test_only_labels_py_builds_dataset_labels() -> None:
     "scenario_id",
     [
         "arima_forecast_block",
-        "prompt_injection_unknown_capability",
         "spread_frequency_mismatch_block",
     ],
 )
@@ -362,7 +361,7 @@ def test_blocked_scenario_cannot_execute(scenario_id: str, app_env: Settings) ->
     assert button(app, "Reject plan").disabled is refusal
 
 
-def test_scenario_4_shows_a_simulated_planner_blocked_by_v02(app_env: Settings) -> None:
+def test_scenario_4_is_rejected_whole_with_a_banner_and_no_controls(app_env: Settings) -> None:
     scenario = SCENARIOS_BY_ID["prompt_injection_unknown_capability"]
     app = open_page("analysis.py")
     assert app.sidebar.button(key=f"scenario-{scenario.id}").label == "4 · Prompt injection"
@@ -371,14 +370,27 @@ def test_scenario_4_shows_a_simulated_planner_blocked_by_v02(app_env: Settings) 
     # The planner output is labelled as simulated, above the plan.
     assert scenario.note.startswith("Simulated misbehaving planner")
     assert [w.value for w in app.warning] == [scenario.note]
-    # Blocked at validation by V02 alone: nothing can be approved or executed.
+    # Rejected whole by V02: a plan-level banner names the capability and every
+    # unregistered step (as escaped for Markdown, ui.escape_md).
+    (banner,) = [e.value for e in app.error]
+    assert banner.startswith(
+        "Plan rejected: it uses a capability that isn't in the registry (run\\_python)\\. "
+        "Nothing was executed. Please write a new request."
+    )
+    assert "- **V02 UNKNOWN\\_CAPABILITY** · Step 1 · Run python: " in banner
+    # Its validation shows V02 alone, and nothing can be edited, approved, executed or
+    # rejected: no field, approval box or button for it.
     issues = [m.value for m in app.markdown if "UNKNOWN_CAPABILITY" in m.value]
     assert len(issues) == 1 and "V02" in issues[0]
-    # The message, as escaped for Markdown (ui.escape_md).
-    assert "'run\\_python' is not a registered capability\\." in [m.value for m in app.markdown]
-    assert button(app, "Execute").disabled
-    assert "Resolve 1 blocking issue first." in [c.value for c in app.caption]
+    assert not app.number_input and not app.checkbox
+    assert not [s for s in app.selectbox if s.key and s.key.startswith("param-")]
+    labels = [b.label for b in app.button]
+    for hidden in ("Apply changes", "Reset to planner", "Execute", "Reject plan"):
+        assert not any(label.startswith(hidden) for label in labels), hidden
+    assert "Nothing was executed. Write a new request to continue." in [
+        c.value for c in app.caption]  # fmt: skip
     assert "Results" not in [h.value for h in app.subheader]
+    assert app.session_state["session"].execution is None
     # A canned plan without a note (scenario 3's refusal) shows no such notice.
     app.sidebar.button(key="scenario-arima_forecast_block").click().run()
     button(app, "Generate plan").click().run()
@@ -496,7 +508,12 @@ def test_guardrails_page_intro_and_table_come_from_the_code(app_env: Settings) -
     table = app.table[0].value
     assert list(table.index) == list(GUARDRAILS)
     assert list(table.columns) == [
-        "Name", "Action", "Enforced by", "Type", "Category", "Description"]  # fmt: skip
+        "Name", "Action", "Fixable by edit", "Enforced by", "Type", "Category",
+        "Description"]  # fmt: skip
+    # Read from the guardrail definitions: V01 and V02 reject the plan.
+    assert table["Fixable by edit"].tolist() == [g.fixable_text for g in GUARDRAILS.values()]
+    assert (table.loc["V02", "Fixable by edit"], table.loc["V08", "Fixable by edit"]) == (
+        "no", "yes")  # fmt: skip
     v09 = table.loc["V09"]
     assert (v09["Action"], v09["Enforced by"], v09["Type"], v09["Category"]) == (
         "APPROVE", "Validator", "Deterministic", "Methodology")  # fmt: skip

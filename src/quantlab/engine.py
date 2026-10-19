@@ -64,6 +64,11 @@ class ExecutionRefusedError(Exception):
     """Raised when execute() is called while the plan is blocked or not fully approved."""
 
 
+class PlanRejectedError(ValueError):
+    """Raised when a plan rejected as a whole (a terminal block: V01, V02) would be
+    edited, re-validated, approved or rejected again: only a new request can go on."""
+
+
 @dataclass
 class Session:
     """State of one run, from request to saved record.
@@ -279,6 +284,20 @@ class Session:
         """Version hash of the current plan; approvals are tied to it."""
         return plan_hash(self.plan) if self.plan else ""
 
+    def check_not_rejected(self) -> None:
+        """Refuse any further action on a plan rejected as a whole.
+
+        A terminal block (guardrails.Guardrail.fixable_by_edit False: V01, V02) means
+        the plan's steps are wrong in kind or structure, which no parameter edit can
+        change; the analyst writes a new request instead.
+
+        Raises:
+            PlanRejectedError: if the current report rejects the plan.
+        """
+        if self.report is not None and self.report.is_rejected:
+            codes = ", ".join(sorted({issue.code for issue in self.report.rejections}))
+            raise PlanRejectedError(f"The plan was rejected ({codes}): write a new request.")
+
     def apply_param_edits(self, edits: dict[str, dict[str, Any]]) -> ValidationReport:
         """Change parameter VALUES, then re-validate with the same validator.
 
@@ -294,9 +313,14 @@ class Session:
 
         Returns:
             The new validation report.
+
+        Raises:
+            ValueError: if there is no plan to edit.
+            PlanRejectedError: if the plan was rejected as a whole.
         """
         if self.plan is None:
             raise ValueError("there is no plan to edit")
+        self.check_not_rejected()
         rejected = check_edits(self.plan, edits)
         if rejected:
             # Nothing is applied; the plan stays blocked until a valid edit or a reset.
@@ -329,7 +353,12 @@ class Session:
         return self.validate()
 
     def reset_to_proposal(self) -> ValidationReport:
-        """Undo every edit: set each parameter back to the planner's proposal, then re-validate."""
+        """Undo every edit: set each parameter back to the planner's proposal, then re-validate.
+
+        Raises:
+            PlanRejectedError: if the plan was rejected as a whole.
+        """
+        self.check_not_rejected()
         proposal = {step.id: step.params for step in self.proposal.steps}
         edits = {
             step.id: {
@@ -360,7 +389,9 @@ class Session:
 
         Raises:
             ValueError: if an id is not an open APPROVE issue.
+            PlanRejectedError: if the plan was rejected as a whole.
         """
+        self.check_not_rejected()
         open_issues = {issue.issue_id: issue for issue in self.unresolved_approvals()}
         for issue_id in issue_ids:
             if issue_id not in open_issues:
@@ -387,9 +418,11 @@ class Session:
 
         Raises:
             ValueError: if there is no plan to decide on, or it was already decided.
+            PlanRejectedError: if the validator already rejected the plan as a whole.
         """
         if self.plan is None or self.plan.cannot_fulfill:
             raise ValueError("there is no plan to reject")
+        self.check_not_rejected()
         if self.decision is not None:
             raise ValueError(f"the plan was already {self.decision}")
         self.decision = "rejected"
@@ -408,6 +441,9 @@ class Session:
             return False, "There is no valid plan."
         if self.decision == "rejected":
             return False, "The plan was rejected."
+        if self.report.is_rejected:
+            codes = ", ".join(sorted({issue.code for issue in self.report.rejections}))
+            return False, f"The plan was rejected ({codes}): write a new request."
         if self.report.is_blocked:
             return False, "The plan has blocking issues: " + ", ".join(
                 issue.issue_id for issue in self.report.blocks

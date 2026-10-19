@@ -32,7 +32,7 @@ from labels import (
 
 from quantlab.config import Settings, load_settings
 from quantlab.data import Catalog, load_catalog
-from quantlab.guardrails import ENFORCERS, GUARDRAILS, Action, Issue
+from quantlab.guardrails import ENFORCERS, GUARDRAILS, Action, Issue, ValidationReport
 from quantlab.lineage import ReplayReport, TraceResult
 from quantlab.mock_scenarios import SCENARIOS_BY_ID
 from quantlab.narrator import describe_quotes, format_number
@@ -183,6 +183,41 @@ def step_summary(
             shown = param_value_label(step.capability, name, value)  # e.g. "W" -> "Weekly"
         parts.append(f"{param_label(step.capability, name)}: {shown}")
     return ", ".join(parts)
+
+
+def render_rejection(report: ValidationReport, plan: Plan) -> None:
+    """The banner of a plan rejected as a whole (a terminal block: V01, V02).
+
+    Says why the plan was rejected, that nothing ran and that only a new request goes
+    on, then lists every step (or plan-level finding) that rejected it with its code.
+
+    Args:
+        report: the validation report (its rejections are listed).
+        plan: the rejected plan (for step names and capabilities).
+    """
+    issues = report.rejections
+    capabilities = {step.id: step.capability for step in plan.steps}
+    reasons = []
+    unknown = [capabilities[i.step_id] for i in issues if i.code == "V02" and i.step_id]
+    if unknown:
+        names = ", ".join(dict.fromkeys(unknown))
+        reasons.append(f"it uses a capability that isn't in the registry ({names})")
+    if any(i.code != "V02" for i in issues):
+        reasons.append("it is not a valid plan")
+    titles = step_titles(plan)
+    # The capability names and messages may come from the planner: escaped, so they
+    # are shown literally.
+    found = "\n".join(
+        f"- **{i.code} {escape_md(i.name)}** · {escape_md(titles.get(i.step_id or '', 'plan'))}: "
+        f"{escape_md(i.message)}"
+        for i in issues
+    )
+    st.error(
+        escape_md(f"Plan rejected: {' and '.join(reasons)}.")
+        + " Nothing was executed. Please write a new request.\n\n"
+        + found,
+        icon=":material/block:",
+    )
 
 
 def step_title(position: int, capability: str) -> str:

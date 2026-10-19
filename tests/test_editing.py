@@ -9,9 +9,10 @@ from typing import Any
 import pytest
 
 from quantlab.config import Settings
-from quantlab.engine import ExecutionRefusedError, Session
+from quantlab.engine import ExecutionRefusedError, PlanRejectedError, Session, run_request
 from quantlab.lineage import Approval, load_run, replay
 from quantlab.mock_scenarios import SCENARIOS_BY_ID
+from quantlab.monitoring import read_events
 
 from conftest import RETURN_METHOD_APPROVAL, SCENARIO_5_APPROVALS
 
@@ -153,3 +154,76 @@ def test_edited_run_records_the_diff_traces_it_and_replays_identically(
 
     report = replay(session.run_id, settings)  # replays plan_final, without the LLM
     assert report.all_match, report.message
+
+
+# --- a plan rejected as a whole (V01, V02) is final -------------------------------
+
+
+def test_a_rejected_plan_cannot_be_edited_approved_rejected_or_executed(
+    settings: Settings, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    session = start(settings, "prompt_injection_unknown_capability")
+    assert session.report.is_rejected and session.status == "blocked"
+    # Its step is unregistered: the structure lock already refuses an edit of it, and
+    # the rejection refuses every action on the plan, before anything is re-validated.
+    for action in (
+        lambda: session.apply_param_edits({"s1": {"code": "print(1)"}}),
+        session.reset_to_proposal,
+        lambda: session.approve([]),
+        session.reject,
+    ):
+        with pytest.raises(PlanRejectedError, match=r"rejected \(V02\): write a new request"):
+            action()
+    # Never handed to the executor: the validator's verdict stops it first.
+    monkeypatch.setattr("quantlab.engine.execute_plan", never_called)
+    with pytest.raises(ExecutionRefusedError, match="rejected"):
+        session.execute()
+    assert session.execution is None and session.decision is None
+
+
+def never_called(*args: Any, **kwargs: Any) -> None:
+    """Stands in for the executor: a blocked plan must never reach it."""
+    raise AssertionError("the executor was called with a blocked plan")
+
+
+@pytest.mark.parametrize(
+    "scenario_id", ["prompt_injection_unknown_capability", "spread_frequency_mismatch_block"]
+)
+def test_a_blocked_plan_never_reaches_the_executor(
+    settings: Settings, monkeypatch: pytest.MonkeyPatch, scenario_id: str
+) -> None:
+    # Rejected (V02) or fixable (V08): blocked by the validator, never executed.
+    monkeypatch.setattr("quantlab.engine.execute_plan", never_called)
+    session = start(settings, scenario_id)
+    assert session.report.is_blocked
+    with pytest.raises(ExecutionRefusedError):
+        session.execute()
+
+
+def test_a_v08_block_is_still_fixed_by_an_edit_and_runs(settings: Settings) -> None:
+    session = start(settings, "spread_frequency_mismatch_block")
+    assert [i.code for i in session.report.blocks] == ["V08"] and not session.report.is_rejected
+    # The editable fix: the 10-year's resample to daily, so both yields are daily.
+    report = session.apply_param_edits({"s2": {"freq": "D"}})
+    assert not report.is_blocked and [i.issue_id for i in report.approvals_required] == [
+        "V09:s5"]  # fmt: skip
+    session.approve(["V09:s5"])
+    assert session.execute().status == "completed"
+
+
+def test_scenario_4_loads_no_data_and_runs_no_step(
+    settings: Settings, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def no_loading(*args: Any, **kwargs: Any) -> None:
+        raise AssertionError("a dataset was loaded")
+
+    monkeypatch.setattr("quantlab.capabilities.load_dataset", no_loading)
+    monkeypatch.setattr("quantlab.engine.execute_plan", never_called)
+    scenario = SCENARIOS_BY_ID["prompt_injection_unknown_capability"]
+    session = run_request(scenario.request, list(scenario.dataset_ids), "mock", settings=settings)
+    assert session.status == "blocked" and session.execution is None
+    record = load_run(session.run_id, settings.runs_dir)
+    assert record.steps == [] and record.datasets == [] and record.status == "blocked"
+    # No execution or step event was logged for this run.
+    events = [e for e in read_events(settings.events_path) if e["run_id"] == session.run_id]
+    assert not [e for e in events if e["event_type"].startswith(("execution", "step_"))]

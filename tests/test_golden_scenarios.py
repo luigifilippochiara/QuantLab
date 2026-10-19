@@ -1,6 +1,6 @@
 """The example workflows and the mock eval set give exactly the results of their golden records.
 
-tests/fixtures/golden_scenarios.json holds twelve records. For each example
+tests/fixtures/golden_scenarios.json holds thirteen records. For each example
 workflow, run in mock mode and auto-approved as `cli demo` does, each holds: the
 status, every static and runtime issue, the plan, every step's input and output
 hashes and metadata, the numbers of every output table and the facts sheet, on
@@ -45,6 +45,9 @@ snapshots.
   commit c74b77e, when example 1's plan took the live planner's step order (the VIX
   to its flags, then USD/CHF to its outcome) and mock mode began to replay that live
   run's narrative.
+- "scenario_4_single_step": all five examples and the mock eval set, recorded after
+  commit 2ceea2a, when example 4's simulated planner proposed one unregistered step
+  and V01 and V02 became terminal blocks (the whole plan rejected).
 
 Every result must be the same as recorded. The only allowed differences are the
 changes made on purpose since a record was made (MIGRATIONS), applied in order:
@@ -66,8 +69,9 @@ example 6 in mock mode and now matches none; the look-ahead example was removed
 it; example 1's test-only plan replaced it and its eval case, and the test's new
 mean_flagged changed example 5's results (its eval case, a plan and issues, is
 unchanged); example 5's test-only plan then replaced it and its eval case, and
-example 1's plan in the live planner's order replaced it and its eval case. No
-narrative raises N01, and no example or eval request raises R01.
+example 1's plan in the live planner's order replaced it and its eval case, and
+example 4's single unregistered step replaced it and its eval case. No narrative
+raises N01, and no example or eval request raises R01.
 
 The fixture is a frozen reference: a record is never regenerated.
 """
@@ -264,6 +268,16 @@ SCENARIO_1_LIVE_ORDER = Migration(
     {code: code for code in GUARDRAILS}, {}, False, REPLACED_BY_SCENARIO_1_LIVE_ORDER
 )
 
+# Scenario 4 single step: example 4's simulated planner proposes only the unregistered
+# step (no load_series), so its plan, issue ids and eval case changed; replaced.
+REPLACED_BY_SCENARIO_4_SINGLE_STEP = (
+    "prompt_injection_unknown_capability",
+    "s4_prompt_injection_unknown_capability",
+)
+SCENARIO_4_SINGLE_STEP = Migration(
+    {code: code for code in GUARDRAILS}, {}, False, REPLACED_BY_SCENARIO_4_SINGLE_STEP
+)
+
 # The changes made since each record was recorded, oldest first.
 MIGRATIONS = {
     "before_simplification": (
@@ -280,6 +294,7 @@ MIGRATIONS = {
         HAC_BOTH_MEANS,
         SCENARIO_5_TEST_ONLY,
         SCENARIO_1_LIVE_ORDER,
+        SCENARIO_4_SINGLE_STEP,
     ),
     "final_examples": (
         RESTRUCTURE,
@@ -294,6 +309,7 @@ MIGRATIONS = {
         HAC_BOTH_MEANS,
         SCENARIO_5_TEST_ONLY,
         SCENARIO_1_LIVE_ORDER,
+        SCENARIO_4_SINGLE_STEP,
     ),
     "before_restructure": (
         RESTRUCTURE,
@@ -308,6 +324,7 @@ MIGRATIONS = {
         HAC_BOTH_MEANS,
         SCENARIO_5_TEST_ONLY,
         SCENARIO_1_LIVE_ORDER,
+        SCENARIO_4_SINGLE_STEP,
     ),
     "before_stage_codes": (
         STAGES,
@@ -321,6 +338,7 @@ MIGRATIONS = {
         HAC_BOTH_MEANS,
         SCENARIO_5_TEST_ONLY,
         SCENARIO_1_LIVE_ORDER,
+        SCENARIO_4_SINGLE_STEP,
     ),
     "simulated_injection": (
         RENUMBERING,
@@ -332,6 +350,7 @@ MIGRATIONS = {
         HAC_BOTH_MEANS,
         SCENARIO_5_TEST_ONLY,
         SCENARIO_1_LIVE_ORDER,
+        SCENARIO_4_SINGLE_STEP,
     ),
     "scenario_1_nasdaq_vol_chf": (
         DIRECTION,
@@ -341,6 +360,7 @@ MIGRATIONS = {
         HAC_BOTH_MEANS,
         SCENARIO_5_TEST_ONLY,
         SCENARIO_1_LIVE_ORDER,
+        SCENARIO_4_SINGLE_STEP,
     ),
     "yield_curve_below": (
         VIX_SCENARIO_1,
@@ -349,6 +369,7 @@ MIGRATIONS = {
         HAC_BOTH_MEANS,
         SCENARIO_5_TEST_ONLY,
         SCENARIO_1_LIVE_ORDER,
+        SCENARIO_4_SINGLE_STEP,
     ),
     "scenario_1_vix_chf": (
         BUY_THE_DIP,
@@ -356,16 +377,19 @@ MIGRATIONS = {
         HAC_BOTH_MEANS,
         SCENARIO_5_TEST_ONLY,
         SCENARIO_1_LIVE_ORDER,
+        SCENARIO_4_SINGLE_STEP,
     ),
     "buy_the_dip": (
         LOOK_AHEAD_REMOVED,
         HAC_BOTH_MEANS,
         SCENARIO_5_TEST_ONLY,
         SCENARIO_1_LIVE_ORDER,
+        SCENARIO_4_SINGLE_STEP,
     ),
-    "hac_both_means": (SCENARIO_5_TEST_ONLY, SCENARIO_1_LIVE_ORDER),
-    "scenario_5_test_only": (SCENARIO_1_LIVE_ORDER,),
-    "scenario_1_live_order": (),
+    "hac_both_means": (SCENARIO_5_TEST_ONLY, SCENARIO_1_LIVE_ORDER, SCENARIO_4_SINGLE_STEP),
+    "scenario_5_test_only": (SCENARIO_1_LIVE_ORDER, SCENARIO_4_SINGLE_STEP),
+    "scenario_1_live_order": (SCENARIO_4_SINGLE_STEP,),
+    "scenario_4_single_step": (),
 }
 # The records that hold (part of) the mock eval set.
 EVAL_RECORDS = (
@@ -379,6 +403,7 @@ EVAL_RECORDS = (
     "hac_both_means",
     "scenario_5_test_only",
     "scenario_1_live_order",
+    "scenario_4_single_step",
 )
 
 # Output metadata compared step by step (the notes are free text and are not).

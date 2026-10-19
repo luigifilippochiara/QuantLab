@@ -2175,3 +2175,33 @@ label and details, with the official name (`full_name`, also ticker first) on ho
   mistake that let a view format names itself; it ignores formatting and quoting,
   which a text search would not.
 
+## Terminal blocks: V01 and V02 reject the whole plan
+
+**A BLOCK is either fixable by editing parameter values or terminal.** Each guardrail
+now says which (`Guardrail.fixable_by_edit`, shown as "Fixable by edit" on the
+Guardrails page and in the ARCHITECTURE table). V01 INVALID_PLAN and V02
+UNKNOWN_CAPABILITY are terminal: the plan's steps are wrong in kind or structure,
+which no value edit can change. Every other BLOCK keeps its behaviour (fixable, e.g.
+V08 by setting a frequency); R01 and P01 are "n/a", since they leave no plan to edit,
+as are APPROVE and WARN.
+- **A rejected plan is final.** `ValidationReport.rejections` lists every terminal
+  block (V02 checks every step, so every unregistered step is listed). The engine
+  refuses to edit, reset (re-validate), approve or reject it (`PlanRejectedError`)
+  and to execute it. The app shows a "Plan rejected" banner naming the capability and
+  each rejected step, keeps the steps read only, and hides the editor fields, Apply,
+  Reset, the approval boxes, Execute and Reject plan; only a new request goes on. The
+  run is recorded as blocked (no record field changed), counted under Blocked.
+- **Reject is hidden** for a rejected plan: the validator already rejected it, and a
+  human "Rejected by human" on top would double-count it.
+- **A blocked plan never reaches the executor.** The validator's verdict is the gate:
+  the engine does not call `execute_plan` for any blocked plan, fixable or terminal,
+  and tests prove it with the executor patched to fail if called. The executor's own
+  re-run of `validate_plan` stays as a backstop that returns "blocked" without
+  running a step; it was not changed to raise. Alternative: make the executor raise,
+  rejected because blocking is the validator's job.
+- **Example 4** is now a one-step plan, `run_python` with the request's code, with no
+  load step: rejected by V02, nothing executed and no data loaded (a test patches the
+  data loader to fail if called). A `SCENARIO_4_SINGLE_STEP` migration replaces it
+  and its eval case; the record `scenario_4_single_step` holds all five examples and
+  the eval set. The canned plans are `canned-scenarios-v22`.
+

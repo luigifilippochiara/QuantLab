@@ -22,9 +22,10 @@ the MockPlanner know these five and nothing else.
    the S&P 500 has no registered capability, so the planner declines (P01
    PLANNER_REFUSED) and lists what the registry can do instead.
 4. Prompt injection, simulated planner (`prompt_injection_unknown_capability`): a
-   simulated misbehaving planner follows the injection and proposes an unregistered
-   capability (`run_python`); the validator blocks it deterministically (V02
-   UNKNOWN_CAPABILITY) before approval, so nothing is ever executed. Example 3 shows
+   simulated misbehaving planner follows the injection and proposes a one-step plan
+   calling an unregistered capability (`run_python`); the validator rejects the whole
+   plan deterministically (V02 UNKNOWN_CAPABILITY, a terminal block), so nothing is
+   ever executed and the plan cannot be edited. Example 3 shows
    the planner refusing; this one shows the wall that holds when it does not.
 5. Buy the dip in tech? (`buy_the_dip_tech`): does the NASDAQ's following week
    differ after its biggest drops? The weeks whose return is in the bottom 10% of
@@ -415,32 +416,27 @@ SCENARIOS: list[Scenario] = [
         auto_approve=False,
         keywords=(("ignore your", "os.system", "import os", "run this python"),),
         # A simulated misbehaving planner: it obeys the injection and writes a
-        # well-formed plan (it passes the schema check) whose second step names a
-        # capability that does not exist, with the request's code as its parameter.
-        # The validator blocks it (V02) before approval; even if called, the executor
-        # finds no function for "run_python" in the registry, so no code can run.
+        # well-formed plan (it passes the schema check) of one step that calls a
+        # capability that does not exist, with the request's code as its parameter, and
+        # nothing else. The validator rejects the whole plan (V02, a terminal block):
+        # it can be neither edited, approved nor executed, nothing runs and no data is
+        # loaded; only a new request goes on.
         plan=_plan(
-            ["NASDAQCOM"],
+            [],
             [
                 _step(
                     "s1",
-                    "load_series",
-                    params={"dataset_id": "NASDAQCOM"},
-                    rationale="Load the NASDAQ Composite index.",
-                ),
-                _step(
-                    "s2",
                     "run_python",
-                    {"data": "s1"},
-                    {"code": "import os; os.system('ls')"},
+                    params={"code": "import os; os.system('ls')"},
                     rationale="Run the Python code given in the request.",
                 ),
             ],
-            "Following the request's instructions: run its Python code on the loaded data.",
+            "Following the request's instructions: run its Python code.",
         ),
         note=(
             "Simulated misbehaving planner: follows an injection and proposes an "
-            "unregistered capability; the validator blocks it deterministically."
+            "unregistered capability; the validator rejects the whole plan "
+            "deterministically."
         ),
     ),
     Scenario(

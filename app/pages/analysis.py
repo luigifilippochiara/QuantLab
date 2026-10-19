@@ -128,6 +128,10 @@ plan = session.plan
 result = session.plan_result
 # A completed or rejected run is final: its plan can no longer change.
 finished = session.status in ("completed", "rejected")
+# A plan rejected as a whole (a terminal block: V01, V02) is shown read only: no
+# editing, approving or executing, and no Reject button (the validator already
+# rejected it). Only a new request goes on.
+rejected = session.report is not None and session.report.is_rejected
 # step id -> {param: value} for widget values that differ from the plan: changes
 # the user has made but not applied (and re-validated) yet.
 pending: dict[str, dict] = {}
@@ -145,11 +149,14 @@ if plan is None:
 elif plan.cannot_fulfill:
     st.error(ui.escape_md(plan.refusal_reason or ""), title="The planner declined this request")
 else:
-    st.info(
-        "You can adjust parameters below. Every change is re-checked against the same "
-        "controls before anything runs.",
-        icon=":material/tune:",
-    )
+    if rejected:
+        ui.render_rejection(session.report, plan)
+    else:
+        st.info(
+            "You can adjust parameters below. Every change is re-checked against the same "
+            "controls before anything runs.",
+            icon=":material/tune:",
+        )
     if finished:
         st.caption(f"This run is {session.status}; generate a new plan to change it.")
     proposal = {step.id: step.params for step in session.proposal.steps}
@@ -199,6 +206,8 @@ else:
             if spec is None:
                 st.caption("Not a registered capability: it can be neither run nor edited.")
                 continue
+            if rejected:
+                continue  # read only: the whole plan was rejected
             if not spec.params:
                 st.caption("No parameters.")
                 continue
@@ -231,40 +240,41 @@ else:
         for step in plan.steps
         for name, value in step.params.items()
     )
-    left, right = st.columns(2)
-    # Highlighted (primary) only while there are changes to apply, but enabled whenever
-    # the plan can change: a number field sends its typed value only when it loses
-    # focus, so a button disabled until then would swallow the first click (which only
-    # moves the focus) and need a second. The click itself sends the value, and this run
-    # already sees it in `pending`. The key keeps the button the same widget when its
-    # style changes in that run: without one, Streamlit's widget id includes the type,
-    # and the click on the white button would be lost.
-    if left.button(
-        "Apply changes & re-validate",
-        key="apply-edits",
-        type="primary" if pending else "secondary",
-        icon=":material/rule:",
-        disabled=finished,
-        width="stretch",
-    ):
-        if pending:
-            session.apply_param_edits(pending)
-            st.session_state.flash = (
-                "Changes applied and re-validated. Approvals were reset: they belong to the "
-                "previous plan version, so approve this one again."
-            )
-        else:
-            st.session_state.flash = "No changes to apply: edit a parameter above first."
-        st.rerun()
-    if right.button(
-        "Reset to planner's proposal",
-        icon=":material/undo:",
-        disabled=finished or not edited,
-        width="stretch",
-    ):
-        session.reset_to_proposal()
-        st.session_state.flash = "Back to the planner's proposal; approvals were reset."
-        st.rerun()
+    if not rejected:  # a rejected plan cannot change
+        left, right = st.columns(2)
+        # Highlighted (primary) only while there are changes to apply, but enabled whenever
+        # the plan can change: a number field sends its typed value only when it loses
+        # focus, so a button disabled until then would swallow the first click (which only
+        # moves the focus) and need a second. The click itself sends the value, and this run
+        # already sees it in `pending`. The key keeps the button the same widget when its
+        # style changes in that run: without one, Streamlit's widget id includes the type,
+        # and the click on the white button would be lost.
+        if left.button(
+            "Apply changes & re-validate",
+            key="apply-edits",
+            type="primary" if pending else "secondary",
+            icon=":material/rule:",
+            disabled=finished,
+            width="stretch",
+        ):
+            if pending:
+                session.apply_param_edits(pending)
+                st.session_state.flash = (
+                    "Changes applied and re-validated. Approvals were reset: they belong to the "
+                    "previous plan version, so approve this one again."
+                )
+            else:
+                st.session_state.flash = "No changes to apply: edit a parameter above first."
+            st.rerun()
+        if right.button(
+            "Reset to planner's proposal",
+            icon=":material/undo:",
+            disabled=finished or not edited,
+            width="stretch",
+        ):
+            session.reset_to_proposal()
+            st.session_state.flash = "Back to the planner's proposal; approvals were reset."
+            st.rerun()
 
 if plan is not None and plan.planner_notes:
     st.caption(
@@ -282,8 +292,10 @@ ticked: list[str] = []
 if report is not None:
     if not report.issues:
         st.success("No issues: the plan passed every validator guardrail.", icon=":material/check:")
+    # A rejected plan shows only what rejected it: nothing else can be acted on.
+    shown = report.rejections if rejected else report.issues
     for action in (Action.BLOCK, Action.APPROVE, Action.WARN):
-        for issue in [i for i in report.issues if i.action == action]:
+        for issue in [i for i in shown if i.action == action]:
             with st.container(border=True):
                 ui.render_issue(issue, ui.step_titles(plan) if plan else None)
                 if action == Action.APPROVE:
@@ -301,6 +313,11 @@ if report is not None:
             f"Approved {approval.issue_id} at {approval.approved_at} by {approval.approved_by} "
             f"for plan version {approval.plan_hash[:12]}"
         )
+
+if rejected:
+    # No Execute and no Reject: the validator rejected the plan, nothing ran.
+    st.caption("Nothing was executed. Write a new request to continue.")
+    st.stop()
 
 # Execute is allowed only for an applied, unblocked, fully approved plan; say why not.
 blocking = report.blocks if report else []

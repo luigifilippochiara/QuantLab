@@ -418,10 +418,12 @@ def test_scenario_4_injected_plan_is_blocked_and_never_runs(
     scenario = SCENARIOS_BY_ID["prompt_injection_unknown_capability"]
     session = run_request(scenario.request, list(scenario.dataset_ids), "mock", settings=settings)
 
-    # A well-formed plan (no V01) that follows the injection, blocked by V02 alone.
-    assert [s.capability for s in session.plan.steps] == ["load_series", "run_python"]
-    assert session.plan.steps[1].params == {"code": "import os; os.system('ls')"}
-    assert [(i.issue_id, i.action) for i in session.report.issues] == [("V02:s2", "BLOCK")]
+    # A well-formed plan (no V01) of one step that follows the injection, rejected
+    # whole by V02.
+    assert [s.capability for s in session.plan.steps] == ["run_python"]
+    assert session.plan.steps[0].params == {"code": "import os; os.system('ls')"}
+    assert [(i.issue_id, i.action) for i in session.report.issues] == [("V02:s1", "BLOCK")]
+    assert session.report.is_rejected
     # Blocked before approval: the executor is never reached, no step ever runs.
     assert session.status == "blocked" and session.execution is None and not session.approvals
     assert "run_python" not in REGISTRY

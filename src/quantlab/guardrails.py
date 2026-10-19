@@ -125,6 +125,11 @@ class Guardrail:
         action: what happens when it fires: BLOCK, APPROVE or WARN.
         category: what it protects.
         description: what it checks, and what that prevents.
+        fixable_by_edit: for a BLOCK on a plan, whether editing parameter values can
+            fix it. False makes it terminal: the whole plan is rejected and can be
+            neither edited, re-validated, approved nor executed (its steps are wrong in
+            kind or structure, which value edits cannot change). None where it does not
+            apply: APPROVE and WARN, and R01 and P01, which leave no plan to edit.
     """
 
     code: str
@@ -132,6 +137,13 @@ class Guardrail:
     action: Action
     category: Category
     description: str
+    fixable_by_edit: bool | None = None
+
+    @property
+    def fixable_text(self) -> str:
+        """fixable_by_edit as the Guardrails page and docs/ARCHITECTURE.md show it:
+        "yes", "no" (terminal: the plan is rejected) or "n/a"."""
+        return {True: "yes", False: "no", None: "n/a"}[self.fixable_by_edit]
 
     @property
     def enforced_by(self) -> str:
@@ -181,11 +193,13 @@ GUARDRAILS: dict[str, Guardrail] = {
             "planner returns no usable plan: an API error or timeout, an answer cut off or "
             "refused by the provider, or no readable plan submitted. Prevents a malformed, "
             "ambiguous or out-of-order plan from running.",
+            fixable_by_edit=False,
         ),
         Guardrail(
             "V02", "UNKNOWN_CAPABILITY", BLOCK, Category.APPROVED_SCOPE,
             "Every step must call a capability in the approved registry, so no unreviewed or "
             "untested code is ever run, whatever the LLM asks for.",
+            fixable_by_edit=False,
         ),
         Guardrail(
             "V03", "INVALID_PARAM", BLOCK, Category.INPUT_VALIDITY,
@@ -194,6 +208,7 @@ GUARDRAILS: dict[str, Guardrail] = {
             "between 0.5 and 0.99). User edits that change anything other than a parameter "
             "value, such as a step, an input or the capability, are rejected too. Prevents "
             "nonsensical settings from producing plausible-looking numbers.",
+            fixable_by_edit=True,
         ),
         Guardrail(
             "V04", "TYPE_MISMATCH", BLOCK, Category.INPUT_VALIDITY,
@@ -201,28 +216,33 @@ GUARDRAILS: dict[str, Guardrail] = {
             "example returns, not prices, for a volatility, and returns, not a price or rate "
             "level, for the significance test. Prevents statistically meaningless "
             "calculations.",
+            fixable_by_edit=True,
         ),
         Guardrail(
             "V05", "BUDGET_EXCEEDED", BLOCK, Category.PLAN_INTEGRITY,
             "The plan may have at most 15 steps by default (QUANTLAB_MAX_STEPS). Prevents "
             "runaway plans too long for a human to review.",
+            fixable_by_edit=True,
         ),
         Guardrail(
             "V06", "UNKNOWN_DATASET", BLOCK, Category.APPROVED_SCOPE,
             "Every dataset the plan names or loads must be in the approved catalog. Prevents "
             "analysis of invented or unapproved data.",
+            fixable_by_edit=True,
         ),
         Guardrail(
             "V07", "RETURNS_ON_RATES", BLOCK, Category.METHODOLOGY,
             "Returns cannot be computed on an interest rate or yield: rates are differenced "
             "instead (changes in percentage points). Prevents meaningless results, such as a "
             "move from 1% to 2% reported as +100%.",
+            fixable_by_edit=True,
         ),
         Guardrail(
             "V08", "FREQUENCY_MISMATCH", BLOCK, Category.METHODOLOGY,
             "Series combined in one step (a spread, a comparison or the significance test) "
             "must have the same frequency. Prevents silently matching weekly values with "
             "daily ones on the few dates they share.",
+            fixable_by_edit=True,
         ),
         Guardrail(
             "V09", "LOOK_AHEAD", APPROVE, Category.METHODOLOGY,
@@ -241,17 +261,20 @@ GUARDRAILS: dict[str, Guardrail] = {
             "Forward returns may only be the outcome of a comparison or of the significance "
             "test, never the input to a volatility, a flag or any other step. Prevents future "
             "information from leaking into a signal.",
+            fixable_by_edit=True,
         ),
         Guardrail(
             "E01", "DATASET_HASH_MISMATCH", BLOCK, Category.INPUT_VALIDITY,
             "Each snapshot file must match the hash recorded in the catalog before it is "
             "loaded. Prevents analysis of altered or different data.",
+            fixable_by_edit=True,
         ),
         Guardrail(
             "E02", "INSUFFICIENT_DATA", BLOCK, Category.DATA_QUALITY,
             "Each step needs its capability's minimum number of observations, for example "
             "three times the window for a rolling volatility and 30 shared dates for the "
             "significance test. Prevents statistics computed on too little data.",
+            fixable_by_edit=True,
         ),
         Guardrail(
             "E03", "MISSING_DATA", WARN, Category.DATA_QUALITY,
@@ -386,6 +409,17 @@ class ValidationReport(BaseModel):
     def is_blocked(self) -> bool:
         """True if any BLOCK issue exists."""
         return bool(self.blocks)
+
+    @property
+    def rejections(self) -> list[Issue]:
+        """BLOCK issues no edit can fix (fixable_by_edit False, e.g. V02 for every
+        unregistered step): the whole plan is rejected."""
+        return [i for i in self.blocks if GUARDRAILS[i.code].fixable_by_edit is False]
+
+    @property
+    def is_rejected(self) -> bool:
+        """True if the plan is rejected as a whole: only a new request can go on."""
+        return bool(self.rejections)
 
     @property
     def approvals_required(self) -> list[Issue]:

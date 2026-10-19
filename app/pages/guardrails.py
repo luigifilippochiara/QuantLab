@@ -32,6 +32,8 @@ ROWS = [
         "Code": g.code,
         "Name": g.name,
         "Action": g.action.value,
+        # Whether editing parameter values can fix a BLOCK; "no" rejects the plan.
+        "Fixable by edit": g.fixable_text,
         "Enforced by": g.enforced_by,
         "Type": g.type.value,
         "Category": g.category.value,

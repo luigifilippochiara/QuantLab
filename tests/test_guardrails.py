@@ -367,11 +367,55 @@ def test_p01_refusal(catalog: Catalog) -> None:
 
 
 def test_v02_blocks_a_planner_that_follows_an_injection(catalog: Catalog) -> None:
-    # Scenario 4 simulates a planner that obeys the injection: a well-formed plan
-    # whose second step names a capability that does not exist. Only V02 fires.
+    # Scenario 4 simulates a planner that obeys the injection: a well-formed plan of
+    # one step that names a capability that does not exist. Only V02 fires, and it
+    # rejects the whole plan.
     report = validate(raw_plan("prompt_injection_unknown_capability"), catalog)
-    assert [(i.issue_id, i.action) for i in report.issues] == [("V02:s2", "BLOCK")]
+    assert [(i.issue_id, i.action) for i in report.issues] == [("V02:s1", "BLOCK")]
     assert "'run_python' is not a registered capability" in report.issues[0].message
+    assert report.is_rejected and report.rejections == report.issues
+
+
+def test_every_unregistered_step_is_reported_and_the_whole_plan_rejected(
+    catalog: Catalog,
+) -> None:
+    raw = {"dataset_ids": ["NASDAQCOM"], "steps": [
+        {"id": "s1", "capability": "load_series", "params": {"dataset_id": "NASDAQCOM"}},
+        {"id": "s2", "capability": "run_python", "inputs": {"data": "s1"},
+         "params": {"code": "print(1)"}},
+        {"id": "s3", "capability": "arima_forecast", "inputs": {"series": "s1"}},
+    ]}  # fmt: skip
+    report = validate(raw, catalog)
+    # Every unregistered step, not just the first; each rejects the plan.
+    assert [i.issue_id for i in report.rejections] == ["V02:s2", "V02:s3"]
+    assert report.is_rejected
+
+
+def test_v01_rejects_the_whole_plan(catalog: Catalog) -> None:
+    raw = {"dataset_ids": ["NASDAQCOM"], "steps": [
+        {"id": "s1", "capability": "resample", "inputs": {"series": "s2"},
+         "params": {"freq": "W"}},
+        {"id": "s2", "capability": "load_series", "params": {"dataset_id": "NASDAQCOM"}},
+    ]}  # fmt: skip
+    report = validate(raw, catalog)
+    assert {i.code for i in report.rejections} == {"V01"}  # a reference to a later step
+    assert report.is_rejected
+
+
+def test_a_fixable_block_does_not_reject_the_plan(catalog: Catalog) -> None:
+    report = validate(raw_plan("spread_frequency_mismatch_block"), catalog)
+    assert [i.code for i in report.blocks] == ["V08"]
+    assert report.is_blocked and not report.is_rejected
+
+
+def test_only_v01_and_v02_are_terminal() -> None:
+    terminal = {code for code, g in GUARDRAILS.items() if g.fixable_by_edit is False}
+    assert terminal == {"V01", "V02"}
+    for code, g in GUARDRAILS.items():
+        if g.action != Action.BLOCK or code in ("R01", "P01"):  # no plan to edit
+            assert g.fixable_by_edit is None and g.fixable_text == "n/a", code
+        else:
+            assert isinstance(g.fixable_by_edit, bool), code
 
 
 # --- V11 FORWARD_DATA_AS_SIGNAL ---------------------------------------------------
