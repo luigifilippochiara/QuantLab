@@ -79,7 +79,28 @@ Ready-made in the sidebar in mock mode ([details](docs/GUIDE.md#example-workflow
   forecasts, and an evaluation set that catches regressions but cannot measure
   planner accuracy with confidence.
 
-More, with the roadmap: [ARCHITECTURE.md](docs/ARCHITECTURE.md#limitations-and-roadmap).
+More limitations: [ARCHITECTURE.md](docs/ARCHITECTURE.md#limitations-and-roadmap).
+
+## Roadmap and next steps
+
+Next steps:
+
+- **Governed onboarding:** new datasets, capabilities (for example drawdowns,
+  correlations or GARCH) and guardrails, each entering as a reviewed code change with
+  tests, never generated at runtime. Declined requests in the event log show what
+  users asked for and could not get.
+- **Guided loop:** after a block or a result, the planner proposes a fix or a next
+  step for the analyst to approve. Every proposal goes back through the validator;
+  never an auto-fix.
+- **At scale:** the tests, the example workflows and the live evaluation in CI, so
+  planner accuracy and block rates are tracked on every prompt, model or registry
+  change.
+
+Further on: access control with named approvers and four-eyes approval, a persistent
+store for runs and events, multiple-testing control across runs, an approval view
+that highlights assumptions and edits, and live data feeds hashed and versioned like
+the snapshots. The full roadmap is in
+[ARCHITECTURE.md](docs/ARCHITECTURE.md#limitations-and-roadmap).
 
 ## Where to look next
 
