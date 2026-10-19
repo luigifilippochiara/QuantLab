@@ -17,6 +17,17 @@ from typing import Any
 import pandas as pd
 import plotly.graph_objects as go
 import streamlit as st
+from labels import (
+    capability_label,
+    capability_title,
+    dataset_full_name,
+    dataset_label,
+    frequency_label,
+    kind_label,
+    param_label,
+    param_value_label,
+    stat_label,
+)
 
 from quantlab.config import Settings, load_settings
 from quantlab.data import Catalog, load_catalog
@@ -42,9 +53,6 @@ ACTION_BADGE = {
 # Unit of a parameter counted in periods (e.g. a rolling window), by the frequency
 # of the step's input: "window: 12 weeks", or "12 trading days" on daily data.
 PERIOD_UNITS = {Frequency.D: "trading days", Frequency.W: "weeks", Frequency.M: "months"}
-# Words of a capability name written in capitals in step titles, so
-# hac_mean_difference reads "HAC mean difference" rather than "Hac mean difference".
-TITLE_ACRONYMS = {"hac": "HAC"}
 # Header badges of a plan step: its BLOCK and WARN findings and its edits. Approval
 # findings get no badge: they are handled one by one in the Validation section.
 STEP_BADGES = {
@@ -87,23 +95,6 @@ def escape_md(text: str) -> str:
     return text
 
 
-def dataset_label(catalog: Catalog, dataset_id: str) -> str:
-    """The label for a dataset everywhere in the UI: FRED series id, then display name.
-
-    Read from data/catalog.json, e.g. "SP500 — S&P 500 Index". The FRED id is used
-    for every dataset, so series without a market ticker (DGS10) look the same.
-    An id that is not in the catalog is shown as it is.
-    """
-    entry = catalog.get(dataset_id)
-    return f"{entry.fred_id} — {entry.title}" if entry else dataset_id
-
-
-def dataset_full_name(catalog: Catalog, dataset_id: str) -> str:
-    """Hover text for a dataset: FRED series id, then the catalog's full name."""
-    entry = catalog.get(dataset_id)
-    return f"{entry.fred_id} — {entry.full_name}" if entry else dataset_id
-
-
 def dataset_names_help(catalog: Catalog) -> str:
     """Tooltip text listing the full name of every catalog dataset, one per line."""
     return "\n".join(f"- {dataset_full_name(catalog, d)}" for d in catalog.ids())
@@ -117,8 +108,8 @@ def dataset_caption(catalog: Catalog, dataset_id: str) -> str:
     """
     entry = catalog.entries[dataset_id]
     details = (
-        f"{entry.frequency} · {entry.kind} · {entry.start_date} to {entry.end_date} · "
-        f"sha256 {entry.sha256[:12]}"
+        f"{frequency_label(entry.frequency)} · {kind_label(entry.kind)} · "
+        f"{entry.start_date} to {entry.end_date} · sha256 {entry.sha256[:12]}"
     )
     label = html.escape(dataset_label(catalog, dataset_id))
     full_name = html.escape(dataset_full_name(catalog, dataset_id), quote=True)
@@ -154,7 +145,7 @@ def render_header() -> None:
 def step_summary(
     step: Step, spec: CapabilitySpec | None, input_frequency: str | None, catalog: Catalog
 ) -> str:
-    """A step's main parameters as short text, e.g. "window: 12 weeks, annualize: yes".
+    """A step's main parameters as short text, e.g. "Window: 12 weeks, Annualised: yes".
 
     The main parameters come from the registry (`summary_params`); without them,
     or for an unknown capability, every parameter is shown. Unset values are left
@@ -184,27 +175,13 @@ def step_summary(
         if name == "dataset_id" and isinstance(value, str):
             parts.append(dataset_label(catalog, value))
             continue
-        if isinstance(value, bool):
-            shown = "yes" if value else "no"
-        elif counted and input_frequency in PERIOD_UNITS:
+        if counted and input_frequency in PERIOD_UNITS and not isinstance(value, bool):
             unit = PERIOD_UNITS[input_frequency]  # e.g. "weeks", "trading days"
             shown = f"{value} {unit.removesuffix('s') if value == 1 else unit}"
         else:
-            shown = str(value)
-        parts.append(f"{name.replace('_', ' ')}: {shown}")
+            shown = param_value_label(step.capability, name, value)  # e.g. "W" -> "Weekly"
+        parts.append(f"{param_label(step.capability, name)}: {shown}")
     return ", ".join(parts)
-
-
-def capability_label(name: str, code: str | None = None) -> str:
-    """A capability as shown in the app, e.g. "C06 · rolling_volatility".
-
-    Args:
-        name: capability name.
-        code: its code as recorded in a run record; when missing it is looked up
-            from the registry. A name that is not registered is shown alone.
-    """
-    code = code or capability_code(name)
-    return f"{code} · {name}" if code else name
 
 
 def step_title(position: int, capability: str) -> str:
@@ -214,8 +191,7 @@ def step_title(position: int, capability: str) -> str:
     title is just "Step 2 · Arima".
     """
     code = capability_code(capability)
-    readable = " ".join(TITLE_ACRONYMS.get(word, word) for word in capability.split("_"))
-    readable = readable[:1].upper() + readable[1:]  # "rolling volatility" -> "Rolling volatility"
+    readable = capability_title(capability)  # "rolling_volatility" -> "Rolling volatility"
     return f"Step {position} · {code} · {readable}" if code else f"Step {position} · {readable}"
 
 
@@ -567,7 +543,10 @@ def render_artifact(
     """
     meta = artifact.meta
     if artifact.data_type == DataType.SERIES:
-        title = f"{step_id} · {capability_label(capability)} ({meta.kind}, {meta.frequency})"
+        title = (
+            f"{step_id} · {capability_label(capability)} "
+            f"({kind_label(meta.kind)}, {frequency_label(meta.frequency)})"
+        )
         st.plotly_chart(
             series_figure(artifact.value, title, str(meta.kind), flags),
             width="stretch",
@@ -594,14 +573,25 @@ def render_artifact(
 
 
 def table_frame(table: dict[str, Any]) -> pd.DataFrame:
-    """A TABLE artifact as a DataFrame: one row per statistic, formatted as in the facts sheet."""
-    return pd.DataFrame([{"statistic": k, "value": format_number(v)} for k, v in table.items()])
+    """A TABLE artifact as a DataFrame: one row per statistic (labelled, e.g. "p-value"),
+    each value formatted as in the facts sheet."""
+    return pd.DataFrame(
+        [{"statistic": stat_label(k), "value": format_number(v)} for k, v in table.items()]
+    )
 
 
-def describe_params(params: dict[str, Any], edited: dict[str, Any]) -> str:
-    """Parameters as text, marking user-edited ones, e.g. "window=60 (edited, was 12)"."""
+def describe_params(capability: str, params: dict[str, Any], edited: dict[str, Any]) -> str:
+    """Parameters as text, labelled, marking user-edited ones.
+
+    E.g. "Frequency: Daily (edited, was Weekly), how: last".
+    """
+
+    def shown(name: str, value: Any) -> str:
+        return param_value_label(capability, name, value)
+
     return ", ".join(
-        f"{name}={value}" + (f" (edited, was {edited[name]})" if name in edited else "")
+        f"{param_label(capability, name)}: {shown(name, value)}"
+        + (f" (edited, was {shown(name, edited[name])})" if name in edited else "")
         for name, value in params.items()
     )
 
@@ -613,9 +603,9 @@ def render_trace(result: TraceResult, catalog: Catalog) -> None:
             {
                 "step": s.step_id,
                 "code": s.capability_code or "-",
-                "capability": s.capability,
+                "capability": capability_title(s.capability),
                 "inputs": ", ".join(f"{k} <- {v}" for k, v in s.inputs.items()) or "-",
-                "params": describe_params(s.params, s.edited) or "-",
+                "params": describe_params(s.capability, s.params, s.edited) or "-",
                 "library call": s.library_calls,
                 "rows": s.n_obs,
                 "range": f"{s.start} to {s.end}",
@@ -676,7 +666,7 @@ def render_replay(report: ReplayReport, catalog: Catalog) -> None:
                     {
                         "step": s.step_id,
                         "code": s.capability_code or "-",
-                        "capability": s.capability,
+                        "capability": capability_title(s.capability),
                         "original hash": (s.original_hash or "-")[:16],
                         "replay hash": (s.replay_hash or "-")[:16],
                         "match": "yes" if s.match else "NO",
@@ -702,7 +692,12 @@ def _clamp(value: Any, low: float, high: float, fallback: float) -> float:
 
 
 def param_widget(
-    spec_param: ParamSpec, current: Any, key: str, catalog: Catalog, disabled: bool = False
+    spec_param: ParamSpec,
+    current: Any,
+    key: str,
+    catalog: Catalog,
+    disabled: bool = False,
+    capability: str | None = None,
 ) -> Any:
     """Render an input widget for one parameter, limited to what the registry allows.
 
@@ -716,15 +711,17 @@ def param_widget(
         key: unique widget key.
         catalog: the dataset catalog (for dataset_id: choices and full names).
         disabled: show the value without allowing changes (e.g. after execution).
+        capability: the step's capability, whose labels the field uses (labels.py).
 
     Returns:
-        The value chosen in the widget.
+        The value chosen in the widget: always the registry's code (e.g. "W"), never
+        its label, so the plan, its hash and edit detection are unaffected by labels.
     """
-    label, help_text = spec_param.name, spec_param.description
+    label, help_text = param_label(capability, spec_param.name), spec_param.description
     if spec_param.counted_in_periods:
         # The same number means a different span at another frequency: 12 is 12
         # weeks on weekly data but 12 trading days on daily data.
-        label = f"{spec_param.name} (in periods of the series frequency)"
+        label = f"{label} (in periods of the series frequency)"
     if spec_param.name == "dataset_id":
         options = catalog.ids()
         index = options.index(current) if current in options else 0
@@ -741,7 +738,11 @@ def param_widget(
     if spec_param.choices is not None:
         options = list(spec_param.choices)
         index = options.index(current) if current in options else 0
-        return st.selectbox(label, options, index=index, key=key, help=help_text, disabled=disabled)
+        # The options are the codes; only their display goes through the labels.
+        return st.selectbox(
+            label, options, index=index, key=key, help=help_text, disabled=disabled,
+            format_func=lambda code: param_value_label(capability, spec_param.name, code),
+        )  # fmt: skip
     if spec_param.type == "bool":
         start = current if isinstance(current, bool) else bool(spec_param.default)
         return st.checkbox(label, value=start, key=key, help=help_text, disabled=disabled)

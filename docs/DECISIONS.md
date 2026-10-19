@@ -1949,3 +1949,36 @@ loosely worded. Each case expects `refuse` (P01) or `plan`.
 a safe haven?" and "Buy the dip in tech?" stay as the titles of examples 1 and 5. Their
 requests now ask only about past data, because an opening question like that reads like
 a request for advice. The canned plans are unchanged (`canned-scenarios-v17`).
+
+## Plain-English labels in the UI, from one module
+
+**Every page shows codes and parameter names through `app/labels.py`**, a UI-only module.
+Plans, run records, the registry, validation, hashes and the plan cache keep their codes,
+so a plan still says `freq="W"`. The downloaded manifest and the raw run record show the
+codes too.
+- **Why the old "freq: W" survived:** there was never one place for labels. Only the step
+  headers replaced underscores, so the editor, the trace, the results, the run-history
+  edits and the registry each printed raw names and codes.
+- **The module holds:**
+  - a mapping for parameter names: (capability, parameter) to label, because `method` is
+    a return type in one capability and a threshold's window in another;
+  - one for parameter values: Frequency (Daily, Weekly, Monthly), Return type (Simple,
+    Log), Threshold from (Past data only, Full history (look-ahead)), Flag (Above or Below
+    the threshold), Minimum history, Window, Annualised, Quantile, Dataset;
+  - labels for series kinds and data types;
+  - the result-table statistics (`se_hac` becomes "HAC standard error", `p_value`
+    "p-value");
+  - readable capability names ("C10 · HAC mean difference");
+  - dataset labels, from the catalog.
+  Anything unmapped is shown as it is.
+- **Kept as they are, as you decided:** resample's `how` (last, mean) and `periods`.
+- **Kept on purpose:** guardrail and capability codes, guardrail names, guardrail messages
+  and recorded assumptions (written by the guardrails and capabilities), p95, statuses,
+  modes, ids and hashes.
+- **The editor shows labels but writes codes.** Its select boxes keep the codes as options
+  and only format them, so choosing "Weekly" stores "W". Plans, hashes, validation and edit
+  detection are unaffected: choosing the label already shown leaves Apply white.
+- **Datasets are now named first, with the id in brackets,** for example "NASDAQ Composite
+  Index (NASDAQCOM)". This reverses the earlier id-first labels. The id stays visible,
+  because it is what links the data to its source.
+- **The registry page** adds a "shown as" column and each code's label.

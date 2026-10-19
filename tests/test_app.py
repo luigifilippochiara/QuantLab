@@ -93,8 +93,8 @@ def test_scenario_1_full_flow(app_env: Settings) -> None:
     assert NUMBERS_CHECKED_NOTE in captions
     # Results and trace name each capability by code and name.
     results = [e.label for e in app.expander if e.label.startswith("s")]
-    assert results[4].startswith("s5 · C07 · flag_regime · completed")
-    assert results[7].startswith("s8 · C10 · hac_mean_difference · completed")
+    assert results[4].startswith("s5 · C07 · Flag regime · completed")
+    assert results[7].startswith("s8 · C10 · HAC mean difference · completed")
     # Under each USD/CHF result, and in the narrative: which way the rate reads.
     quote = "DEXSZUS is quoted as USD/CHF, in Swiss francs per US dollar"
     assert sum(c.value.startswith(quote) for c in app.caption) == 5  # s2, s4, s6, s7, s8
@@ -102,18 +102,19 @@ def test_scenario_1_full_flow(app_env: Settings) -> None:
     # The significance test's table, every number formatted as in the facts sheet.
     test = next(
         d.value for d in app.dataframe
-        if "statistic" in d.value.columns and "p_value" in d.value["statistic"].tolist()
+        if "statistic" in d.value.columns and "p-value" in d.value["statistic"].tolist()
     )  # fmt: skip
-    for statistic in ["diff_means", "se_hac", "p_value", "n_episodes_flagged", "maxlags_used"]:
+    for statistic in ["Difference in means", "HAC standard error", "p-value", "Flagged episodes",
+                      "Newey-West lags"]:  # fmt: skip
         assert statistic in test["statistic"].tolist()
     # The trace starts at the final result, the test with its p-value.
     picker = next(b for b in app.selectbox if b.label == "Step to trace")
-    assert picker.value == "s8" and picker.options[-1] == "s8 · C10 · hac_mean_difference"
+    assert picker.value == "s8" and picker.options[-1] == "s8 · C10 · HAC mean difference"
     trace = next(d.value for d in app.dataframe if "library call" in d.value.columns)
     assert trace[["step", "code", "capability"]].values.tolist()[:3] == [
-        ["s8", "C10", "hac_mean_difference"],
-        ["s6", "C08", "forward_return"],
-        ["s5", "C07", "flag_regime"],
+        ["s8", "C10", "HAC mean difference"],
+        ["s6", "C08", "Forward return"],
+        ["s5", "C07", "Flag regime"],
     ]
     subheaders = [h.value for h in app.subheader]
     # The narrative (with its note) comes right after the results, then the trace.
@@ -179,31 +180,31 @@ def test_datasets_are_labelled_id_first_with_full_names_on_hover(app_env: Settin
     app = open_page("analysis.py")
     # Synthetic catalog (conftest): title "Synthetic equity index", full name with ", full name".
     datasets = app.sidebar.multiselect[0]
-    assert "NASDAQCOM — Synthetic equity index" in datasets.options
-    assert "- VIXCLS — Synthetic VIX, full name" in datasets.help
+    assert "Synthetic equity index (NASDAQCOM)" in datasets.options
+    assert "- Synthetic VIX, full name (VIXCLS)" in datasets.help
     datasets.select("NASDAQCOM").run()
     (line,) = [c.value for c in app.sidebar.caption if "title=" in c.value]
-    assert 'title="NASDAQCOM — Synthetic equity index, full name"' in line
-    assert "<b>NASDAQCOM — Synthetic equity index</b>" in line
+    assert 'title="Synthetic equity index, full name (NASDAQCOM)"' in line
+    assert "<b>Synthetic equity index (NASDAQCOM)</b>" in line
 
     app.text_area(key="request_text").input(SCENARIO_5_REQUEST).run()
     button(app, "Generate plan").click().run()
     load = next(s for s in app.selectbox if s.key.endswith("-s1-dataset_id"))
     assert load.value == "NASDAQCOM"  # the plan still holds the id
-    assert "NASDAQCOM — Synthetic equity index" in load.options
-    assert "- SP500 — Synthetic S&P 500, full name" in load.help
+    assert "Synthetic equity index (NASDAQCOM)" in load.options
+    assert "- Synthetic S&P 500, full name (SP500)" in load.help
 
     approve_all(app)
     button(app, "Execute").click().run()
-    assert any(c.value == "Source: NASDAQCOM — Synthetic equity index" for c in app.caption)
+    assert any(c.value == "Source: Synthetic equity index (NASDAQCOM)" for c in app.caption)
     sources = next(d.value for d in app.dataframe if "file sha256" in d.value.columns)
-    assert sources["dataset"].tolist() == ["NASDAQCOM — Synthetic equity index"]
+    assert sources["dataset"].tolist() == ["Synthetic equity index (NASDAQCOM)"]
     button(app, "Replay this run").click().run()
     checks = next(d.value for d in app.dataframe if "recorded sha256" in d.value.columns)
-    assert checks["dataset"].tolist() == ["NASDAQCOM — Synthetic equity index"]
+    assert checks["dataset"].tolist() == ["Synthetic equity index (NASDAQCOM)"]
 
     history = open_page("run_history.py")
-    assert any(c.value == "Datasets: NASDAQCOM — Synthetic equity index" for c in history.caption)
+    assert any(c.value == "Datasets: Synthetic equity index (NASDAQCOM)" for c in history.caption)
 
 
 @pytest.mark.parametrize(
@@ -494,7 +495,7 @@ def test_weekly_to_daily_edit_re_validates_and_runs_after_re_approval(app_env: S
     app = plan_scenario_5(app_env)
     assert any("adjust parameters below" in i.value for i in app.info)
     history = next(n for n in app.number_input if n.key.endswith("-s4-min_periods"))
-    assert history.label == "min_periods (in periods of the series frequency)"
+    assert history.label == "Minimum history (in periods of the series frequency)"
     assert history.value == 52
 
     next(s for s in app.selectbox if s.key.endswith("-s2-freq")).select("D").run()
@@ -504,14 +505,14 @@ def test_weekly_to_daily_edit_re_validates_and_runs_after_re_approval(app_env: S
     button(app, "Apply changes").click().run()
     assert issue_codes(app) == {"V10"}  # the return-method approvals again, nothing else
     assert any("Approvals were reset" in i.value for i in app.info)
-    assert any("edited (was W)" in c.value for c in app.caption)
+    assert any("edited (was Weekly)" in c.value for c in app.caption)
 
     approve_all(app)
     button(app, "Execute").click().run()
     assert not app.exception, app.exception
     trace = next(d.value for d in app.dataframe if "library call" in d.value.columns)
     params = dict(zip(trace["step"], trace["params"], strict=True))
-    assert "freq=D (edited, was W)" in params["s2"]
+    assert "Frequency: Daily (edited, was Weekly)" in params["s2"]
     assert "(edited" not in params["s4"]  # planner-proposed values are not marked
 
 
@@ -583,14 +584,15 @@ def test_plan_steps_are_collapsed_and_approvals_stay_in_validation(app_env: Sett
     app = plan_scenario_5(app_env)
     headers = step_headers(app)
     assert [is_open for _, is_open in headers] == [False] * 7  # the V10 steps too
-    assert headers[0][0] == "Step 1 · C01 · Load series · NASDAQCOM — Synthetic equity index"
+    assert headers[0][0] == "Step 1 · C01 · Load series · Synthetic equity index (NASDAQCOM)"
     assert (
-        headers[2][0] == "Step 3 · C03 · Compute returns · method: simple, periods: 1"
+        headers[2][0] == "Step 3 · C03 · Compute returns · Return type: Simple, periods: 1"
     )  # no badge
     assert headers[3][0] == (
-        "Step 4 · C07 · Flag regime · quantile: 0\\.1, method: expanding, direction: below"
+        "Step 4 · C07 · Flag regime · Quantile: 0\\.1, Threshold from: Past data only, Flag: Below "
+        "the threshold"
     )
-    assert headers[4][0] == "Step 5 · C08 · Forward return · method: simple"
+    assert headers[4][0] == "Step 5 · C08 · Forward return · Return type: Simple"
     assert headers[6][0] == "Step 7 · C10 · HAC mean difference"  # no parameters: no summary
     # The V10 approvals are still required, in the Validation section, naming their steps.
     v10 = [m.value for m in app.markdown if "**V10 MATERIAL_ASSUMPTION**" in m.value]
@@ -607,17 +609,19 @@ def test_edits_are_marked_and_period_counts_follow_the_frequency(app_env: Settin
     next(s for s in app.selectbox if s.key.endswith("-s2-freq")).select("D").run()
     button(app, "Apply changes").click().run()
     headers = step_headers(app)
-    assert headers[1] == ("Step 2 · C02 · Resample · freq: D, how: last :blue-badge[:material/"
-                          "edit: edited]", False)  # fmt: skip
+    assert headers[1] == (
+        "Step 2 · C02 · Resample · Frequency: Daily, how: last :blue-badge[:material/edit: edited]",
+        False,
+    )
     # min_periods 52 now counts trading days: its field says it is counted in periods
     # of the series frequency (the summary of a window shows the unit: see
     # test_step_summary_falls_back_to_every_parameter), and nothing warns.
     history = next(n for n in app.number_input if n.key.endswith("-s4-min_periods"))
-    assert history.label == "min_periods (in periods of the series frequency)"
+    assert history.label == "Minimum history (in periods of the series frequency)"
     assert history.value == 52
     assert not any("Warning]" in label for label, _ in headers)
     # The new V10 approvals of this plan version open nothing and add no badge.
-    assert headers[2] == ("Step 3 · C03 · Compute returns · method: simple, periods: 1", False)
+    assert headers[2] == ("Step 3 · C03 · Compute returns · Return type: Simple, periods: 1", False)
 
 
 def test_step_summary_falls_back_to_every_parameter(app_env: Settings) -> None:
@@ -627,15 +631,18 @@ def test_step_summary_falls_back_to_every_parameter(app_env: Settings) -> None:
     flag = Step(id="s5", capability="flag_regime", inputs={"series": "s4"},
                 params={"quantile": 0.9, "method": "expanding", "min_periods": 52})  # fmt: skip
     spec = REGISTRY["flag_regime"]
-    assert ui.step_summary(flag, spec, "W", catalog) == "quantile: 0.9, method: expanding"
+    assert (
+        ui.step_summary(flag, spec, "W", catalog) == "Quantile: 0.9, Threshold from: Past data only"
+    )
     every = dataclasses.replace(spec, summary_params=())
-    assert ui.step_summary(flag, every, "W", catalog).endswith("min periods: 52 weeks")
+    assert ui.step_summary(flag, every, "W", catalog).endswith("Minimum history: 52 weeks")
     # A window counted in periods shows its unit, which follows the input's frequency.
     volatility = Step(**volatility_plan()["steps"][3])  # rolling_volatility, window 12
     summary = ui.step_summary(volatility, REGISTRY["rolling_volatility"], "D", catalog)
-    assert summary == "window: 12 trading days, annualize: yes"
+    assert summary == "Window: 12 trading days, Annualised: yes"
     unknown = Step(id="s2", capability="arima", params={"steps_ahead": 1})
-    assert ui.step_summary(unknown, None, None, catalog) == "steps ahead: 1"
+    # An unregistered parameter has no label: its raw name is shown.
+    assert ui.step_summary(unknown, None, None, catalog) == "steps_ahead: 1"
     header = ui.step_header(2, unknown, "steps ahead: 1", {Action.BLOCK}, edited=False)
     assert header == "Step 2 · Arima · steps ahead: 1 :red-badge[:material/block: Blocked]"
 
@@ -673,6 +680,59 @@ def test_flagged_spans_are_shaded_one_band_each(app_env: Settings) -> None:
     # full height of the chart, behind the line.
     assert [(b.x0, b.x1) for b in bands] == [(days[0], days[2]), (days[3], days[4])]
     assert {(b.yref, b.y0, b.y1, b.layer) for b in bands} == {("y domain", 0, 1, "below")}
+
+
+def test_every_registered_choice_has_a_label_that_round_trips(app_env: Settings) -> None:
+    import labels  # importable once app_env has put app/ on the path
+
+    resample = REGISTRY["resample"].param("freq")
+    assert [labels.param_value_label("resample", "freq", c) for c in resample.choices] == [
+        "Daily", "Weekly", "Monthly",
+    ]  # fmt: skip
+    assert labels.param_label("resample", "freq") == "Frequency"
+    # Every labelled parameter: each allowed code has its own label, and the label leads
+    # back to the code (label -> code -> label), so the editor can show labels and
+    # still write codes.
+    for spec in REGISTRY.values():
+        for spec_param in spec.params:
+            mapped = labels.VALUE_LABELS.get(
+                (spec.name, spec_param.name)
+            ) or labels.VALUE_LABELS.get((None, spec_param.name))
+            if not mapped or not spec_param.choices:
+                continue
+            shown = {
+                c: labels.param_value_label(spec.name, spec_param.name, c)
+                for c in spec_param.choices
+            }
+            assert all(label != code for code, label in shown.items()), (spec.name, spec_param.name)
+            to_code = {label: code for code, label in shown.items()}
+            assert len(to_code) == len(shown)  # no two codes share a label
+            for code, label in shown.items():
+                assert to_code[label] == code  # label -> code
+                assert labels.param_value_label(spec.name, spec_param.name, code) == label
+    # Anything unmapped is shown as it is.
+    assert labels.param_label("resample", "how") == "how"
+    assert labels.param_value_label("resample", "how", "last") == "last"
+    assert labels.param_label("arima", "steps_ahead") == "steps_ahead"
+    assert labels.stat_label("n_eff") == "n_eff" and labels.kind_label("new_kind") == "new_kind"
+
+
+def test_the_editor_shows_labels_but_the_plan_keeps_its_codes(app_env: Settings) -> None:
+    app = plan_scenario_5(app_env)
+    headers = step_headers(app)
+    assert headers[1][0] == "Step 2 · C02 · Resample · Frequency: Weekly, how: last"
+    freq = next(s for s in app.selectbox if s.key.endswith("-s2-freq"))
+    assert freq.label == "Frequency" and freq.options == ["Daily", "Weekly", "Monthly"]
+    assert freq.value == "W"  # the field's value is the code
+    # Choosing the label already shown is no edit: Apply stays white, the plan unchanged.
+    freq.select("W").run()
+    assert app.button(key="apply-edits").proto.type == "secondary"
+    # A real edit stores the code.
+    next(s for s in app.selectbox if s.key.endswith("-s2-freq")).select("D").run()
+    assert app.button(key="apply-edits").proto.type == "primary"
+    app.button(key="apply-edits").click().run()
+    session = app.session_state["session"]
+    assert session.plan.steps[1].params["freq"] == "D"
 
 
 def chart_bars(app: AppTest) -> list[int]:

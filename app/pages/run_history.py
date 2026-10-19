@@ -1,5 +1,6 @@
 """Run history page: list past runs, inspect a manifest, replay it without the LLM, trace it."""
 
+import labels
 import pandas as pd
 import streamlit as st
 
@@ -65,11 +66,20 @@ with st.container(border=True):
     )
     if record.param_diff:
         st.markdown("**User edits** (planner-proposed value → value that ran)")
+        # Step id -> capability, so each edit is labelled as the plan shows it.
+        steps = (record.plan_final or {}).get("steps", [])
+        capabilities = {s["id"]: s["capability"] for s in steps}
+
+        def shown(change, value):  # a value as the plan editor labels it
+            return labels.param_value_label(capabilities.get(change.step_id), change.param, value)
+
         st.dataframe(
             pd.DataFrame(
                 [
-                    {"step": c.step_id, "parameter": c.param, "planner proposed": str(c.original),
-                     "ran with": str(c.final), "edited at (UTC)": c.edited_at}
+                    {"step": c.step_id,
+                     "parameter": labels.param_label(capabilities.get(c.step_id), c.param),
+                     "planner proposed": shown(c, c.original), "ran with": shown(c, c.final),
+                     "edited at (UTC)": c.edited_at}
                     for c in record.param_diff
                 ]
             ),

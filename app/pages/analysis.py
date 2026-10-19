@@ -4,6 +4,7 @@ All state lives in st.session_state.session (a quantlab.engine.Session). Each
 button calls one engine method; the page then redraws from the session's state.
 """
 
+import labels
 import pandas as pd
 import streamlit as st
 
@@ -181,13 +182,16 @@ else:
             inputs = ", ".join(f"{name} ← {ref}" for name, ref in step.inputs.items())
             predicted = dry_run.get(step.id)
             output = (
-                " / ".join(str(predicted[k]) for k in ("data_type", "kind", "frequency"))
+                f"{labels.data_type_label(predicted['data_type'])}, "
+                f"{labels.kind_label(predicted['kind'])}, "
+                f"{labels.frequency_label(predicted['frequency'])}"
                 if predicted
                 else "unknown"
             )
             st.caption(
-                f"{step.id} · `{step.capability}` · inputs: {inputs or 'none'} · "
-                f"output (predicted): {output} · {ui.escape_md(step.rationale)}"
+                f"{step.id} · {labels.capability_title(step.capability)} · inputs: "
+                f"{inputs or 'none'} · output (predicted): {output} · "
+                f"{ui.escape_md(step.rationale)}"
             )
             if spec is None:
                 st.caption("Not a registered capability: it can be neither run nor edited.")
@@ -204,13 +208,15 @@ else:
                         f"param-{session.run_id}-{version}-{step.id}-{spec_param.name}",
                         catalog,
                         disabled=finished,
+                        capability=step.capability,
                     )
                     values.setdefault(step.id, {})[spec_param.name] = value
                     original = proposal.get(step.id, {}).get(spec_param.name)
                     if not ui.same_value(value, current):
                         st.caption(":orange[changed, not applied yet]")
                     elif not ui.same_value(current, original):
-                        st.caption(f":blue[edited (was {original})]")
+                        was = labels.param_value_label(step.capability, spec_param.name, original)
+                        st.caption(f":blue[edited (was {ui.escape_md(was)})]")
 
     # Drawn after every field, so this run already sees each change, and a change set
     # back to the plan's value is no change.
@@ -376,6 +382,8 @@ for step in plan.steps:
 # ---------------------------------------------------------------- narrative
 
 narrative = session.narrative
+# Step id -> capability, to label each fact with the step that produced it.
+capabilities = {step.id: step.capability for step in plan.steps} if plan else {}
 if narrative is not None:
     st.subheader("Narrative")
     # N01 UNGROUNDED_NARRATIVE: an LLM narrative quoting a number the run did not
@@ -406,7 +414,16 @@ if narrative is not None:
     with st.expander("Facts sheet (the source of truth for every number)", expanded=False):
         st.dataframe(
             pd.DataFrame(
-                [{"fact": f.fact_id, "what": f.label, "value": f.display} for f in narrative.facts]
+                [
+                    {
+                        "fact": f.fact_id,
+                        "what": labels.fact_label(
+                            f.fact_id, capabilities.get(f.fact_id.split(".")[0])
+                        ),
+                        "value": f.display,
+                    }
+                    for f in narrative.facts
+                ]
             ),
             hide_index=True,
             alt="Facts sheet",

@@ -5,6 +5,7 @@ from what the planner may name and the executor may run. The guardrails have
 their own page (guardrails.py).
 """
 
+import labels
 import pandas as pd
 import streamlit as st
 
@@ -13,10 +14,12 @@ from quantlab.registry import REGISTRY, ParamSpec, registry_version
 import ui
 
 
-def allowed_values(p: ParamSpec) -> str:
-    """What a parameter accepts, in a few words: its choices or its range."""
+def allowed_values(capability: str, p: ParamSpec) -> str:
+    """What a parameter accepts, in a few words: its choices (each code with its label,
+    e.g. "W (Weekly)") or its range."""
     if p.choices:
-        return ", ".join(p.choices)
+        shown = [(code, labels.param_value_label(capability, p.name, code)) for code in p.choices]
+        return ", ".join(code if label == code else f"{code} ({label})" for code, label in shown)
     if p.min is not None:
         return f"{p.min:g} to {p.max:g}"
     return "-"
@@ -30,7 +33,9 @@ st.caption(
 
 for spec in REGISTRY.values():
     with st.expander(
-        f"{spec.code} · {spec.name} → {spec.output_type.value}", icon=":material/function:"
+        f"{spec.code} · {spec.name} ({labels.capability_title(spec.name)}) → "
+        f"{spec.output_type.value}",
+        icon=":material/function:",
     ):
         st.markdown(ui.escape_md(spec.description))
         if spec.inputs:
@@ -59,10 +64,11 @@ for spec in REGISTRY.values():
                     [
                         {
                             "parameter": p.name,
+                            "shown as": labels.param_label(spec.name, p.name),
                             "type": p.type,
                             "required": p.required,
                             "default": "-" if p.required else str(p.default),
-                            "allowed": allowed_values(p),
+                            "allowed": allowed_values(spec.name, p),
                             "description": p.description,
                         }
                         for p in spec.params
