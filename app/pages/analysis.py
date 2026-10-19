@@ -40,14 +40,7 @@ settings = ui.get_settings()
 st.html(DECISION_BUTTON_CSS)  # style only: applied without taking space on the page
 catalog = ui.get_catalog(settings)
 
-for key, default in [
-    ("session", None),
-    ("request_text", ""),
-    ("dataset_select", []),  # nothing preselected: the analyst picks the datasets
-    ("llm_mode", settings.llm_mode),
-    ("replay_report", None),
-    ("flash", None),  # one-off message shown after an edit is applied
-]:
+for key, default in {**ui.analysis_defaults(), "llm_mode": settings.llm_mode}.items():
     st.session_state.setdefault(key, default)
 
 # ---------------------------------------------------------------- sidebar
@@ -66,8 +59,15 @@ with st.sidebar:
         st.caption(ui.dataset_caption(catalog, dataset_id), unsafe_allow_html=True)
 
     st.header("LLM mode")
+    # Switching mode starts a clean page (ui.reset_analysis). on_change fires only when
+    # the value changes: with required=True, clicking the selected mode changes nothing.
     mode = st.segmented_control(
-        "LLM mode", LLM_MODES, key="llm_mode", required=True, label_visibility="collapsed"
+        "LLM mode",
+        LLM_MODES,
+        key="llm_mode",
+        required=True,
+        label_visibility="collapsed",
+        on_change=ui.reset_analysis,
     )
     st.caption(
         f"Live and cached modes call **{settings.llm_provider}**: planner "

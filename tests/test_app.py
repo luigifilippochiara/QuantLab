@@ -18,7 +18,7 @@ from quantlab.config import PROJECT_ROOT, Settings
 from quantlab.data import load_catalog
 from quantlab.engine import Session, run_request
 from quantlab.guardrails import CATEGORY_DEFINITIONS, ENFORCERS, GUARDRAILS, Action, make_issue
-from quantlab.lineage import LLMInfo, RunRecord, load_runs, new_run_id, replay, save_run
+from quantlab.lineage import LLMInfo, RunRecord, load_run, load_runs, new_run_id, replay, save_run
 from quantlab.mock_scenarios import SCENARIOS_BY_ID, VIX_CHF_REQUEST
 from quantlab.monitoring import (
     guardrail_counts,
@@ -135,6 +135,50 @@ def test_example_1_button_fills_in_its_request(app_env: Settings) -> None:
     app = open_page("analysis.py")
     app.sidebar.button(key="scenario-chf_safe_haven_success").click().run()
     assert app.text_area(key="request_text").value == VIX_CHF_REQUEST
+
+
+def plan_scenario_1(app_env: Settings) -> AppTest:
+    """The analysis page in mock mode with example 1's plan generated (awaiting approval)."""
+    app = open_page("analysis.py", llm_mode="mock")
+    app.sidebar.button(key="scenario-chf_safe_haven_success").click().run()
+    button(app, "Generate plan").click().run()
+    assert app.session_state["session"].status == "ready"
+    return app
+
+
+def test_switching_the_llm_mode_resets_the_analysis_page(app_env: Settings) -> None:
+    import ui  # importable once app_env has put app/ on the path
+
+    app = plan_scenario_1(app_env)
+    session = app.session_state["session"]
+    saved = load_run(session.run_id, app_env.runs_dir)
+    assert app.multiselect(key="dataset_select").value == ["VIXCLS", "DEXSZUS"]
+    # A change typed but not applied yet.
+    next(n for n in app.number_input if n.key.endswith("-s5-quantile")).set_value(0.95).run()
+
+    app.segmented_control(key="llm_mode").set_value("cached").run()
+    assert not app.exception, app.exception
+    # Every key of the page is back to its starting value, and the widgets are drawn
+    # empty on the run of the switch itself, not one run later.
+    assert all(app.session_state[k] == v for k, v in ui.analysis_defaults().items())
+    assert app.session_state["llm_mode"] == "cached"
+    assert app.text_area(key="request_text").value == ""
+    assert app.multiselect(key="dataset_select").value == []
+    # No plan, validation, editor, approval, results, narrative or trace on screen.
+    assert not app.subheader and not app.number_input and not app.checkbox
+    assert app.info[0].value.startswith("Type a request")
+    # The run that was waiting for a decision is left as it was saved: undecided.
+    assert load_run(session.run_id, app_env.runs_dir) == saved and saved.status == "ready"
+
+
+def test_clicking_the_selected_llm_mode_keeps_the_page(app_env: Settings) -> None:
+    app = plan_scenario_1(app_env)
+    run_id = app.session_state["session"].run_id
+    app.segmented_control(key="llm_mode").set_value("mock").run()  # already selected
+    assert app.session_state["session"].run_id == run_id
+    assert app.text_area(key="request_text").value == VIX_CHF_REQUEST
+    assert app.multiselect(key="dataset_select").value == ["VIXCLS", "DEXSZUS"]
+    assert "Plan" in [h.value for h in app.subheader]
 
 
 def test_the_examples_caption_matches_their_order(app_env: Settings) -> None:

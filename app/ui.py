@@ -245,6 +245,38 @@ def unapplied_edits(plan: Plan, values: dict[str, dict[str, Any]]) -> dict[str, 
     return edits
 
 
+def analysis_defaults() -> dict[str, Any]:
+    """The Analysis page's state and its starting values (fresh objects on every call).
+
+    Everything the page shows comes from these keys: the session (plan, validation,
+    edits, approvals, results, narrative and trace), the request text box, the dataset
+    selection, a replay report and a one-off message. The LLM mode is not among them:
+    it is the selector that resets them. A new key added here is both initialised and
+    reset (reset_analysis).
+    """
+    return {
+        "session": None,
+        "request_text": "",
+        "dataset_select": [],  # nothing preselected: the analyst picks the datasets
+        "replay_report": None,
+        "flash": None,  # one-off message shown after an edit is applied
+    }
+
+
+def reset_analysis() -> None:
+    """Mode-selector callback: back to an empty Analysis page in the new mode.
+
+    A plan made in one mode is not carried into another. Streamlit runs a callback
+    before the page redraws, so the text box and the dataset selection are already
+    empty when they are drawn. The per-run widgets (step editors, approval boxes, the
+    trace picker) are not drawn without a session, so Streamlit drops their state, and
+    their keys hold the run id, so a new plan never reuses them. A run waiting for a
+    decision keeps the record it has (status "ready"): it is left undecided.
+    """
+    for key, default in analysis_defaults().items():
+        st.session_state[key] = default
+
+
 def load_scenario(scenario_id: str) -> None:
     """Button callback: put an example workflow's request and datasets into the form."""
     scenario = SCENARIOS_BY_ID[scenario_id]

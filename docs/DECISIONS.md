@@ -2095,3 +2095,25 @@ ends with `hac_mean_difference` (s6) and no `compare_groups`, as example 1's doe
   set; the eval case's key parameters are the bottom 10% only. The canned plans are
   `canned-scenarios-v20`.
 
+## Switching the LLM mode resets the Analysis page
+
+**A mode change starts a clean Analysis page**: the dataset selection, the request
+text box and everything that comes from the session (plan, validation, edits, pending
+approvals, results, narrative, trace) are cleared, as are a replay report and a pending
+message. A plan made in one mode is not carried into another. Clicking the mode already
+selected does nothing: the selector's `on_change` fires only when its value changes.
+- **One function, one list.** `ui.analysis_defaults()` holds the page's state keys and
+  their starting values; the page initialises them from it and `ui.reset_analysis()`,
+  the selector's callback, sets them back. A new key is added there once. The mode
+  itself is kept: it is the new selection.
+- **No widget lags a run behind.** Streamlit runs a callback before the page redraws,
+  so the text box and the dataset selection are already empty when drawn. The per-run
+  widgets (step editors, approval boxes, the trace picker) are not drawn without a
+  session, so Streamlit drops their state; their keys hold the run id, so a new plan
+  never reuses them.
+- **Nothing else changes.** A run waiting for a decision keeps the record it was saved
+  with (status "ready") and stays undecided, as before; no record field was added.
+  Other pages and settings are unaffected. Alternative: keep the page and only warn,
+  rejected because the page would then show, and offer to execute, a plan made in a
+  mode that is no longer selected.
+
