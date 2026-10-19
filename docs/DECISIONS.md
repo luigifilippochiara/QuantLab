@@ -1982,3 +1982,33 @@ codes too.
   Index (NASDAQCOM)". This reverses the earlier id-first labels. The id stays visible,
   because it is what links the data to its source.
 - **The registry page** adds a "shown as" column and each code's label.
+
+## Monitoring: planner refusals are their own outcome; completed runs with warnings
+
+**Activity now has five outcomes that do not overlap** and add up to Total runs:
+Completed, Blocked, Planner refused (P01), Failed and Rejected by human. Each shows
+"count (share)" and "of N runs"; with Total runs they fill two rows of three.
+- **Why:** Blocked mixed two things, the planner declining a request and a guardrail
+  stopping a plan, and refusals were shown twice (in Blocked and as a Quality card).
+  This reverses "Blocked counts every blocked run" from the denominators section above.
+- **Blocked means a deterministic guardrail:** the request check (R01), the validator (V
+  codes, V01 included when the planner returns nothing usable) or the executor at run
+  time (E01, E02). E01 and E02 are deterministic guardrails too, and counting them
+  anywhere else would break the sum. `is_planner_refusal` (status blocked with P01) is
+  the only test that separates the two.
+- **"Completed with warnings" takes the Planner refused card's place in Quality:**
+  completed runs with at least one issue whose guardrail action is WARN, "of N completed
+  runs", neutral (a warning is information, not a failure, so there is no target). The
+  WARN codes are read from `GUARDRAILS` (E03, E04, E05 and N01 today), so a new WARN
+  guardrail is counted without a code change; an approval (V10) is not a warning.
+  `planner_refusals()` is removed: its count is part of `activity()`.
+- **The shown percentages add up to 100.** Rounded on their own they can show 99 or 101
+  (two runs and four single runs: 33 + 4 x 17 = 101). `whole_percentages` uses the
+  largest-remainder method: round every share down, then give the missing points to the
+  largest remainders (the earlier outcome on a tie). The cost: equal counts can show
+  different percentages ("1 (17%)" next to "1 (16%)"). One decimal would not fix it
+  (100.1). Runs still awaiting a decision are a last, hidden part, so over all records
+  each percentage is still of the total, like its share; the page counts decided runs
+  only, where they add up to 100.
+- **Unchanged:** no KPI target uses Blocked, and Recent errors still lists refusals by
+  stage ("Planner · P01").

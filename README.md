@@ -236,8 +236,9 @@ uv run python -m quantlab.cli trace <run_id> s8    # where does this number come
 
 `runs/events.jsonl` logs one event per stage. The **Monitoring** page counts the
 runs started on the Analysis page whose plan was decided (replays count from every
-source) and shows activity, quality and governance (approval, replay match and edit
-rates, approval time, grounded narratives, planner refusals), capability use, the
+source) and shows activity (completed, blocked by a guardrail, refused by the planner,
+failed, rejected), quality and governance (approval, replay match and edit rates,
+approval time, completed runs with warnings, grounded narratives), capability use, the
 guardrails that fired, tokens and cost per stage (from hardcoded prices in
 `config.py`), the plan-cache savings, latency per pipeline stage and recent errors.
 The cards with a target (replay match 100%, grounded narratives 100%, failed runs 0)

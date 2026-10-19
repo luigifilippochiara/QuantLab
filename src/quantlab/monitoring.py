@@ -10,7 +10,7 @@ The Monitoring page counts only decided runs started on the Analysis page
 two sources, and the functions below turn them into its numbers (the page only
 lays them out):
 - run records (runs/<run_id>/manifest.json), one per run in its final state:
-  activity, human review, narrative and planner outcomes, tokens and cost,
+  activity (planner refusals included), human review, narratives, warnings, tokens and cost,
   latency and failures;
 - the event log, for what can happen several times in a run or after it:
   guardrail firings (one raised by an edit and then fixed still counts),
@@ -272,30 +272,112 @@ def monitored_events(events: list[dict[str, Any]], runs: list["RunRecord"]) -> l
 # ---------------------------------------------------------------------------
 
 
+def is_planner_refusal(record: "RunRecord") -> bool:
+    """Whether the planner declined the request (P01): a blocked run, but not by a
+    deterministic guardrail."""
+    return record.status == "blocked" and bool(
+        record.validation and "P01" in record.validation.codes()
+    )
+
+
+# The outcomes of the Activity section, in order: mutually exclusive, so over the
+# counted runs their shares add up to 1.
+OUTCOMES = ("completed", "blocked", "planner_refused", "failed", "rejected")
+
+
+def whole_percentages(counts: list[int]) -> list[int] | None:
+    """Each count's share as a whole percentage, the percentages adding up to exactly 100.
+
+    Rounding each share on its own can give 99 or 101 (2/6 and four times 1/6 show
+    33 + 4 x 17 = 101). The largest-remainder method rounds every share down, then
+    gives the missing points, one each, to the shares that lost the most (the earliest
+    on a tie).
+
+    Args:
+        counts: the counts of outcomes that make up a whole.
+
+    Returns:
+        One whole percentage per count, in the same order; None when the counts are all 0.
+    """
+    total = sum(counts)
+    if total == 0:
+        return None
+    exact = [100 * count / total for count in counts]
+    floors = [int(value) for value in exact]
+    by_remainder = sorted(range(len(counts)), key=lambda i: floors[i] - exact[i])
+    for i in by_remainder[: 100 - sum(floors)]:
+        floors[i] += 1
+    return floors
+
+
 def activity(records: list["RunRecord"]) -> dict[str, Any]:
-    """How many runs ended in each state, and each one's share of all runs.
+    """How many runs ended in each outcome, and each one's share of all runs.
+
+    The outcomes do not overlap: "blocked" is a run stopped by a deterministic guardrail
+    (the request check, the validator or the executor), "planner_refused" a run whose
+    plan the planner declined (P01), and "rejected" a plan the reviewer turned down.
 
     Args:
         records: run records.
 
     Returns:
-        Dict with total, completed, blocked, failed and rejected (by the reviewer), and
-        completed_share, blocked_share, failed_share and rejected_share (of total;
-        None without runs). Over monitored_runs the shares add up to 1.
+        Dict with total and a count per outcome in OUTCOMES, each outcome's share of
+        total as "<outcome>_share" (None without runs), and its whole percentage for
+        display as "<outcome>_percent" (see whole_percentages; None without runs). Over
+        monitored_runs the counts add up to total, the shares to 1 and the
+        percentages to 100.
     """
+    refused = sum(1 for r in records if is_planner_refusal(r))
     statuses = Counter(r.status for r in records)
     counts = {
         "total": len(records),
         "completed": statuses["completed"],
-        "blocked": statuses["blocked"],
+        "blocked": statuses["blocked"] - refused,
+        "planner_refused": refused,
         "failed": statuses["failed"],
         "rejected": statuses["rejected"],
     }
-    shares = {
-        f"{outcome}_share": share(counts[outcome], len(records))
-        for outcome in ("completed", "blocked", "failed", "rejected")
+    shares = {f"{outcome}_share": share(counts[outcome], len(records)) for outcome in OUTCOMES}
+    # For display: whole percentages of total, like the shares. Runs still awaiting a
+    # decision (UNDECIDED; none in monitored_runs) are a last part that is not shown, so
+    # the five outcomes add up to 100 exactly when they cover every run.
+    parts = [counts[outcome] for outcome in OUTCOMES]
+    rounded = whole_percentages([*parts, len(records) - sum(parts)])
+    percents = {
+        f"{outcome}_percent": None if rounded is None else rounded[i]
+        for i, outcome in enumerate(OUTCOMES)
     }
-    return counts | shares
+    return counts | shares | percents
+
+
+# The guardrails whose action is WARN, read from the guardrail table (never listed by
+# hand), e.g. E03 MISSING_DATA or N01 UNGROUNDED_NARRATIVE.
+WARN_CODES = frozenset(code for code, g in GUARDRAILS.items() if g.action == Action.WARN)
+
+
+def completed_with_warnings(records: list["RunRecord"]) -> dict[str, Any]:
+    """How many completed runs raised at least one WARN guardrail, and their share.
+
+    Args:
+        records: run records.
+
+    Returns:
+        Dict with completed, with_warnings and with_warnings_share (of completed runs;
+        None when no run completed).
+    """
+    completed = [r for r in records if r.status == "completed"]
+
+    def warned(record: "RunRecord") -> bool:
+        issues = [*record.warnings, *record.runtime_issues]
+        issues += record.validation.issues if record.validation else []
+        return any(issue.code in WARN_CODES for issue in issues)
+
+    with_warnings = sum(1 for r in completed if warned(r))
+    return {
+        "completed": len(completed),
+        "with_warnings": with_warnings,
+        "with_warnings_share": share(with_warnings, len(completed)),
+    }
 
 
 def mode_counts(records: list["RunRecord"]) -> dict[str, int]:
@@ -411,19 +493,6 @@ def grounded_narratives(records: list["RunRecord"]) -> dict[str, Any]:
         "grounded": grounded,
         "grounded_rate": share(grounded, len(narratives)),
     }
-
-
-def planner_refusals(records: list["RunRecord"]) -> dict[str, Any]:
-    """How many runs the planner refused (P01), and their share of all runs.
-
-    Args:
-        records: run records.
-
-    Returns:
-        Dict with refused and refused_share (None without runs).
-    """
-    refused = sum(1 for r in records if r.validation and "P01" in r.validation.codes())
-    return {"refused": refused, "refused_share": share(refused, len(records))}
 
 
 # ---------------------------------------------------------------------------

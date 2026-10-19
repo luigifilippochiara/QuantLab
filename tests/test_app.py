@@ -17,7 +17,7 @@ from streamlit.testing.v1 import AppTest
 from quantlab.config import PROJECT_ROOT, Settings
 from quantlab.data import load_catalog
 from quantlab.engine import Session, run_request
-from quantlab.guardrails import CATEGORY_DEFINITIONS, ENFORCERS, GUARDRAILS, Action
+from quantlab.guardrails import CATEGORY_DEFINITIONS, ENFORCERS, GUARDRAILS, Action, make_issue
 from quantlab.lineage import LLMInfo, RunRecord, load_runs, new_run_id, replay, save_run
 from quantlab.mock_scenarios import FLAGSHIP_REQUEST, SCENARIOS_BY_ID
 from quantlab.monitoring import (
@@ -779,8 +779,8 @@ def headless_replayed_run(settings: Settings) -> str:
 
 
 def test_monitoring_page_sections_cards_and_charts(app_env: Settings) -> None:
-    # Counted: approved and executed, rejected, blocked (V08, with a V09 to approve), failed,
-    # and a live run.
+    # Counted: approved and executed, rejected, blocked (V08, with a V09 to approve), refused
+    # by the planner (P01), failed, and a live run that completed with a warning (E04).
     approved = app_session("buy_the_dip_tech", app_env)
     approved.approve([i.issue_id for i in approved.unresolved_approvals()])
     approved.execute()
@@ -788,6 +788,7 @@ def test_monitoring_page_sections_cards_and_charts(app_env: Settings) -> None:
     approved.save_record()
     app_session("buy_the_dip_tech", app_env).reject()
     app_session("spread_frequency_mismatch_block", app_env)
+    app_session("arima_forecast_block", app_env)
     # Left out: a plan still awaiting a decision, and a headless run (whose replay counts).
     app_session("buy_the_dip_tech", app_env)
     headless_replayed_run(app_env)
@@ -801,6 +802,7 @@ def test_monitoring_page_sections_cards_and_charts(app_env: Settings) -> None:
     save_run(RunRecord(run_id=new_run_id() + "x", created_at=now, status="completed",
                        request="y", llm=LLMInfo(provider="openai", prompt_version="planner-v6",
                                                 mode="live", **luna),
+                       warnings=[make_issue("E04", "s1", "missing values", key="values")],
                        stage_timings_ms={"planning": 1200.0, "narration": 800.0},
                        stage_tokens={"planning": TokenUsage(input_tokens=1500, output_tokens=400,
                                                             **luna),
@@ -814,21 +816,22 @@ def test_monitoring_page_sections_cards_and_charts(app_env: Settings) -> None:
         "Capabilities", "Guardrails", "Cost", "Latency", "Recent errors"]  # fmt: skip
     assert not app.info  # there are counted runs
     cards = {m.proto.label: m.proto for m in app.metric}
-    values = {
-        label: cards[label].body
-        for label in ("Total runs", "Completed", "Blocked", "Failed", "Rejected by human")
-    }
-    # The undecided and headless runs are left out, so the shares add up to 100%.
-    assert values == {"Total runs": "5", "Completed": "2 (40%)", "Blocked": "1 (20%)",
-                      "Failed": "1 (20%)", "Rejected by human": "1 (20%)"}  # fmt: skip
-    # The activity cards, then the quality and governance cards, in order.
-    assert [m.proto.label for m in app.metric][:11] == [
-        "Total runs", "Completed", "Blocked", "Rejected by human", "Failed",
-        "Approval rate", "Edit rate", "Approval time: median, p95", "Planner refused (P01)",
+    outcomes = ("Completed", "Blocked", "Planner refused (P01)", "Failed", "Rejected by human")
+    values = {label: cards[label].body for label in ("Total runs", *outcomes)}
+    # The undecided and headless runs are left out. The five outcomes do not overlap, and
+    # their whole percentages add up to 100% (rounded on their own, 33 + 4 x 17 = 101).
+    assert values == {"Total runs": "6", "Completed": "2 (33%)", "Blocked": "1 (17%)",
+                      "Planner refused (P01)": "1 (17%)", "Failed": "1 (17%)",
+                      "Rejected by human": "1 (16%)"}  # fmt: skip
+    assert sum(int(re.search(r"\((\d+)%\)", values[label])[1]) for label in outcomes) == 100
+    # The activity cards, then the quality and governance cards, in order: six and six.
+    assert [m.proto.label for m in app.metric][:12] == [
+        "Total runs", *outcomes,
+        "Approval rate", "Edit rate", "Approval time: median, p95", "Completed with warnings",
         "Grounded narrative (N01)", "Replay match rate"]  # fmt: skip
     # Every card says what its number is out of; Total runs splits by LLM mode.
-    assert cards["Total runs"].delta == "1 live, 0 cached, 4 mock"
-    assert cards["Completed"].delta == "of 5 runs"
+    assert cards["Total runs"].delta == "1 live, 0 cached, 5 mock"
+    assert all(cards[label].delta == "of 6 runs" for label in outcomes)
     # Each quality card: the absolute number, then the percentage in brackets.
     # One approved, one rejected: approved / (approved + rejected).
     assert (cards["Approval rate"].body, cards["Approval rate"].delta) == (
@@ -840,14 +843,15 @@ def test_monitoring_page_sections_cards_and_charts(app_env: Settings) -> None:
     assert time.delta == "over 1 plan approved"
     assert (cards["Grounded narrative (N01)"].body, cards["Grounded narrative (N01)"].delta) == (
         "1 (100%)", "of 1 narrative")  # fmt: skip
-    assert (cards["Planner refused (P01)"].body, cards["Planner refused (P01)"].delta) == (
-        "0 (0%)", "of 5 runs")  # fmt: skip
+    # Out of the completed runs: the approved run, and the live run with its E04 warning.
+    warned = cards["Completed with warnings"]
+    assert (warned.body, warned.delta) == ("1 (50%)", "of 2 completed runs")
     # The replay of the headless run counts: replays come from every source.
     assert (cards["Replay match rate"].body, cards["Replay match rate"].delta) == (
         "1 (100%)", "of 1 replay")  # fmt: skip
     # Cards with a target: orange when missed (its note orange, a warning icon on its
     # title), green when met.
-    assert (cards["Failed"].delta, cards["Failed"].color) == ("of 5 runs", 3)  # 3: ORANGE
+    assert cards["Failed"].color == 3  # 3: ORANGE
     assert cards["Failed"].icon == ":material/warning:"
     assert tinted_cards(app.main, "missed") == ["Failed"]
     assert tinted_cards(app.main, "met") == ["Grounded narrative (N01)", "Replay match rate"]
@@ -856,12 +860,12 @@ def test_monitoring_page_sections_cards_and_charts(app_env: Settings) -> None:
     runs = monitored_runs(load_runs(app_env.runs_dir))
     events = monitored_events(read_events(app_env.events_path), runs)
     fired = guardrail_counts(events, include_unused=False)
-    assert {r["code"] for r in fired} == {"V10", "V08", "V09"}  # not the undecided plan's
+    assert {r["code"] for r in fired} == {"V10", "V08", "V09", "P01"}  # not the undecided plan's
     assert chart_bars(app) == [len(REGISTRY), len(fired), 2, 2 * 4]
     # The unused guardrails: a compact table sorted by code, no chart.
     unused = next(e for e in app.expander if e.label == "Show unused guardrails")
     assert not unused.get("plotly_chart")
-    used = {"V10", "V08", "V09"}
+    used = {"V10", "V08", "V09", "P01"}
     assert unused.dataframe[0].value["Code"].tolist() == sorted(set(GUARDRAILS) - used)
     cost, latency = [t.value for t in app.table]
     assert cost.loc["planner", "Cost, US$ (mean)"] == pytest.approx(0.00035)
@@ -873,7 +877,7 @@ def test_monitoring_page_sections_cards_and_charts(app_env: Settings) -> None:
     (prices,) = [c.value for c in app.caption if c.value.startswith("Per run")]
     assert r"Total \$0.000550" in prices and r"gpt-6-luna \$0.10 input" in prices
     errors = next(d.value for d in app.dataframe if "stage" in d.value.columns)
-    assert errors["code"].tolist() == ["—", "V08"] and errors["message"][0] == "boom"
+    assert errors["code"].tolist() == ["—", "P01", "V08"] and errors["message"][0] == "boom"
 
 
 def test_monitoring_page_with_no_counted_run_still_shows_replays(app_env: Settings) -> None:

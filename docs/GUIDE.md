@@ -68,9 +68,11 @@ The other pages: **Run history** lists past runs, shows each manifest and user
 edits, and replays a run without the model; **Monitoring** counts the runs started
 on the Analysis page whose plan was approved, rejected or blocked (headless runs and
 plans still awaiting a decision are left out; replays count from every source) and
-shows the activity (runs completed, blocked, failed and rejected, each with its
-share), quality and governance (approval rate, replay match rate, edit rate,
-approval time, grounded narratives, planner refusals), every capability's count,
+shows the activity (five outcomes that do not overlap and add up to the runs:
+completed, blocked by a deterministic guardrail, refused by the planner (P01), failed
+and rejected, each with its share), quality and governance (approval rate, edit rate,
+approval time, completed runs with warnings, grounded narratives, replay match rate),
+every capability's count,
 the guardrails that fired (the unused ones in an expander), tokens and cost per
 stage, latency per pipeline stage and the recent errors; the cards with a target
 (replay match 100%, grounded narratives 100%, failed runs 0) are green when it is

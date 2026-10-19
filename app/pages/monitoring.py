@@ -22,6 +22,7 @@ from quantlab.monitoring import (
     approval_waits,
     cache_savings,
     capability_counts,
+    completed_with_warnings,
     cost_table,
     costed_runs,
     grounded_narratives,
@@ -30,7 +31,6 @@ from quantlab.monitoring import (
     mode_counts,
     monitored_events,
     monitored_runs,
-    planner_refusals,
     read_events,
     recent_failures,
     replay_results,
@@ -41,10 +41,10 @@ from quantlab.monitoring import (
 
 import ui
 
-# The KPI cards of a section are all the same size: equal columns. Activity is one
-# row of five; Quality and governance two rows of three (its six labels need about
-# 1,260 px in one row, more than the page has on a laptop screen).
-ACTIVITY_COLUMNS = 5
+# The KPI cards of a section are all the same size: equal columns. Both sections
+# have six cards in two rows of three (six labels need about 1,260 px in one row,
+# more than the page has on a laptop screen).
+ACTIVITY_COLUMNS = 3
 QUALITY_COLUMNS = 3
 # The cost and latency sections set a table beside a chart. A small gap under the
 # section header moves both columns down; the chart's title sits higher in its column
@@ -205,20 +205,33 @@ def card(label: str, value: Any, note: str = "", status: str | None = None, help
 st.subheader("Activity")
 counts = activity(runs)
 modes = mode_counts(runs)
-total_col, *outcome_cols = st.columns(ACTIVITY_COLUMNS)
+# Six cards in two rows of three: the total, then the five outcomes, which do not
+# overlap and add up to it.
+total_col, *first_row = st.columns(ACTIVITY_COLUMNS)
+outcome_cols = [*first_row, *st.columns(ACTIVITY_COLUMNS)]
 with total_col:
     card("Total runs", f"{counts['total']:,}", ", ".join(f"{n:,} {m}" for m, n in modes.items()))
-for column, (outcome, label) in zip(outcome_cols, [("completed", "Completed"),
-        ("blocked", "Blocked"), ("rejected", "Rejected by human"), ("failed", "Failed")],
-        strict=True):  # fmt: skip
+outcomes = [
+    ("completed", "Completed", "Runs that executed and completed."),
+    ("blocked", "Blocked",
+     "Runs a deterministic guardrail stopped: the request check, the validator or the executor."),
+    ("planner_refused", "Planner refused (P01)",
+     "Runs whose request the planner declined (P01 PLANNER_REFUSED)."),
+    ("failed", "Failed", "Runs that stopped on an error (a step raised one)."),
+    ("rejected", "Rejected by human", "Plans the reviewer turned down."),
+]  # fmt: skip
+for column, (outcome, label, explained) in zip(outcome_cols, outcomes, strict=True):
     with column:
+        # Whole percentages that add up to 100% across the five outcomes.
+        rounded = counts[f"{outcome}_percent"]
         card(
             label,
-            count_and_share(counts[outcome], counts[f"{outcome}_share"]),
+            f"{counts[outcome]:,} ({'n/a' if rounded is None else f'{rounded}%'})",
             out_of(counts["total"], "run"),
             status=target_status(f"{outcome}_share", counts[f"{outcome}_share"])
             if f"{outcome}_share" in KPI_TARGETS
             else None,
+            help=f"{explained} Their share of all runs; the five outcomes add up to 100%.",
         )
 
 # ---------------------------------------------------------------- quality and governance
@@ -227,9 +240,9 @@ st.subheader("Quality and governance")
 review = review_outcomes(runs)
 replays = replay_results(events)
 narratives = grounded_narratives(runs)
-refusals = planner_refusals(runs)
+warned = completed_with_warnings(runs)
 approval_col, edit_col, time_col = st.columns(QUALITY_COLUMNS)
-refused_col, grounded_col, replay_col = st.columns(QUALITY_COLUMNS)
+warned_col, grounded_col, replay_col = st.columns(QUALITY_COLUMNS)
 with approval_col:
     card(
         "Approval rate",
@@ -254,13 +267,13 @@ with time_col:
         help="Time from the plan being shown to its approval: the median, then the 95th "
         "percentile.",
     )
-with refused_col:
-    # The share's denominator is every counted run, the Total runs card.
+with warned_col:
     card(
-        "Planner refused (P01)",
-        count_and_share(refusals["refused"], refusals["refused_share"]),
-        out_of(counts["total"], "run"),
-        help="Runs the planner refused (P01 PLANNER_REFUSED), and their share of all runs.",
+        "Completed with warnings",
+        count_and_share(warned["with_warnings"], warned["with_warnings_share"]),
+        out_of(warned["completed"], "completed run"),
+        help="Completed runs where at least one WARN guardrail fired (e.g. missing data or "
+        "alignment loss), and their share of the completed runs.",
     )
 with grounded_col:
     card(

@@ -6,24 +6,27 @@ from typing import Any
 import pytest
 
 from quantlab.executor import StepRecord
-from quantlab.guardrails import GUARDRAILS, ValidationReport, make_issue
+from quantlab.guardrails import GUARDRAILS, Action, ValidationReport, make_issue
 from quantlab.lineage import LLMInfo, ParamChange, RunRecord
 from quantlab.monitoring import (
     KPI_TARGETS,
+    OUTCOMES,
+    WARN_CODES,
     activity,
     approval_waits,
     cache_savings,
     capability_counts,
+    completed_with_warnings,
     cost_table,
     failure_point,
     grounded_narratives,
     guardrail_counts,
+    is_planner_refusal,
     latency_table,
     log_event,
     mode_counts,
     monitored_events,
     monitored_runs,
-    planner_refusals,
     read_events,
     recent_failures,
     replay_results,
@@ -32,6 +35,7 @@ from quantlab.monitoring import (
     target_status,
     token_cost,
     unused_guardrails,
+    whole_percentages,
 )
 from quantlab.registry import REGISTRY
 from quantlab.types import TokenUsage
@@ -153,26 +157,85 @@ def test_monitored_events_keep_replays_from_every_source() -> None:
     assert replay_results(kept) == {"replays": 2, "matching": 1, "replay_match_rate": 0.5}
 
 
-def test_activity_counts_and_shares_add_up() -> None:
+def test_activity_outcomes_do_not_overlap_and_add_up() -> None:
     runs = [
         record("a"),
-        record("b", status="blocked"),
-        record("c", status="blocked"),
+        record("b", status="blocked", codes=("V08",)),  # a deterministic guardrail
+        record("c", status="blocked", codes=("P01",)),  # the planner declined
         record("d", status="failed"),
         record("e", status="rejected"),
-        record("f"),
-        record("g"),
+        record("f", status="blocked", codes=("R01",)),  # the request check
+        record("g", status="blocked", runtime=("E01",)),  # the executor
         record("h"),
     ]
     counts = activity(runs)
     assert counts == {
-        "total": 8, "completed": 4, "blocked": 2, "failed": 1, "rejected": 1,
-        "completed_share": 0.5, "blocked_share": 0.25, "failed_share": 0.125,
-        "rejected_share": 0.125,
+        "total": 8, "completed": 2, "blocked": 3, "planner_refused": 1, "failed": 1,
+        "rejected": 1, "completed_share": 0.25, "blocked_share": 0.375,
+        "planner_refused_share": 0.125, "failed_share": 0.125, "rejected_share": 0.125,
+        # 25 + 37.5 + 3 x 12.5: the two missing points go to the first two halves.
+        "completed_percent": 25, "blocked_percent": 38, "planner_refused_percent": 13,
+        "failed_percent": 12, "rejected_percent": 12,
     }  # fmt: skip
-    assert sum(v for k, v in counts.items() if k.endswith("_share")) == 1.0
+    # Mutually exclusive: the five outcomes add up to the total, their shares to 1 and
+    # their displayed percentages to 100.
+    assert sum(counts[outcome] for outcome in OUTCOMES) == counts["total"]
+    assert sum(counts[f"{outcome}_share"] for outcome in OUTCOMES) == 1.0
+    assert sum(counts[f"{outcome}_percent"] for outcome in OUTCOMES) == 100
+    # A run awaiting a decision is in the total but in no outcome (monitored_runs leaves
+    # it out): the percentages stay those of the total, like the shares.
+    with_undecided = activity([record("a"), record("b", status="ready")])
+    assert (with_undecided["completed_share"], with_undecided["completed_percent"]) == (0.5, 50)
     empty = activity([])
-    assert empty["total"] == 0 and empty["completed_share"] is None
+    assert empty["total"] == 0 and empty["planner_refused"] == 0
+    assert all(empty[f"{outcome}_share"] is None for outcome in OUTCOMES)
+    assert all(empty[f"{outcome}_percent"] is None for outcome in OUTCOMES)
+
+
+@pytest.mark.parametrize(
+    ("counts", "expected"),
+    [
+        # Rounded on their own these show 33 + 4 x 17 = 101; the lowest remainder loses.
+        ([2, 1, 1, 1, 1], [33, 17, 17, 17, 16]),
+        ([1, 1, 1], [34, 33, 33]),  # a tie goes to the earliest
+        ([1, 0, 0], [100, 0, 0]),
+        ([4, 1, 0, 0, 0], [80, 20, 0, 0, 0]),  # exact: nothing to give out
+        ([0, 0, 0], None),
+    ],
+)
+def test_whole_percentages_add_up_to_100(counts: list[int], expected: list[int] | None) -> None:
+    assert whole_percentages(counts) == expected
+
+
+def test_a_planner_refusal_is_not_a_block() -> None:
+    refusal = record("a", status="blocked", codes=("P01",))
+    counts = activity([refusal])
+    assert (counts["planner_refused"], counts["blocked"]) == (1, 0)
+    assert is_planner_refusal(refusal)
+    assert not is_planner_refusal(record("b", status="blocked", codes=("V02",)))
+    assert not is_planner_refusal(record("c"))
+
+
+def test_completed_with_warnings_counts_completed_runs_with_a_warn_guardrail() -> None:
+    warning = make_issue("E04", "s7", "msg", key="values")
+    runs = [
+        record("a", warnings=[warning]),  # completed, with a warning
+        record("b"),  # completed, no warning
+        record("c", runtime=("E03",)),  # completed, a runtime warning
+        record("d", status="blocked", codes=("V08",), warnings=[warning]),  # not completed
+        record("e", codes=("V10",)),  # an approval is not a warning
+    ]
+    assert completed_with_warnings(runs) == {
+        "completed": 4, "with_warnings": 2, "with_warnings_share": 0.5}  # fmt: skip
+    # Zero without a warning; no share without a completed run.
+    assert completed_with_warnings([record("a")])["with_warnings"] == 0
+    assert completed_with_warnings([]) == {
+        "completed": 0, "with_warnings": 0, "with_warnings_share": None}  # fmt: skip
+
+
+def test_the_warn_guardrails_come_from_the_guardrail_table() -> None:
+    assert {code for code, g in GUARDRAILS.items() if g.action == Action.WARN} == WARN_CODES
+    assert {"E03", "E04", "E05", "N01"} <= WARN_CODES and "V08" not in WARN_CODES
 
 
 def test_mode_counts_add_up_to_the_runs() -> None:
@@ -211,7 +274,7 @@ def test_review_outcomes_approval_rate_counts_decisions_only() -> None:
     assert empty["approval_rate"] is None and empty["approval_median_s"] is None
 
 
-def test_replays_narratives_and_refusals() -> None:
+def test_replays_and_narratives() -> None:
     events = [
         {"run_id": "a", "event_type": "replay_completed", "details": {"all_match": True}},
         {"run_id": "a", "event_type": "replay_completed", "details": {"all_match": False}},
@@ -231,16 +294,6 @@ def test_replays_narratives_and_refusals() -> None:
     assert grounded_narratives(runs) == {
         "narratives": 3, "grounded": 2, "grounded_rate": pytest.approx(2 / 3)}  # fmt: skip
     assert grounded_narratives([])["grounded_rate"] is None
-
-    runs = [
-        record("a", status="blocked", codes=("P01",)),
-        record("b"),
-        record("c", status="blocked", codes=("R01",)),
-        record("d", mode="mock"),
-    ]
-    # A count, and its share of all runs.
-    assert planner_refusals(runs) == {"refused": 1, "refused_share": 0.25}
-    assert planner_refusals([]) == {"refused": 0, "refused_share": None}
 
 
 def test_guardrail_counts_list_every_guardrail_most_frequent_first() -> None:
