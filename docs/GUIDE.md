@@ -121,7 +121,7 @@ app or with `cli demo`.
    the frequency and the return type are left to the planner, and the canned plan is
    its reading (the live planner chose the same in our runs):
 
-   > Is the Swiss franc a safe haven? Flag the weeks when the VIX was high (using only past data), then compare USD/CHF returns the following week with other weeks and test whether they differ.
+   > Flag the weeks when the VIX was high (using only past data), then compare USD/CHF returns the following week with other weeks and test whether they differ.
 
    Both series as weekly Friday closes by the same rule (the weekly VIX is its
    Friday close, the level known when the week ends), so each flag meets the USD/CHF
@@ -173,7 +173,7 @@ app or with `cli demo`.
 5. **Buy the dip in tech?** (`buy_the_dip_tech`): does the NASDAQ bounce back the
    week after its biggest drops?
 
-   > Buy the dip in tech? Using weekly NASDAQ returns, flag the weeks in the bottom 10%, the biggest drops, using only past data. Then test whether next week's return is higher after those weeks than after the other weeks.
+   > Using weekly NASDAQ returns, flag the weeks in the bottom 10%, the biggest drops, using only past data. Then test whether next week's return is higher after those weeks than after the other weeks.
 
    Weekly Friday closes; weekly simple returns, so a dip is the percentage lost in
    the week; the dips are the weeks below the 10th percentile of past weekly returns

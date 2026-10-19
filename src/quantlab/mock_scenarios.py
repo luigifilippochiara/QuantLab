@@ -128,18 +128,18 @@ def _registry_menu() -> str:
     return ", ".join(names[:-1]) + " and " + names[-1]
 
 
-# The flagship request (example 1): is the Swiss franc a safe haven? It states the
-# series, a threshold from past data only, the comparison and the test, and leaves the
-# rest to the planner: what "high" means, the frequency, and the return type. The
-# canned plan below is the planner's reading (weekly data, the VIX above its 90th
-# percentile, next week's simple return), which the live planner also chose in our
-# runs; the golden set checks it item by item. Defined once: the app, the CLI, the
-# notebooks, the golden set and the tests read it from here; docs/GUIDE.md quotes it,
-# and a test checks the quote.
+# The flagship request (example 1), titled "Is the Swiss franc a safe haven?": the
+# title poses the question, while the request itself asks only about past data, never
+# for advice. It states the series, a threshold from past data only, the comparison and
+# the test, and leaves the rest to the planner: what "high" means, the frequency, and
+# the return type. The canned plan below is the planner's reading (weekly data, the VIX
+# above its 90th percentile, next week's simple return), which the live planner also
+# chose in our runs; the golden set checks it item by item. Defined once: the app, the
+# CLI, the notebooks, the golden set and the tests read it from here; docs/GUIDE.md
+# quotes it, and a test checks the quote.
 FLAGSHIP_REQUEST = (
-    "Is the Swiss franc a safe haven? Flag the weeks when the VIX was high (using only past "
-    "data), then compare USD/CHF returns the following week with other weeks and test "
-    "whether they differ."
+    "Flag the weeks when the VIX was high (using only past data), then compare USD/CHF "
+    "returns the following week with other weeks and test whether they differ."
 )
 
 # Example 1's plan. Every parameter is written out (no hidden defaults).
@@ -201,11 +201,12 @@ FLAGSHIP_NOTES = (
 )
 
 
-# Example 5's request: buy the dip in tech?
+# Example 5's request, titled "Buy the dip in tech?": as for example 1, the title
+# poses the question and the request asks only about past data.
 DIP_REQUEST = (
-    "Buy the dip in tech? Using weekly NASDAQ returns, flag the weeks in the bottom 10%, the "
-    "biggest drops, using only past data. Then test whether next week's return is higher "
-    "after those weeks than after the other weeks."
+    "Using weekly NASDAQ returns, flag the weeks in the bottom 10%, the biggest drops, using "
+    "only past data. Then test whether next week's return is higher after those weeks than "
+    "after the other weeks."
 )
 
 # Example 5's plan. Every parameter is written out (no hidden defaults).

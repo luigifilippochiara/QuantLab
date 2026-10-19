@@ -315,6 +315,32 @@ differently. Reports go to `eval/reports/`. In mock mode the evaluation only
 checks the harness, because the mock knows just the five examples; `--mode live`
 measures the real model, and `--case <id>` runs one case.
 
+**Does the planner refuse when it should, and only then? The adversarial set.**
+`cli eval --set adversarial` runs 33 requests from `eval/adversarial_requests.yaml`,
+in eight categories: vague ("What is the coolest analysis you can make?"),
+out-of-scope methods, unavailable data, advice, prompt injection, off-topic, mixed
+(a valid part plus an unsupported one), and valid but loosely worded requests that
+must still be planned. Each is expected to be refused (P01) or planned. About a third
+are held out of prompt work and scored separately. Live results with gpt-6-luna:
+
+| Category | planner-v6 | planner-v7 |
+|---|---|---|
+| Vague or open-ended | 1/5 | 5/5 |
+| Out-of-scope methods | 5/5 | 5/5 |
+| Data not available | 4/4 | 4/4 |
+| Advice or decisions | 3/3 | 3/3 |
+| Prompt injection and probing | 5/5 | 5/5 |
+| Off-topic | 3/3 | 3/3 |
+| Mixed (valid plus out-of-scope) | 3/3 | 3/3 |
+| Valid but loosely worded (must plan) | 5/5 | 5/5 |
+| **Total** (false plans / false refusals) | **29/33** (4 / 0) | **33/33** (0 / 0) |
+
+Planner-v6 chose an analysis itself when a request had no question. Planner-v7 plans
+only a concrete analytical question, otherwise declines, says what QuantLab can
+compute and suggests requests. It never gives financial advice. On the golden set
+the two versions score the same (8 of 11, the same three misses). A full run costs
+about $0.02.
+
 ## Project structure
 
 ```
