@@ -136,17 +136,17 @@ def _registry_menu() -> str:
 
 
 # The flagship request (example 1): is the Swiss franc a safe haven? It states the
-# choices that have no default (the two series, weekly data, a top-10% VIX threshold
-# from past data only, next week's return as the outcome, a HAC test); the registry
-# defaults supply the rest (a threshold after 52 weeks), and forward returns are
-# always one period ahead with Newey-West lags set by their rule, so a live planner
-# can still reach the canned plan below (the golden set checks it item by item).
-# Defined once: the app, the CLI, the notebooks, the golden set and the tests read it
-# from here; docs/GUIDE.md quotes it, and a test checks the quote.
+# series, a threshold from past data only, the comparison and the test, and leaves the
+# rest to the planner: what "high" means, the frequency, and the return type. The
+# canned plan below is the planner's reading (weekly data, the VIX above its 90th
+# percentile, next week's simple return), which the live planner also chose in our
+# runs; the golden set checks it item by item. Defined once: the app, the CLI, the
+# notebooks, the golden set and the tests read it from here; docs/GUIDE.md quotes it,
+# and a test checks the quote.
 FLAGSHIP_REQUEST = (
-    "Is the Swiss franc a safe haven? Using weekly data, flag the weeks when the VIX is in "
-    "its top 10%, using only past data, then compare next week's USD/CHF return in those "
-    "weeks against the other weeks, with a HAC test for the difference."
+    "Is the Swiss franc a safe haven? Flag the weeks when the VIX was high (using only past "
+    "data), then compare USD/CHF returns the following week with other weeks and test "
+    "whether they differ."
 )
 
 # Example 5's request: the same question, with the VIX threshold from its entire
@@ -220,15 +220,16 @@ FLAGSHIP_STEPS = _safe_haven_steps("expanding")
 
 # The plan's declared assumptions, shown to the analyst as the planner's notes.
 FLAGSHIP_NOTES = (
-    "Assumptions: the weekly VIX is its Friday close, flagged above the 90th percentile of "
-    "its past levels only (expanding, at least 52 weeks), so every flag was known at the "
-    "time; simple returns for the USD/CHF outcome (a mean of log returns is lower by about "
-    "half the variance, which would bias the comparison against volatile weeks). Both "
-    "series are weekly Friday closes, so each flag meets the USD/CHF return of the "
-    "following week; the VIX starts in 1990, so only the weeks both series cover are "
-    "compared. USD/CHF is quoted in Swiss francs per US dollar: a negative return means the "
-    "franc strengthened. compare_groups describes the two groups first; "
-    "hac_mean_difference then tests the difference (default lags)."
+    "Assumptions: a high VIX is read as the top 10% of its past levels: the weekly VIX (its "
+    "Friday close) above the 90th percentile of its past levels only (expanding, at least 52 "
+    "weeks), so every flag was known at the time. The following week is read as weekly data "
+    "and next week's simple USD/CHF return (a mean of log returns is lower by about half the "
+    "variance, which would bias the comparison against volatile weeks). Both series are "
+    "weekly Friday closes, so each flag meets the USD/CHF return of the following week; the "
+    "VIX starts in 1990, so only the weeks both series cover are compared. USD/CHF is quoted "
+    "in Swiss francs per US dollar: a negative return means the franc strengthened. "
+    "compare_groups describes the two groups first; hac_mean_difference then tests the "
+    "difference (default lags)."
 )
 
 

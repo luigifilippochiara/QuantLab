@@ -25,20 +25,21 @@
 # The six example workflows come first, one entry each, with the plan and the
 # codes of their canned plans.
 
-# The flagship request states the choices without a default and leaves the rest to
-# the registry defaults, so a live planner should still reproduce the canned plan:
-# all eight steps in order (both series loaded, then both made weekly), the key
-# parameters the request states, and the outcome of one return-method approval with
-# no warning and no block. The two load_series steps load different datasets, so
-# dataset_id is not a key parameter (it is checked on every step of a capability),
-# and the forward return's method is not one either: the request does not state it.
+# The flagship request names the series, a threshold from past data only, the
+# comparison and the test; what "high" means, the frequency and the return type are
+# the planner's reading. The canned plan reads them as the top 10% of past VIX levels,
+# weekly data and simple returns (as the live planner did in our runs), and has one
+# return-method approval, no warning and no block. Only what the request states is a
+# key parameter: the expanding threshold. The two load_series steps load different
+# datasets, so dataset_id is not one either (it is checked on every step of a
+# capability).
 - id: s1_chf_safe_haven
   scenario: chf_safe_haven_success
   expect: plan
   capabilities: [load_series, load_series, resample, resample, flag_regime, forward_return,
                  compare_groups, hac_mean_difference]
   key_params:
-    flag_regime: {method: expanding, quantile: 0.90}
+    flag_regime: {method: expanding}
   guardrails: {approve: [V10], warn: [], block: []}
 
 # The canned plan follows the request (weekly 10-year, daily 2-year), then flags the

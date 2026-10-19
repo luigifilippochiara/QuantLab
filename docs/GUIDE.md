@@ -115,19 +115,18 @@ canned plans in mock mode (`mock_scenarios.py`) or with the live planner, from t
 app or with `cli demo`.
 
 1. **Is the Swiss franc a safe haven?** (`chf_safe_haven_success`), the flagship:
-   does the Swiss franc strengthen after stress weeks? The request states the
-   choices that have no default; the registry defaults supply the rest (a threshold
-   after 52 weeks), and forward returns always cover the next week with the test's
-   lags set by the Newey-West rule, so the live planner can reach the same plan as
-   the canned one:
+   does the Swiss franc strengthen after stress weeks? The request names the series,
+   a threshold from past data only, the comparison and the test; what "high" means,
+   the frequency and the return type are left to the planner, and the canned plan is
+   its reading (the live planner chose the same in our runs):
 
-   > Is the Swiss franc a safe haven? Using weekly data, flag the weeks when the VIX is in its top 10%, using only past data, then compare next week's USD/CHF return in those weeks against the other weeks, with a HAC test for the difference.
+   > Is the Swiss franc a safe haven? Flag the weeks when the VIX was high (using only past data), then compare USD/CHF returns the following week with other weeks and test whether they differ.
 
    Both series as weekly Friday closes by the same rule (the weekly VIX is its
    Friday close, the level known when the week ends), so each flag meets the USD/CHF
-   return of the following week on the same date; the VIX level flagged directly
-   (it is already a volatility) above the 90th percentile of its past levels only
-   (expanding, after 52 weeks); the following week's simple USD/CHF return
+   return of the following week on the same date; "high" read as the top 10%: the
+   VIX level flagged directly (it is already a volatility) above the 90th percentile
+   of its past levels only (expanding, after 52 weeks); the following week's simple USD/CHF return
    (`forward_return`, from the weekly rates: a mean of log returns would be lower
    by about half the variance and bias the comparison against volatile weeks); a
    descriptive comparison (`compare_groups`), then the significance test

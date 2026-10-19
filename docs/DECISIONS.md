@@ -1835,3 +1835,25 @@ spans weekly, about 700 if switched to daily), and adding one `add_vrect` per sp
 7 and 60 seconds, because each call re-validates every shape before it. The chart now
 builds all the bands as one list of shapes in a single layout update, with the same
 extent, colour and layer (0.02 s for 258 spans). A test pins one band per span.
+
+## The flagship request is shorter and leaves "high" to the planner
+
+**Example 1's request** (quoted in the guide) now asks to flag the weeks when the VIX
+was high, using only past data, then compare USD/CHF returns the following week with
+other weeks and test whether they differ. It no longer says "weekly" or "top 10%".
+- **The canned plan is unchanged.** It is the planner's reading of the request: weekly
+  Friday closes, "high" as above the expanding 90th percentile of past VIX levels, and
+  next week's simple return. The planner notes now say so.
+- **These readings are not guardrails.** V10 only covers the return methods, so the
+  only approval is still V10 on s6. The threshold and the frequency are visible in the
+  step headers, the editable fields and the notes.
+- **Live checks.** Three live runs of the shorter text chose the same frequency,
+  threshold, window and return type, with the HAC test. None of them included
+  `compare_groups`, because "test whether they differ" asks only for the test, so
+  adding "compare … with other weeks" was decided. With that wording, three of three
+  live plans included it. One ordered the VIX steps first, which the eval's exact
+  sequence still counts as a miss.
+- **The eval case keeps only what the request states** as a key parameter: the expanding
+  threshold. The quantile is no longer one.
+- **The canned plans' version** is now `canned-scenarios-v15`. The new request gets its
+  own cache entry, and no cache entry was deleted.

@@ -86,7 +86,7 @@ def test_every_request_matches_only_its_own_scenario(scenario: Scenario) -> None
     assert by_keywords == [scenario.id]  # and by keywords, whatever the matching order
 
 
-# --- the flagship (example 1): fully specified, so mock and live should agree -----
+# --- the flagship (example 1): the canned plan is the planner's reading -------------
 
 # (step id, capability, inputs, params): the plan the flagship request specifies.
 FLAGSHIP_PLAN = [
@@ -107,10 +107,13 @@ def test_flagship_plan_is_exactly_the_specified_plan() -> None:
     steps = [(s["id"], s["capability"], s["inputs"], s["params"]) for s in plan["steps"]]
     assert steps == FLAGSHIP_PLAN
     assert plan["dataset_ids"] == ["VIXCLS", "DEXSZUS"] and not plan["cannot_fulfill"]
-    # The assumptions the plan declares to the analyst, including which way USD/CHF reads.
+    # The assumptions the plan declares to the analyst: how it read "high" and "the
+    # following week" (the request leaves them open), and which way USD/CHF reads.
     notes = plan["planner_notes"]
-    assert "the weekly VIX is its Friday close" in notes and "past levels only" in notes
-    assert "simple returns for the USD/CHF outcome" in notes
+    assert "a high VIX is read as the top 10% of its past levels" in notes
+    assert "(its Friday close)" in notes and "past levels only" in notes
+    assert "The following week is read as weekly data" in notes
+    assert "next week's simple USD/CHF return" in notes
     assert "a negative return means the franc strengthened" in notes
 
 
