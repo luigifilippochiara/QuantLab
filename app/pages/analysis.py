@@ -379,15 +379,24 @@ st.subheader("Results")
 if execution.error:
     st.error(ui.escape_md(execution.error), title=f"Execution {execution.status}")
 artifacts = execution.artifacts
-shading = ui.flags_by_input(plan.steps, artifacts)
+# flag_regime step id -> the series its flags were computed from: the regime chart is
+# drawn in the flag_regime step's section, which opens; the series' own step does not.
+regimes = ui.regime_charts(plan.steps, artifacts)
+flagged_series = set(regimes.values())
+# Step id -> capability: to title the regime chart and label each fact by its step.
+capabilities = {step.id: step.capability for step in plan.steps}
 records = {record.step_id: record for record in execution.step_records}
 for step in plan.steps:
     record = records.get(step.id)
     if record is None:
         continue
     artifact = artifacts.get(step.id)
+    # Open: a table (the test), a flag_regime step with its regime chart, and a spread
+    # that no flag_regime step charts (a flagged one is shown in the flag's section).
     key_output = artifact is not None and (
-        artifact.data_type.value == "table" or step.id in shading or step.capability == "spread"
+        artifact.data_type.value == "table"
+        or step.id in regimes
+        or (step.capability == "spread" and step.id not in flagged_series)
     )
     capability = ui.capability_label(step.capability, record.capability_code)
     label = f"{step.id} · {capability} · {record.status}"
@@ -399,13 +408,18 @@ for step in plan.steps:
         if record.error:
             st.error(ui.escape_md(record.error))
         if artifact is not None:
-            ui.render_artifact(step.id, step.capability, artifact, shading.get(step.id), catalog)
+            series_id = regimes.get(step.id)
+            ui.render_artifact(
+                step.id,
+                step.capability,
+                artifact,
+                catalog,
+                (series_id, capabilities[series_id], artifacts[series_id]) if series_id else None,
+            )
 
 # ---------------------------------------------------------------- narrative
 
 narrative = session.narrative
-# Step id -> capability, to label each fact with the step that produced it.
-capabilities = {step.id: step.capability for step in plan.steps} if plan else {}
 if narrative is not None:
     st.subheader("Narrative")
     # N01 UNGROUNDED_NARRATIVE: an LLM narrative quoting a number the run did not

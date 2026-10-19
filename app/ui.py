@@ -584,49 +584,84 @@ def render_issue(issue: Issue, titles: dict[str, str] | None = None) -> None:
         st.caption(f"Suggestion: {escape_md(issue.suggestion)}")
 
 
-def flags_by_input(plan_steps: list[Any], artifacts: dict[str, Artifact]) -> dict[str, pd.Series]:
-    """Map a series step id to the flags computed from it (for shading its chart)."""
-    shading = {}
-    for step in plan_steps:
-        if step.capability == "flag_regime" and step.id in artifacts:
-            shading[step.inputs.get("series", "")] = artifacts[step.id].value
-    return shading
+def regime_charts(plan_steps: list[Any], artifacts: dict[str, Artifact]) -> dict[str, str]:
+    """Map each flag_regime step to the series step its flags were computed from.
+
+    The regime chart (that series, its flagged periods shaded) belongs in the
+    flag_regime step's section. The step is found by its capability, wherever it is in
+    the plan; only steps whose flags and series both exist are included.
+
+    Args:
+        plan_steps: the plan's steps.
+        artifacts: step id -> output artifact of the run.
+
+    Returns:
+        flag_regime step id -> the step id of its "series" input.
+    """
+    return {
+        step.id: step.inputs["series"]
+        for step in plan_steps
+        if step.capability == "flag_regime"
+        and step.id in artifacts
+        and step.inputs.get("series") in artifacts
+    }
+
+
+def series_chart(
+    step_id: str, capability: str, artifact: Artifact, flags: pd.Series | None
+) -> None:
+    """Draw a series step's chart, titled by its step, with flagged periods shaded if given.
+
+    Args:
+        step_id: the series' step id.
+        capability: the capability that produced the series.
+        artifact: the series artifact.
+        flags: flags to shade on it (a flag_regime output), or None.
+    """
+    meta = artifact.meta
+    title = (
+        f"{step_id} · {capability_label(capability)} "
+        f"({kind_label(meta.kind)}, {frequency_label(meta.frequency)})"
+    )
+    st.plotly_chart(
+        series_figure(artifact.value, title, str(meta.kind), flags),
+        width="stretch",
+        theme="streamlit",
+        alt=f"Line chart of {title}",
+    )
 
 
 def render_artifact(
     step_id: str,
     capability: str,
     artifact: Artifact,
-    flags: pd.Series | None,
     catalog: Catalog,
+    flagged_series: tuple[str, str, Artifact] | None = None,
 ) -> None:
-    """Show one step's output: a chart (series), a short count (flags) or a table (TABLE).
+    """Show one step's output: a chart (series), a count and the regime chart (flags), or a
+    table (TABLE).
 
     Args:
         step_id: plan step id.
         capability: capability name.
         artifact: the step's output.
-        flags: flags to shade on this series' chart, if any.
         catalog: the dataset catalog, to label the source datasets.
+        flagged_series: for a flag_regime output, the series its flags were computed
+            from, as (step id, capability, artifact): drawn here with the flagged
+            periods shaded (see regime_charts).
     """
     meta = artifact.meta
     if artifact.data_type == DataType.SERIES:
-        title = (
-            f"{step_id} · {capability_label(capability)} "
-            f"({kind_label(meta.kind)}, {frequency_label(meta.frequency)})"
-        )
-        st.plotly_chart(
-            series_figure(artifact.value, title, str(meta.kind), flags),
-            width="stretch",
-            theme="streamlit",
-            alt=f"Line chart of {title}",
-        )
+        series_chart(step_id, capability, artifact, None)
     elif artifact.data_type == DataType.FLAGS:
         flagged = int(artifact.value.sum())
+        where = "shaded on the chart below" if flagged_series else "not charted"
         st.markdown(
-            f"{flagged:,} of {meta.n_obs:,} observations flagged; the flagged periods are "
-            "shaded on the chart of the series they were computed from."
+            f"{flagged:,} of {meta.n_obs:,} observations flagged; the flagged periods are {where}."
         )
+        if flagged_series is not None:
+            series_id, series_capability, series = flagged_series
+            series_chart(series_id, series_capability, series, artifact.value)
     elif artifact.data_type == DataType.TABLE:
         st.dataframe(table_frame(artifact.value), hide_index=True, alt=f"{capability} table")
     sources = ", ".join(dataset_label(catalog, d) for d in meta.source_dataset_ids)

@@ -839,6 +839,53 @@ def test_flagged_spans_are_shaded_one_band_each(app_env: Settings) -> None:
     assert {(b.yref, b.y0, b.y1, b.layer) for b in bands} == {("y domain", 0, 1, "below")}
 
 
+@pytest.mark.parametrize(
+    ("raw", "expected"),
+    [
+        pytest.param(SCENARIOS_BY_ID["chf_safe_haven_success"].plan, {"s3": "s2"}, id="scenario 1"),
+        pytest.param(
+            SCENARIOS_BY_ID["spread_frequency_mismatch_block"].plan, {"s5": "s4"}, id="scenario 2"
+        ),  # fmt: skip
+        pytest.param(SCENARIOS_BY_ID["buy_the_dip_tech"].plan, {"s4": "s3"}, id="scenario 5"),
+        pytest.param(volatility_plan(), {"s5": "s4"}, id="volatility plan"),
+    ],
+)
+def test_each_regime_chart_belongs_to_its_flag_regime_step(
+    app_env: Settings, raw: dict, expected: dict[str, str]
+) -> None:
+    import ui  # importable once app_env has put app/ on the path
+
+    # Found by capability, wherever the step is: flag_regime step -> its series input.
+    plan = as_plan(raw)
+    ran = {step.id: None for step in plan.steps}  # every step produced an output
+    assert ui.regime_charts(plan.steps, ran) == expected
+    # No chart without both the flags and their series.
+    (flag_step,) = expected
+    assert ui.regime_charts(plan.steps, {k: v for k, v in ran.items() if k != flag_step}) == {}
+    no_series = {k: v for k, v in ran.items() if k != expected[flag_step]}
+    assert ui.regime_charts(plan.steps, no_series) == {}
+
+
+def test_the_regime_chart_is_in_the_open_flag_regime_section(app_env: Settings) -> None:
+    app = plan_scenario_1(app_env)
+    approve_all(app)
+    button(app, "Execute").click().run()
+    assert not app.exception, app.exception
+    sections = {e.label.split(" · completed")[0]: e for e in app.expander if " · C" in e.label}
+    flags, series = sections["s3 · C07 · Flag regime"], sections["s2 · C02 · Resample"]
+    # The flag_regime section opens and holds the regime chart: the weekly VIX (its own
+    # title) with the flagged weeks shaded.
+    assert flags.proto.expanded
+    (chart,) = flags.get("plotly_chart")
+    spec = json.loads(chart.proto.spec)
+    assert spec["layout"]["title"]["text"].startswith("s2 · C02 · Resample")
+    assert spec["layout"]["shapes"]  # the flagged weeks
+    # The series' own section stays collapsed and its chart is not shaded.
+    assert not series.proto.expanded
+    (plain,) = series.get("plotly_chart")
+    assert not json.loads(plain.proto.spec)["layout"].get("shapes")
+
+
 def test_every_registered_choice_has_a_label_that_round_trips(app_env: Settings) -> None:
     import labels  # importable once app_env has put app/ on the path
 
