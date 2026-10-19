@@ -13,7 +13,7 @@ from quantlab.engine import ExecutionRefusedError, Session
 from quantlab.lineage import Approval, load_run, replay
 from quantlab.mock_scenarios import SCENARIOS_BY_ID
 
-from conftest import RETURN_METHOD_APPROVAL, SCENARIO_6_APPROVALS
+from conftest import RETURN_METHOD_APPROVAL, SCENARIO_5_APPROVALS
 
 
 def start(settings: Settings, scenario_id: str = "buy_the_dip_tech") -> Session:
@@ -80,9 +80,9 @@ def test_weekly_to_daily_is_re_validated_and_runs_after_re_approval(settings: Se
     session = start(settings)
     report = session.apply_param_edits({"s2": {"freq": "D"}})
     assert report.warnings == [] and not report.is_blocked
-    assert [i.issue_id for i in report.approvals_required] == SCENARIO_6_APPROVALS
+    assert [i.issue_id for i in report.approvals_required] == SCENARIO_5_APPROVALS
     assert report.dry_run["s4"]["frequency"] == "D"
-    session.approve(SCENARIO_6_APPROVALS)
+    session.approve(SCENARIO_5_APPROVALS)
     assert session.execute().status == "completed"
     flags = session.execution.artifacts["s4"].meta
     assert flags.frequency == "D"
@@ -95,12 +95,12 @@ def test_weekly_to_daily_is_re_validated_and_runs_after_re_approval(settings: Se
 def test_any_edit_resets_approvals_and_approvals_record_the_plan_hash(settings: Settings) -> None:
     session = start(settings)
     first_version = session.plan_hash
-    session.approve(SCENARIO_6_APPROVALS)
+    session.approve(SCENARIO_5_APPROVALS)
     assert {a.plan_hash for a in session.approvals} == {first_version}
     session.apply_param_edits({"s4": {"min_periods": 104}})
     assert session.plan_hash != first_version
     assert session.approvals == []
-    assert [i.issue_id for i in session.unresolved_approvals()] == SCENARIO_6_APPROVALS
+    assert [i.issue_id for i in session.unresolved_approvals()] == SCENARIO_5_APPROVALS
 
 
 def test_an_approval_for_another_plan_version_does_not_count(settings: Settings) -> None:
@@ -108,7 +108,7 @@ def test_an_approval_for_another_plan_version_does_not_count(settings: Settings)
     stale = Approval(issue_id=RETURN_METHOD_APPROVAL, code="V10", step_id="s3",
                      message="m", approved_at="t", plan_hash="another-version")  # fmt: skip
     session.approvals.append(stale)
-    assert [i.issue_id for i in session.unresolved_approvals()] == SCENARIO_6_APPROVALS
+    assert [i.issue_id for i in session.unresolved_approvals()] == SCENARIO_5_APPROVALS
     with pytest.raises(ExecutionRefusedError):
         session.execute()
 
@@ -131,7 +131,7 @@ def test_edited_run_records_the_diff_traces_it_and_replays_identically(
 ) -> None:
     session = start(settings)
     session.apply_param_edits({"s4": {"min_periods": 104}})
-    session.approve(SCENARIO_6_APPROVALS)
+    session.approve(SCENARIO_5_APPROVALS)
     session.execute()
     session.narrate()
     session.save_record()

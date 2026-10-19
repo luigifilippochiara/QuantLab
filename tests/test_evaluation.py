@@ -35,14 +35,14 @@ def test_golden_file_starts_with_the_example_workflows_in_order() -> None:
 def test_mock_evaluation_scores_and_report(settings: Settings, tmp_path: Path) -> None:
     report = run_evaluation("mock", settings)
     scores = {s.case_id: s for s in report.scores}
-    for case_id in ["s1_chf_safe_haven", "s5_vix_full_sample_lookahead", "s6_buy_the_dip_tech"]:
+    for case_id in ["s1_chf_safe_haven", "s5_buy_the_dip_tech"]:
         assert (
             scores[case_id].correct and scores[case_id].params_hit == scores[case_id].params_total
         )
     assert report.metrics["correct_refusal_block_rate"] == 1.0
     # Free-form requests fail in mock mode: by design.
     assert not scores["vix_high_periods"].valid
-    # A NASDAQ volatility request matches no example (example 6 is now about dips), so
+    # A NASDAQ volatility request matches no example (the NASDAQ one is about dips), so
     # the mock declines it too. Partial credit is scored with a fake live planner below.
     assert not scores["nasdaq_weekly_log_vol"].valid
 

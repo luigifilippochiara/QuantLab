@@ -51,8 +51,9 @@ direction="above" (the default, the old behaviour) to every recorded flag step, 
 example 2's new question replaced it and its eval case; the VIX flagship replaced
 examples 1 and 5 and their eval cases; buy the dip replaced example 6 and its eval
 case, and the eval case nasdaq_weekly_log_vol, which matched the old example 6 in
-mock mode and now matches none. No narrative raises N01, and no example or eval
-request raises R01.
+mock mode and now matches none; the look-ahead example was removed (with its eval
+case), and buy the dip became example 5, its eval case renamed with it. No narrative
+raises N01, and no example or eval request raises R01.
 
 The fixture is a frozen reference: a record is never regenerated.
 """
@@ -203,6 +204,22 @@ REPLACED_BY_DIP = (
 )
 BUY_THE_DIP = Migration({code: code for code in GUARDRAILS}, {}, False, REPLACED_BY_DIP)
 
+# Look-ahead removed: the look-ahead example and its eval case (every id they have had)
+# are gone, and nothing replaced them; buy the dip moved from 6 to 5, and its eval case
+# was renamed with it.
+REMOVED_LOOK_AHEAD = (
+    "vix_full_sample_lookahead",
+    "s2_vix_full_sample_lookahead",
+    "s5_vix_full_sample_lookahead",
+)
+LOOK_AHEAD_REMOVED = Migration(
+    {code: code for code in GUARDRAILS},
+    {},
+    False,
+    replaced=REMOVED_LOOK_AHEAD,
+    renamed={"s6_buy_the_dip_tech": "s5_buy_the_dip_tech"},
+)
+
 # The changes made since each record was recorded, oldest first.
 MIGRATIONS = {
     "before_simplification": (
@@ -215,6 +232,7 @@ MIGRATIONS = {
         DIRECTION,
         VIX_FLAGSHIP,
         BUY_THE_DIP,
+        LOOK_AHEAD_REMOVED,
     ),
     "final_examples": (
         RESTRUCTURE,
@@ -225,6 +243,7 @@ MIGRATIONS = {
         DIRECTION,
         VIX_FLAGSHIP,
         BUY_THE_DIP,
+        LOOK_AHEAD_REMOVED,
     ),
     "before_restructure": (
         RESTRUCTURE,
@@ -235,6 +254,7 @@ MIGRATIONS = {
         DIRECTION,
         VIX_FLAGSHIP,
         BUY_THE_DIP,
+        LOOK_AHEAD_REMOVED,
     ),
     "before_stage_codes": (
         STAGES,
@@ -244,12 +264,20 @@ MIGRATIONS = {
         DIRECTION,
         VIX_FLAGSHIP,
         BUY_THE_DIP,
+        LOOK_AHEAD_REMOVED,
     ),
-    "simulated_injection": (RENUMBERING, FLAGSHIP_MOVE, DIRECTION, VIX_FLAGSHIP, BUY_THE_DIP),
-    "safe_haven_flagship": (DIRECTION, VIX_FLAGSHIP, BUY_THE_DIP),
-    "yield_curve_below": (VIX_FLAGSHIP, BUY_THE_DIP),
-    "vix_flagship": (BUY_THE_DIP,),
-    "buy_the_dip": (),
+    "simulated_injection": (
+        RENUMBERING,
+        FLAGSHIP_MOVE,
+        DIRECTION,
+        VIX_FLAGSHIP,
+        BUY_THE_DIP,
+        LOOK_AHEAD_REMOVED,
+    ),
+    "safe_haven_flagship": (DIRECTION, VIX_FLAGSHIP, BUY_THE_DIP, LOOK_AHEAD_REMOVED),
+    "yield_curve_below": (VIX_FLAGSHIP, BUY_THE_DIP, LOOK_AHEAD_REMOVED),
+    "vix_flagship": (BUY_THE_DIP, LOOK_AHEAD_REMOVED),
+    "buy_the_dip": (LOOK_AHEAD_REMOVED,),
 }
 # The records that hold (part of) the mock eval set.
 EVAL_RECORDS = (
@@ -340,7 +368,7 @@ def describe_session(session: Session) -> dict[str, Any]:
 
 
 def run_scenarios(settings: Settings) -> dict[str, dict[str, Any]]:
-    """Run the six example workflows in mock mode, auto-approving as `cli demo` does.
+    """Run the five example workflows in mock mode, auto-approving as `cli demo` does.
 
     Args:
         settings: settings naming the data folder and an isolated runs folder.

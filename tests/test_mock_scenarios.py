@@ -1,9 +1,9 @@
-"""The six example workflows end to end (mock mode), plus workflow-specific checks.
+"""The five example workflows end to end (mock mode), plus workflow-specific checks.
 
-One task, a market-risk analyst flagging unusual market behaviour: the flagship
-analysis (1), the protections QuantLab applies (2-5) and the NASDAQ-only analysis
-(6). The audit trail of example 1 (the trace) is tested in test_cli.py and
-test_app.py, the lineage of example 6 in test_lineage.py.
+One task, a market-risk analyst flagging unusual market behaviour: two complete
+analyses (1, 5), a blocked request that can be fixed and re-run (2), and an
+out-of-scope and an unsafe request QuantLab stops (3, 4). The audit trail of example
+1 (the trace) is tested in test_cli.py and test_app.py.
 """
 
 import os
@@ -27,7 +27,7 @@ from quantlab.mock_scenarios import (
 from quantlab.plan import Plan
 from quantlab.registry import REGISTRY
 
-from conftest import ARIMA_PLAN, SCENARIO_1_APPROVALS, SCENARIO_6_APPROVALS
+from conftest import ARIMA_PLAN, SCENARIO_1_APPROVALS, SCENARIO_5_APPROVALS
 from fakes import FakeAnthropicClient, tool_response
 
 
@@ -41,14 +41,13 @@ def start(scenario_id: str, settings: Settings) -> Session:
 
 def test_examples_are_numbered_in_list_order() -> None:
     # The order of the sidebar buttons and of `cli demo`: the flagship analysis, the
-    # three blocks, the look-ahead approval, then the NASDAQ-only analysis.
+    # three blocks, then buy the dip.
     assert [(s.number, s.id) for s in SCENARIOS] == [
         (1, "chf_safe_haven_success"),
         (2, "spread_frequency_mismatch_block"),
         (3, "arima_forecast_block"),
         (4, "prompt_injection_unknown_capability"),
-        (5, "vix_full_sample_lookahead"),
-        (6, "buy_the_dip_tech"),
+        (5, "buy_the_dip_tech"),
     ]
     assert all(s.label.startswith(f"{s.number} · ") for s in SCENARIOS)
 
@@ -117,21 +116,9 @@ def test_flagship_plan_is_exactly_the_specified_plan() -> None:
     assert "a negative return means the franc strengthened" in notes
 
 
-def test_example_5_is_the_flagship_with_a_full_history_threshold() -> None:
-    flagship = SCENARIOS_BY_ID["chf_safe_haven_success"].plan["steps"]
-    look_ahead = SCENARIOS_BY_ID["vix_full_sample_lookahead"].plan["steps"]
-    differences = [
-        (a["id"], name, a["params"][name], b["params"][name])
-        for a, b in zip(flagship, look_ahead, strict=True)
-        for name in a["params"]
-        if a["params"][name] != b["params"][name]
-    ]
-    assert differences == [("s5", "method", "expanding", "full_sample")]
-
-
 def test_requests_rely_on_these_registry_defaults() -> None:
-    # The requests leave them to the registry (examples 1 and 5 their direction, every
-    # example its minimum history), so a planner that omits them gets the canned plan.
+    # The requests leave them to the registry (example 1 its direction, every example
+    # its minimum history), so a planner that omits them gets the canned plan.
     defaults = {
         ("flag_regime", "method"): "expanding",
         ("flag_regime", "quantile"): 0.90,
@@ -191,12 +178,32 @@ def test_flagship_groups_usd_chf_returns_by_vix_flags(settings: Settings) -> Non
     assert narrative.grounding.grounded and narrative.issues == []
 
 
+def test_flagship_demo_edit_full_history_threshold_needs_the_look_ahead_approval(
+    settings: Settings,
+) -> None:
+    session = start("chf_safe_haven_success", settings)
+    report = session.apply_param_edits({"s5": {"method": "full_sample"}})
+    # The VIX threshold from its entire history: V09, an approval (not a block), which
+    # also says the significance test is invalidated; the return-method approval stays.
+    assert [(i.issue_id, i.action) for i in report.issues] == [
+        ("V09:s5", "APPROVE"),
+        ("V10:s6:return_method", "APPROVE"),
+    ]
+    v09 = report.issues[0]
+    assert v09.name == "LOOK_AHEAD"
+    assert "It also invalidates the significance test in s8" in v09.message
+    with pytest.raises(ExecutionRefusedError, match="V09:s5"):
+        session.execute()  # not without the analyst's decision
+    session.approve(["V09:s5", "V10:s6:return_method"])
+    assert session.execute().status == "completed"
+
+
 def test_flagship_demo_edit_dataset_to_a_yield_is_blocked(settings: Settings) -> None:
     session = start("chf_safe_haven_success", settings)
     report = session.apply_param_edits({"s2": {"dataset_id": "DGS10"}})
     # A legal edit (a parameter value), which the re-validation blocks: a forward
     # "return" needs a price level, and a yield is a rate. (V07 RETURNS_ON_RATES needs
-    # a compute_returns step: the same edit on example 6 shows it.)
+    # a compute_returns step: the same edit on example 5 shows it.)
     assert session.plan.steps[1].params["dataset_id"] == "DGS10"
     assert [(i.issue_id, i.name) for i in report.blocks] == [("V04:s6:series", "TYPE_MISMATCH")]
     with pytest.raises(ExecutionRefusedError):
@@ -213,9 +220,9 @@ def test_flagship_demo_edit_quantile_out_of_range_is_blocked(settings: Settings)
         session.execute()
 
 
-# --- example 6, buy the dip: the bottom tail of past weekly returns ---------------
+# --- example 5, buy the dip: the bottom tail of past weekly returns ---------------
 
-# (step id, capability, inputs, params): the plan example 6's request specifies.
+# (step id, capability, inputs, params): the plan example 5's request specifies.
 DIP_PLAN = [
     ("s1", "load_series", {}, {"dataset_id": "NASDAQCOM"}),
     ("s2", "resample", {"series": "s1"}, {"freq": "W", "how": "last"}),
@@ -228,7 +235,7 @@ DIP_PLAN = [
 ]  # fmt: skip
 
 
-def test_scenario_6_plan_is_exactly_the_specified_plan() -> None:
+def test_scenario_5_plan_is_exactly_the_specified_plan() -> None:
     plan = SCENARIOS_BY_ID["buy_the_dip_tech"].plan
     steps = [(s["id"], s["capability"], s["inputs"], s["params"]) for s in plan["steps"]]
     assert steps == DIP_PLAN
@@ -238,7 +245,7 @@ def test_scenario_6_plan_is_exactly_the_specified_plan() -> None:
     assert "simple weekly returns" in notes
 
 
-def test_scenario_6_validates_with_exactly_two_v10_approvals(catalog: Catalog) -> None:
+def test_scenario_5_validates_with_exactly_two_v10_approvals(catalog: Catalog) -> None:
     raw = SCENARIOS_BY_ID["buy_the_dip_tech"].plan
     plan = fill_defaults(Plan(plan_id="p", request=DIP_REQUEST, **raw))
     report = validate_plan(plan, catalog)
@@ -248,10 +255,10 @@ def test_scenario_6_validates_with_exactly_two_v10_approvals(catalog: Catalog) -
     ]  # nothing else: no WARN, no BLOCK, no look-ahead (an expanding threshold)
 
 
-def test_scenario_6_runs_end_to_end_and_replays_identically(settings: Settings) -> None:
+def test_scenario_5_runs_end_to_end_and_replays_identically(settings: Settings) -> None:
     session = run_request(DIP_REQUEST, ["NASDAQCOM"], "mock", approve=True, settings=settings)
     assert session.status == "completed" and not session.execution.issues
-    assert [a.issue_id for a in session.approvals] == SCENARIO_6_APPROVALS
+    assert [a.issue_id for a in session.approvals] == SCENARIO_5_APPROVALS
     assert session.narrative.grounding.grounded
     report = replay(session.run_id, settings)
     assert report.all_match, report.message
@@ -259,9 +266,9 @@ def test_scenario_6_runs_end_to_end_and_replays_identically(settings: Settings) 
     assert [s.replay_hash for s in report.steps] == original and len(original) == 7
 
 
-def test_scenario_6_flags_the_biggest_drops_from_past_data_only(settings: Settings) -> None:
+def test_scenario_5_flags_the_biggest_drops_from_past_data_only(settings: Settings) -> None:
     session = start("buy_the_dip_tech", settings)
-    session.approve(SCENARIO_6_APPROVALS)
+    session.approve(SCENARIO_5_APPROVALS)
     artifacts = session.execute().artifacts
     returns, flags = artifacts["s3"].value, artifacts["s4"].value
     # Each dip is below the 10% quantile of the returns BEFORE it (no look-ahead).
@@ -276,7 +283,7 @@ def test_scenario_6_flags_the_biggest_drops_from_past_data_only(settings: Settin
     assert narrative.grounding.grounded and narrative.issues == []
 
 
-def test_scenario_6_demo_edit_dataset_to_a_yield_blocks_returns_on_rates(
+def test_scenario_5_demo_edit_dataset_to_a_yield_blocks_returns_on_rates(
     settings: Settings,
 ) -> None:
     session = start("buy_the_dip_tech", settings)
@@ -287,27 +294,6 @@ def test_scenario_6_demo_edit_dataset_to_a_yield_blocks_returns_on_rates(
     assert [i.issue_id for i in report.blocks] == ["V07:s3", "V04:s5:series"]
     with pytest.raises(ExecutionRefusedError):
         session.execute()
-
-
-def test_scenario_5_full_sample_threshold_needs_approval_then_runs(settings: Settings) -> None:
-    session = start("vix_full_sample_lookahead", settings)
-    # The look-ahead approval, and the flagship's return-method approval: nothing else.
-    assert [(i.issue_id, i.action) for i in session.report.issues] == [
-        ("V09:s5", "APPROVE"),
-        ("V10:s6:return_method", "APPROVE"),
-    ]
-    v09 = session.report.issues[0]
-    assert "information from the future" in v09.message
-    assert "It also invalidates the significance test in s8" in v09.message
-    assert "method='expanding'" in v09.suggestion and "descriptive labelling" in v09.suggestion
-    with pytest.raises(ExecutionRefusedError, match="V09:s5"):
-        session.execute()  # not without the human's decision
-    session.approve(["V09:s5", "V10:s6:return_method"])
-    assert session.execute().status == "completed"
-    flags = session.execution.artifacts["s5"]
-    # Weekly flags above the whole history's 90th percentile: about 10% of the weeks.
-    assert flags.meta.frequency == "W" and 0.09 < flags.value.mean() < 0.11
-    assert "uses future data" in flags.meta.notes[0]
 
 
 def test_scenario_3_refusal_lists_what_the_registry_can_do(settings: Settings) -> None:

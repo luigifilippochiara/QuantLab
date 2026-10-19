@@ -92,11 +92,11 @@ also says the significance test is invalidated; changing the USD/CHF
 (V04: a forward return needs a price level, and a yield is a rate); changing only
 one of its two `resample` steps raises V08 (the flags and the returns would no
 longer share a frequency); and a quantile outside the registry's range would be
-blocked too (V03), though its field does not accept one. In example 6, changing
+blocked too (V03), though its field does not accept one. In example 5, changing
 `load_series.dataset_id` from NASDAQCOM to DGS10 is blocked by V07 (returns of a
 yield are meaningless, plus V04: a forward return needs a price level). Windows and
 minimum histories are counted in periods of the series' frequency, as their fields
-and the step summaries say: in example 6, switching `resample.freq` from W to D
+and the step summaries say: in example 5, switching `resample.freq` from W to D
 keeps `min_periods` at 52, which then means 52 trading days instead of 52 weeks. Any edit resets the
 approvals, which are recorded with the hash of the plan version they were given
 for. Execute stays disabled, with a one-line reason, while changes are unapplied,
@@ -107,7 +107,7 @@ the edited plan with identical hashes.
 
 ## Example workflows
 
-In mock mode the sidebar offers six ready-made requests; in live and cached
+In mock mode the sidebar offers five ready-made requests; in live and cached
 mode the sidebar hides them and you type the request. Together they cover one
 realistic task, a market-risk analyst identifying periods of unusual market
 behaviour, and the protections QuantLab applies along the way. They run with
@@ -169,19 +169,7 @@ app or with `cli demo`.
    example 3); this example shows the wall that holds when it does not, and
    automated tests confirm that nothing from the request reaches a shell or a
    subprocess.
-5. **Look-ahead protection** (`vix_full_sample_lookahead`): example 1's question
-   with one difference, the VIX threshold from its entire history:
-
-   > Is the Swiss franc a safe haven? Using weekly data, flag the weeks when the VIX is in the top 10% of its entire history, then compare next week's USD/CHF return in those weeks against the other weeks, with a HAC test for the difference.
-
-   The plan is example 1's with a full-sample threshold, which uses data nobody had
-   in the flagged week. QuantLab runs it only with explicit approval (V09), explains
-   that such a threshold judges past weeks using information from the future and
-   also invalidates the significance test, and recommends the expanding method. It
-   is an approval, not a block: a full-sample threshold is fine for labelling past
-   stress weeks but invalid as a signal or in a backtest, and only the analyst knows
-   which is meant. The outcome's return method is approved as in example 1 (V10).
-6. **Buy the dip in tech?** (`buy_the_dip_tech`): does the NASDAQ bounce back the
+5. **Buy the dip in tech?** (`buy_the_dip_tech`): does the NASDAQ bounce back the
    week after its biggest drops?
 
    > Buy the dip in tech? Using weekly NASDAQ returns, flag the weeks in the bottom 10%, the biggest drops, using only past data. Then test whether next week's return is higher after those weeks than after the other weeks.
@@ -207,7 +195,7 @@ on average after stress weeks, the opposite of a safe haven. The difference, +0.
 percentage points, has a Newey-West standard error of 0.133 percentage points (7
 lags) and a p-value of 0.51, so there is no statistically significant difference:
 in this sample the franc does not strengthen in the week after a stress week. The
-test looks at the following week, not at the stress week itself. Example 6 finds
+test looks at the following week, not at the stress week itself. Example 5 finds
 no bounce after the biggest NASDAQ drops: 334 dip weeks (below the 10th percentile
 of past weekly returns, from -1.5% in 1972 to -2.9% today), and the following
 week's return averaged -0.124% after a dip against +0.275% after other weeks, lower
@@ -302,7 +290,7 @@ to **mock**: everything keeps working offline with the canned plans.
 Two separate questions, measured separately:
 
 * **Does the planner choose the right plan?** Measured by `quantlab.cli eval` (or
-  `eval/run_eval.py`) on `eval/golden_requests.yaml`: the six example workflows,
+  `eval/run_eval.py`) on `eval/golden_requests.yaml`: the five example workflows,
   simple variations, and adversarial requests (such as a forecast) that must end
   in a refusal or a BLOCK. Metrics: valid-plan rate, exact capability-sequence
   match, capability-set Jaccard, key-parameter accuracy, guardrail-outcome match
@@ -311,13 +299,13 @@ Two separate questions, measured separately:
   mismatch shows exactly what the planner chose differently; `--case <id>` runs
   one case, such as the fully specified flagship (`s1_chf_safe_haven`).
   Reports go to `eval/reports/`. In mock mode this checks the harness only
-  (the mock knows just the six examples); `--mode live` measures the real model.
+  (the mock knows just the five examples); `--mode live` measures the real model.
 * **Are the computations right?** Measured by the unit tests, independently of
   any model: returns, differences, spread alignment, rolling volatility and
   annualisation, the no-look-ahead property of expanding flags, forward returns,
   group comparisons and episode counts, the Newey-West test against a direct
   statsmodels fit, every guardrail, plan editing, replay, grounding, a source
-  safety scan, and a golden record of the six example workflows' results.
+  safety scan, and a golden record of the five example workflows' results.
 
 ## Project layout
 

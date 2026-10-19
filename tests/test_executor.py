@@ -27,7 +27,7 @@ from conftest import (
     VOLATILITY_APPROVALS,
     as_plan,
     build_synthetic_data_dir,
-    raw_plan,
+    look_ahead_plan,
     volatility_plan,
 )
 
@@ -114,7 +114,7 @@ def test_dry_run_metadata_matches_runtime_metadata(name: str, catalog: Catalog) 
         "volatility": volatility_plan(),
         "spread": SPREAD_PLAN,
         "daily_volatility": daily_volatility_plan(),
-        "lookahead": raw_plan("vix_full_sample_lookahead"),
+        "lookahead": look_ahead_plan(),
     }
     plan = as_plan(raw[name])
     report = validate_plan(plan, catalog)

@@ -1,9 +1,9 @@
-"""Example workflows 1-6: requests, datasets, hand-written plans and expected outcomes.
+"""Example workflows 1-5: requests, datasets, hand-written plans and expected outcomes.
 
-The six examples follow one realistic task, a market-risk analyst identifying
+The five examples follow one realistic task, a market-risk analyst identifying
 periods of unusual market behaviour, and the protections QuantLab applies along
 the way. They are the only examples: the sidebar, `cli demo`, the golden set and
-the MockPlanner know these six and nothing else.
+the MockPlanner know these five and nothing else.
 
 1. Is the Swiss franc a safe haven? (`chf_safe_haven_success`), the flagship: does
    the Swiss franc strengthen after stress weeks? Weekly VIX levels flagged above an
@@ -26,14 +26,7 @@ the MockPlanner know these six and nothing else.
    capability (`run_python`); the validator blocks it deterministically (V02
    UNKNOWN_CAPABILITY) before approval, so nothing is ever executed. Example 3 shows
    the planner refusing; this one shows the wall that holds when it does not.
-5. Look-ahead protection (`vix_full_sample_lookahead`): example 1's question with
-   one difference, the VIX threshold from its entire history. The full-sample
-   threshold uses future data, so it needs approval (V09 LOOK_AHEAD), which also
-   says the significance test is invalidated. Its action is APPROVE, not BLOCK: a
-   full-sample threshold is acceptable for descriptively labelling past stress weeks
-   but invalid as a signal or in a backtest. The system cannot know the intent, so
-   the human decides.
-6. Buy the dip in tech? (`buy_the_dip_tech`): does the NASDAQ bounce back the week
+5. Buy the dip in tech? (`buy_the_dip_tech`): does the NASDAQ bounce back the week
    after its biggest drops? The weeks whose return is in the bottom 10% of past
    weekly returns (`flag_regime` with direction below, an expanding threshold), then
    a comparison and a significance test of the following week's return. It runs
@@ -42,7 +35,7 @@ the MockPlanner know these six and nothing else.
 Role in the architecture: data, shared by
 - the MockPlanner (returns these plans instead of calling an LLM, so the whole
   system works offline and whenever the LLM API is unavailable),
-- the CLI `demo` command (runs all six and checks the expected outcomes),
+- the CLI `demo` command (runs all five and checks the expected outcomes),
 - the Streamlit sidebar (buttons that prefill the request),
 - the tests and the evaluation golden set.
 
@@ -63,7 +56,7 @@ class Scenario:
 
     Fields:
         id: stable identifier, e.g. "chf_safe_haven_success".
-        number: position in the list of examples, 1-6.
+        number: position in the list of examples, 1-5.
         label: short button label, e.g. "1 · Is the Swiss franc a safe haven?".
         request: the natural-language request.
         dataset_ids: datasets selected for the request.
@@ -149,74 +142,49 @@ FLAGSHIP_REQUEST = (
     "whether they differ."
 )
 
-# Example 5's request: the same question, with the VIX threshold from its entire
-# history (the one difference, which needs the look-ahead approval).
-LOOK_AHEAD_REQUEST = (
-    "Is the Swiss franc a safe haven? Using weekly data, flag the weeks when the VIX is in "
-    "the top 10% of its entire history, then compare next week's USD/CHF return in those "
-    "weeks against the other weeks, with a HAC test for the difference."
-)
-
-
-def _safe_haven_steps(method: str) -> list[dict[str, Any]]:
-    """Examples 1 and 5's plan: the same steps, with the VIX threshold's method.
-
-    Every parameter is written out (no hidden defaults).
-
-    Args:
-        method: "expanding" (example 1, past data only) or "full_sample" (example 5,
-            the entire history).
-    """
-    flag_rationale = {
-        "expanding": "Flag weeks when the VIX is above the 90th percentile of its past levels.",
-        "full_sample": "Flag weeks when the VIX is above the 90th percentile of its whole history.",
-    }[method]
-    return [
-        # The two series named in the request: the stress signal and the currency.
-        _step("s1", "load_series", params={"dataset_id": "VIXCLS"},
-              rationale="Load the VIX daily closes, the stress signal."),
-        # DEXSZUS is quoted in Swiss francs per US dollar (USD/CHF): a fall means the
-        # franc strengthened against the dollar.
-        _step("s2", "load_series", params={"dataset_id": "DEXSZUS"},
-              rationale="Load the USD/CHF rate, in Swiss francs per US dollar."),
-        # Both to weekly Friday closes by the same rule, so a flag and the next-week
-        # return of the same week carry the same date when s7 and s8 align them. The
-        # weekly VIX is its Friday close, the level known when the week ends (a weekly
-        # mean would mix in the days before).
-        _step("s3", "resample", {"series": "s1"}, {"freq": "W", "how": "last"},
-              rationale="Weekly VIX: the Friday close."),
-        _step("s4", "resample", {"series": "s2"}, {"freq": "W", "how": "last"},
-              rationale="Weekly Friday USD/CHF rates, on the same weeks as the VIX."),
-        # The VIX is already a volatility (the market's expected 30-day volatility of
-        # the S&P 500, annualised, in percent), so its level is flagged directly: no
-        # returns and no rolling volatility. "Top 10%" is above the 90th percentile;
-        # with the expanding method each threshold uses past weeks only (after 52
-        # weeks of history), so every flag could have been set at the time.
-        _step("s5", "flag_regime", {"series": "s3"},
-              {"method": method, "quantile": 0.90, "min_periods": 52, "direction": "above"},
-              rationale=flag_rationale),
-        # The outcome: next week's SIMPLE USD/CHF return, from the weekly rates (s4), so
-        # it starts at the close of the flagged week. Simple, not log: a mean of log
-        # returns is lower by about half the variance, which would bias the comparison
-        # against the more volatile weeks. forward_return turns the levels into the
-        # return itself: no compute_returns step is needed.
-        _step("s6", "forward_return", {"series": "s4"}, {"method": "simple"},
-              rationale="Next week's simple USD/CHF return: negative when the franc strengthened."),
-        # A flag on one series grouping the returns of another: both are weekly, and
-        # the two steps below keep only the weeks they share (from 1991: the VIX starts
-        # in 1990, and its flags after 52 weeks). Describe first...
-        _step("s7", "compare_groups", {"values": "s6", "flags": "s5"},
-              rationale="Describe next-week USD/CHF returns after high-VIX and other weeks."),
-        # ...then test that same difference (the registry's one significance test),
-        # with standard errors that allow for unequal variances and for clustered
-        # stress (lags set by the Newey-West rule).
-        _step("s8", "hac_mean_difference", {"outcome": "s6", "flags": "s5"},
-              rationale="Test the difference in means with Newey-West standard errors."),
-    ]  # fmt: skip
-
-
-# Example 1's plan.
-FLAGSHIP_STEPS = _safe_haven_steps("expanding")
+# Example 1's plan. Every parameter is written out (no hidden defaults).
+FLAGSHIP_STEPS = [
+    # The two series named in the request: the stress signal and the currency.
+    _step("s1", "load_series", params={"dataset_id": "VIXCLS"},
+          rationale="Load the VIX daily closes, the stress signal."),
+    # DEXSZUS is quoted in Swiss francs per US dollar (USD/CHF): a fall means the
+    # franc strengthened against the dollar.
+    _step("s2", "load_series", params={"dataset_id": "DEXSZUS"},
+          rationale="Load the USD/CHF rate, in Swiss francs per US dollar."),
+    # Both to weekly Friday closes by the same rule, so a flag and the next-week
+    # return of the same week carry the same date when s7 and s8 align them. The
+    # weekly VIX is its Friday close, the level known when the week ends (a weekly
+    # mean would mix in the days before).
+    _step("s3", "resample", {"series": "s1"}, {"freq": "W", "how": "last"},
+          rationale="Weekly VIX: the Friday close."),
+    _step("s4", "resample", {"series": "s2"}, {"freq": "W", "how": "last"},
+          rationale="Weekly Friday USD/CHF rates, on the same weeks as the VIX."),
+    # The VIX is already a volatility (the market's expected 30-day volatility of the
+    # S&P 500, annualised, in percent), so its level is flagged directly: no returns
+    # and no rolling volatility. "High" is read as the top 10%: above the 90th
+    # percentile; with the expanding method each threshold uses past weeks only
+    # (after 52 weeks of history), so every flag could have been set at the time.
+    _step("s5", "flag_regime", {"series": "s3"},
+          {"method": "expanding", "quantile": 0.90, "min_periods": 52, "direction": "above"},
+          rationale="Flag weeks when the VIX is above the 90th percentile of its past levels."),
+    # The outcome: next week's SIMPLE USD/CHF return, from the weekly rates (s4), so it
+    # starts at the close of the flagged week. Simple, not log: a mean of log returns
+    # is lower by about half the variance, which would bias the comparison against
+    # the more volatile weeks. forward_return turns the levels into the return
+    # itself: no compute_returns step is needed.
+    _step("s6", "forward_return", {"series": "s4"}, {"method": "simple"},
+          rationale="Next week's simple USD/CHF return: negative when the franc strengthened."),
+    # A flag on one series grouping the returns of another: both are weekly, and the
+    # two steps below keep only the weeks they share (from 1991: the VIX starts in
+    # 1990, and its flags after 52 weeks). Describe first...
+    _step("s7", "compare_groups", {"values": "s6", "flags": "s5"},
+          rationale="Describe next-week USD/CHF returns after high-VIX and other weeks."),
+    # ...then test that same difference (the registry's one significance test), with
+    # standard errors that allow for unequal variances and for clustered stress (lags
+    # set by the Newey-West rule).
+    _step("s8", "hac_mean_difference", {"outcome": "s6", "flags": "s5"},
+          rationale="Test the difference in means with Newey-West standard errors."),
+]  # fmt: skip
 
 # The plan's declared assumptions, shown to the analyst as the planner's notes.
 FLAGSHIP_NOTES = (
@@ -233,14 +201,14 @@ FLAGSHIP_NOTES = (
 )
 
 
-# Example 6's request: buy the dip in tech?
+# Example 5's request: buy the dip in tech?
 DIP_REQUEST = (
     "Buy the dip in tech? Using weekly NASDAQ returns, flag the weeks in the bottom 10%, the "
     "biggest drops, using only past data. Then test whether next week's return is higher "
     "after those weeks than after the other weeks."
 )
 
-# Example 6's plan. Every parameter is written out (no hidden defaults).
+# Example 5's plan. Every parameter is written out (no hidden defaults).
 DIP_STEPS = [
     _step("s1", "load_series", params={"dataset_id": "NASDAQCOM"},
           rationale="Load the NASDAQ Composite daily closes."),
@@ -427,33 +395,9 @@ SCENARIOS: list[Scenario] = [
         ),
     ),
     Scenario(
-        id="vix_full_sample_lookahead",
-        number=5,
-        label="5 · Look-ahead protection",
-        request=LOOK_AHEAD_REQUEST,
-        dataset_ids=("VIXCLS", "DEXSZUS"),
-        expected_status="completed",
-        # The look-ahead approval of the full-sample threshold, and the outcome's return
-        # method: example 1's plan with one difference.
-        expected_codes=("V09", "V10"),
-        auto_approve=True,
-        keywords=(("vix",), ("entire history", "full sample", "full-sample")),
-        # "Its entire history" asks for ONE threshold from all the data, past and
-        # future: method full_sample. A correct reading of the request, which still
-        # uses data nobody had in the flagged week: the validator asks the analyst to
-        # approve it (V09), and says that it also invalidates the significance test,
-        # rather than blocking a legitimate descriptive question.
-        plan=_plan(
-            ["VIXCLS", "DEXSZUS"],
-            _safe_haven_steps("full_sample"),
-            "As example 1, except that the request asks for a threshold from the entire VIX "
-            "history, so the flags use a full-sample threshold (future data included).",
-        ),
-    ),
-    Scenario(
         id="buy_the_dip_tech",
-        number=6,
-        label="6 · Buy the dip in tech?",
+        number=5,
+        label="5 · Buy the dip in tech?",
         request=DIP_REQUEST,
         dataset_ids=("NASDAQCOM",),
         expected_status="completed",
@@ -472,7 +416,6 @@ MATCH_ORDER = (
     "prompt_injection_unknown_capability",
     "arima_forecast_block",
     "spread_frequency_mismatch_block",
-    "vix_full_sample_lookahead",
     "chf_safe_haven_success",
     "buy_the_dip_tech",
 )
@@ -481,7 +424,7 @@ MATCH_ORDER = (
 def match_scenario(request: str) -> Scenario | None:
     """Find the demo scenario a request corresponds to.
 
-    Matches the exact request text, the scenario id or number ("1".."6"), or keywords.
+    Matches the exact request text, the scenario id or number ("1".."5"), or keywords.
 
     Args:
         request: the user's request.

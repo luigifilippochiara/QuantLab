@@ -51,9 +51,11 @@ def test_mock_planner_returns_each_canned_plan(scenario) -> None:
 def test_mock_planner_matches_by_keyword() -> None:
     result = MockPlanner().generate_plan("please PREDICT the nasdaq with a neural net", [])
     assert result.plan.cannot_fulfill  # scenario 3's refusal, not a NASDAQ plan
-    result = MockPlanner().generate_plan("VIX weeks above a full-sample threshold", [])
+    result = MockPlanner().generate_plan(
+        "Is the franc safe when the VIX is high (only past data)?", []
+    )
     flags = next(s for s in result.plan.steps if s.capability == "flag_regime")
-    assert flags.params["method"] == "full_sample"  # scenario 5
+    assert flags.params["method"] == "expanding"  # scenario 1, the flagship
 
 
 def test_system_prompt_keeps_forward_returns_as_outcomes(catalog: Catalog) -> None:

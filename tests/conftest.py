@@ -206,7 +206,7 @@ ARIMA_PLAN: dict[str, Any] = {
     "cannot_fulfill": False,
 }
 
-# A NASDAQ volatility-regime plan, kept as a test fixture (it was example 6 until the
+# A NASDAQ volatility-regime plan, kept as a test fixture (it was an example until the
 # buy-the-dip example replaced it): weekly log returns, their 12-week annualised
 # rolling volatility, flags above its expanding 90th percentile, then the following
 # week's simple return, compared and tested. The only plan using log returns and
@@ -270,14 +270,37 @@ VOLATILITY_APPROVALS = [RETURN_METHOD_APPROVAL, FORWARD_METHOD_APPROVAL]
 # outcome, forward_return (s6, next week's simple USD/CHF return).
 SCENARIO_1_APPROVALS = ["V10:s6:return_method"]
 
-# The approvals scenario 6 (buy the dip) needs: the return method of the weekly
+# The approvals scenario 5 (buy the dip) needs: the return method of the weekly
 # returns it flags (s3) and of the following week's return (s5), both simple.
-SCENARIO_6_APPROVALS = ["V10:s3:return_method", "V10:s5:return_method"]
+SCENARIO_5_APPROVALS = ["V10:s3:return_method", "V10:s5:return_method"]
 
 
 def raw_plan(scenario_id: str) -> dict[str, Any]:
     """A deep copy of a demo scenario's canned plan, as a dict a test may mutate."""
     return copy.deepcopy(SCENARIOS_BY_ID[scenario_id].plan)
+
+
+# A full-sample threshold, kept as a test fixture for the look-ahead guardrail (V09):
+# the days when the VIX was in the top 5% of its entire history, a threshold that uses
+# data nobody had on the flagged day. No significance test follows it.
+LOOK_AHEAD_PLAN: dict[str, Any] = {
+    "dataset_ids": ["VIXCLS"],
+    "steps": [
+        {"id": "s1", "capability": "load_series", "params": {"dataset_id": "VIXCLS"}},
+        {
+            "id": "s2",
+            "capability": "flag_regime",
+            "inputs": {"series": "s1"},
+            "params": {"method": "full_sample", "quantile": 0.95, "direction": "above"},
+        },
+    ],
+    "cannot_fulfill": False,
+}
+
+
+def look_ahead_plan() -> dict[str, Any]:
+    """A deep copy of LOOK_AHEAD_PLAN, as a dict a test may mutate."""
+    return copy.deepcopy(LOOK_AHEAD_PLAN)
 
 
 def volatility_plan() -> dict[str, Any]:

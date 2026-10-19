@@ -27,12 +27,18 @@ from quantlab.narrator import (
 from quantlab.plan import Plan
 from quantlab.types import Artifact, ArtifactMeta, DataType, Frequency, TokenUsage
 
-from conftest import QUOTE_CONVENTIONS, SPREAD_PLAN, as_plan, raw_plan, volatility_plan
+from conftest import (
+    QUOTE_CONVENTIONS,
+    SPREAD_PLAN,
+    as_plan,
+    look_ahead_plan,
+    volatility_plan,
+)
 from fakes import FakeAnthropicClient, FakeOpenAIClient, openai_text_response, text_response
 
 PLANS = {
     "volatility": volatility_plan(),
-    "lookahead": raw_plan("vix_full_sample_lookahead"),
+    "lookahead": look_ahead_plan(),
     "spread": SPREAD_PLAN,
 }
 

@@ -32,11 +32,11 @@ from quantlab.plan import Step
 from quantlab.registry import REGISTRY
 from quantlab.types import TokenUsage
 
-from conftest import SCENARIO_6_APPROVALS, as_plan, volatility_plan
+from conftest import SCENARIO_5_APPROVALS, as_plan, volatility_plan
 from fakes import FakeAnthropicClient, text_response
 
 PAGES = PROJECT_ROOT / "app" / "pages"
-SCENARIO_6_REQUEST = SCENARIOS_BY_ID["buy_the_dip_tech"].request
+SCENARIO_5_REQUEST = SCENARIOS_BY_ID["buy_the_dip_tech"].request
 
 
 @pytest.fixture
@@ -65,7 +65,7 @@ def button(app: AppTest, label: str):
 
 
 def approve_all(app: AppTest) -> None:
-    """Tick every approval checkbox (e.g. scenario 6's two return methods)."""
+    """Tick every approval checkbox (e.g. scenario 5's two return methods)."""
     for key in [c.key for c in app.checkbox if c.key.startswith("approve-")]:
         app.checkbox(key=key).check()
     app.run()
@@ -74,7 +74,7 @@ def approve_all(app: AppTest) -> None:
 def test_scenario_1_full_flow(app_env: Settings) -> None:
     app = open_page("analysis.py")
     labels = [b.label for b in app.sidebar.button]
-    assert labels[0] == "1 · Is the Swiss franc a safe haven?" and len(labels) == 6
+    assert labels[0] == "1 · Is the Swiss franc a safe haven?" and len(labels) == 5
     app.sidebar.button(key="scenario-chf_safe_haven_success").click().run()
     button(app, "Generate plan").click().run()
     assert not app.exception, app.exception
@@ -143,7 +143,7 @@ def test_header_describes_the_product(app_env: Settings) -> None:
 
 @pytest.mark.parametrize("mode", ["live", "cached"])
 def test_example_workflows_only_in_mock_mode(mode: str, app_env: Settings) -> None:
-    assert len(open_page("analysis.py").sidebar.button) == 6  # mock: the six examples
+    assert len(open_page("analysis.py").sidebar.button) == 5  # mock: the five examples
     app = open_page("analysis.py", llm_mode=mode)
     assert len(app.sidebar.button) == 0
     assert not any(h.value == "Example workflows" for h in app.sidebar.header)
@@ -170,7 +170,7 @@ def test_datasets_are_labelled_id_first_with_full_names_on_hover(app_env: Settin
     assert 'title="NASDAQCOM — Synthetic equity index, full name"' in line
     assert "<b>NASDAQCOM — Synthetic equity index</b>" in line
 
-    app.text_area(key="request_text").input(SCENARIO_6_REQUEST).run()
+    app.text_area(key="request_text").input(SCENARIO_5_REQUEST).run()
     button(app, "Generate plan").click().run()
     load = next(s for s in app.selectbox if s.key.endswith("-s1-dataset_id"))
     assert load.value == "NASDAQCOM"  # the plan still holds the id
@@ -283,7 +283,7 @@ def test_ungrounded_llm_narrative_is_withheld_with_an_n01_issue(app_env: Setting
     scenario = SCENARIOS_BY_ID["buy_the_dip_tech"]
     session = Session.start(scenario.request, list(scenario.dataset_ids), "mock", app_env)
     session.create_plan()
-    session.approve(SCENARIO_6_APPROVALS)
+    session.approve(SCENARIO_5_APPROVALS)
     session.execute()
     invented = "Volatility peaked at 123.456 during the flagged weeks."
     session.mode, session.client = "live", FakeAnthropicClient(text_response(invented))
@@ -466,8 +466,8 @@ def issue_codes(app: AppTest) -> set[str]:
             and "**" in m.value}  # fmt: skip
 
 
-def plan_scenario_6(app_env: Settings) -> AppTest:
-    """The analysis page with scenario 6's plan generated (the NASDAQ-only analysis)."""
+def plan_scenario_5(app_env: Settings) -> AppTest:
+    """The analysis page with scenario 5's plan generated (buy the dip)."""
     app = open_page("analysis.py")
     app.sidebar.button(key="scenario-buy_the_dip_tech").click().run()
     button(app, "Generate plan").click().run()
@@ -475,7 +475,7 @@ def plan_scenario_6(app_env: Settings) -> AppTest:
 
 
 def test_weekly_to_daily_edit_re_validates_and_runs_after_re_approval(app_env: Settings) -> None:
-    app = plan_scenario_6(app_env)
+    app = plan_scenario_5(app_env)
     assert any("adjust parameters below" in i.value for i in app.info)
     history = next(n for n in app.number_input if n.key.endswith("-s4-min_periods"))
     assert history.label == "min_periods (in periods of the series frequency)"
@@ -500,7 +500,7 @@ def test_weekly_to_daily_edit_re_validates_and_runs_after_re_approval(app_env: S
 
 
 def test_one_click_applies_a_typed_value(app_env: Settings) -> None:
-    app = plan_scenario_6(app_env)
+    app = plan_scenario_5(app_env)
     # Apply is enabled before any change is seen: a number field sends a typed value only
     # with the next interaction, so a disabled button would swallow the first click.
     assert not button(app, "Apply changes").disabled
@@ -516,7 +516,7 @@ def test_one_click_applies_a_typed_value(app_env: Settings) -> None:
 
 
 def test_apply_is_highlighted_only_while_there_are_unapplied_edits(app_env: Settings) -> None:
-    app = plan_scenario_6(app_env)
+    app = plan_scenario_5(app_env)
 
     def apply_style() -> str:
         return app.button(key="apply-edits").proto.type
@@ -538,7 +538,7 @@ def test_apply_is_highlighted_only_while_there_are_unapplied_edits(app_env: Sett
 
 
 def test_execute_ignores_a_click_while_a_change_is_not_applied(app_env: Settings) -> None:
-    app = plan_scenario_6(app_env)
+    app = plan_scenario_5(app_env)
     approve_all(app)
     # A value typed, then Execute clicked straight away: both reach the same run, where
     # the unapplied change disables Execute, so Streamlit does not count the click.
@@ -550,7 +550,7 @@ def test_execute_ignores_a_click_while_a_change_is_not_applied(app_env: Settings
 
 
 def test_full_sample_edit_raises_v09_and_reset_clears_it(app_env: Settings) -> None:
-    app = plan_scenario_6(app_env)
+    app = plan_scenario_5(app_env)
     next(s for s in app.selectbox if s.key.endswith("-s4-method")).select("full_sample").run()
     button(app, "Apply changes").click().run()
     assert issue_codes(app) == {"V09", "V10"}
@@ -564,7 +564,7 @@ def step_headers(app: AppTest) -> list[tuple[str, bool]]:
 
 
 def test_plan_steps_are_collapsed_and_approvals_stay_in_validation(app_env: Settings) -> None:
-    app = plan_scenario_6(app_env)
+    app = plan_scenario_5(app_env)
     headers = step_headers(app)
     assert [is_open for _, is_open in headers] == [False] * 7  # the V10 steps too
     assert headers[0][0] == "Step 1 · C01 · Load series · NASDAQCOM — Synthetic equity index"
@@ -587,7 +587,7 @@ def test_plan_steps_are_collapsed_and_approvals_stay_in_validation(app_env: Sett
 
 
 def test_edits_are_marked_and_period_counts_follow_the_frequency(app_env: Settings) -> None:
-    app = plan_scenario_6(app_env)
+    app = plan_scenario_5(app_env)
     next(s for s in app.selectbox if s.key.endswith("-s2-freq")).select("D").run()
     button(app, "Apply changes").click().run()
     headers = step_headers(app)

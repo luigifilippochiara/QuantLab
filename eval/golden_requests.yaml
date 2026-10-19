@@ -22,7 +22,7 @@
 # workflows among them also give their canned plan and outcome, which are reported
 # item by item for information (a live planner may block for another reason).
 #
-# The six example workflows come first, one entry each, with the plan and the
+# The five example workflows come first, one entry each, with the plan and the
 # codes of their canned plans.
 
 # The flagship request names the series, a threshold from past data only, the
@@ -66,22 +66,11 @@
   capabilities: [load_series, run_python]
   guardrails: {approve: [], warn: [], block: [V02]}
 
-# The flagship's question with "its entire history": the same plan with a full-sample
-# threshold, valid, with the look-ahead approval and the outcome's return method.
-- id: s5_vix_full_sample_lookahead
-  scenario: vix_full_sample_lookahead
-  expect: plan
-  capabilities: [load_series, load_series, resample, resample, flag_regime, forward_return,
-                 compare_groups, hac_mean_difference]
-  key_params:
-    flag_regime: {method: full_sample, quantile: 0.90}
-  guardrails: {approve: [V09, V10], warn: [], block: []}
-
 # Buy the dip: the bottom 10% of past weekly returns (direction below, expanding),
 # then the following week's return compared and tested. The request does not state
 # the return methods, so only the flag's parameters are key; two return-method
 # approvals, no warning, no block.
-- id: s6_buy_the_dip_tech
+- id: s5_buy_the_dip_tech
   scenario: buy_the_dip_tech
   expect: plan
   capabilities: [load_series, resample, compute_returns, flag_regime, forward_return,

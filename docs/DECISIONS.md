@@ -1857,3 +1857,24 @@ other weeks and test whether they differ. It no longer says "weekly" or "top 10%
   threshold. The quantile is no longer one.
 - **The canned plans' version** is now `canned-scenarios-v15`. The new request gets its
   own cache entry, and no cache entry was deleted.
+
+## The look-ahead example is removed; buy the dip is example 5
+
+**There are now five examples**: 1 the Swiss franc, 2 the yield curve, 3 the ARIMA
+forecast, 4 the prompt injection, and 5 buy the dip (moved from 6).
+- **Look-ahead example removed:** the request, the canned plan, the eval case and the one
+  cached plan tied only to it ("Flag the days when the VIX was in the top 5% of its entire
+  history.").
+- **Flagship steps written out again:** the function that built them for both examples
+  had a parameter only that example used, so the flagship's steps are a plain list.
+- **The look-ahead guardrail stays covered:**
+  - a small fixture (`conftest.LOOK_AHEAD_PLAN`: the VIX, flagged above the full-sample
+    95th percentile) now anchors the V09 tests that used the example, and the dry-run and
+    narrator cases;
+  - a new test edits the flagship's threshold to the full history and checks V09 APPROVE
+    on s5, whose message says the test in s8 is invalidated;
+  - example 2 still raises V09 too.
+- **Golden records:** a `LOOK_AHEAD_REMOVED` migration marks the example and its eval case
+  as replaced (by nothing), and renames the dip's eval case `s6_buy_the_dip_tech` to
+  `s5_buy_the_dip_tech`. Every remaining result is unchanged, so no record was added.
+- **The canned plans' version** is now `canned-scenarios-v16`.
