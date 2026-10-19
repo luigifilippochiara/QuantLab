@@ -86,6 +86,11 @@ with st.container(border=True):
             hide_index=True,
             alt="User edits",
         )  # fmt: skip
+        note = labels.periods_caption(
+            (capabilities.get(c.step_id), c.param) for c in record.param_diff
+        )
+        if note:
+            st.caption(note)
     else:
         st.caption("No user edits: every parameter is as the planner proposed it.")
     with st.expander("Manifest (JSON)", icon=":material/data_object:"):

@@ -265,9 +265,8 @@ SCENARIOS: list[Scenario] = [
         number=2,
         label="2 · Frequency-alignment protection",
         request=(
-            "When did the recession alarm ring? Compute the spread between the weekly 10-year "
-            "Treasury yield and the daily 2-year Treasury yield, and show the weeks when the "
-            "curve was most negative."
+            "Compute the spread between the weekly 10-year Treasury yield and the daily 2-year "
+            "Treasury yield, and flag the weeks when the curve was most negative."
         ),
         dataset_ids=("DGS10", "DGS2"),
         expected_status="blocked",

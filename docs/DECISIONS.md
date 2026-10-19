@@ -2043,3 +2043,27 @@ validator rule or planner rule links them.
   unchanged). Its title stays "Is the Swiss franc a safe haven?", a title only.
 - **Versions.** The canned plans are `canned-scenarios-v18`.
 
+## Example 2's shorter request; "how" values and the periods note in the labels
+
+**Example 2's request** is now "Compute the spread between the weekly 10-year Treasury
+yield and the daily 2-year Treasury yield, and flag the weeks when the curve was most
+negative." The opening question is gone; the title stays "Frequency-alignment
+protection". The plan and outcome are unchanged (V08 BLOCK, V09 to approve), and so are
+the golden records, which hold no request text: they pass untouched. The canned plans
+are `canned-scenarios-v19`.
+- **The fix in the app is Daily, not weekly.** The plan feeds the daily 2-year yield
+  straight into the spread, and steps are locked, so no edit can resample it to weekly.
+  Setting the 10-year's resample to Daily aligns the two; the validator's suggestion
+  (resample the 2-year to weekly) describes the fix for a new request.
+- **resample's `how` values read "Last" and "Mean"** everywhere they are shown (the
+  step summary, the editor, the trace, run-history edits, the registry page). The plan
+  keeps `last` and `mean`; the editor's select box stores the code, so choosing the
+  label already shown is no edit. The parameter's name stays `how`.
+- **"Minimum history" (and "Window") lose their suffix** "(in periods of the series
+  frequency)". In the editor, the field's tooltip is the registry's description, which
+  already says what the number is counted in ("52 = 52 weeks on weekly data, 52 trading
+  days on daily data"; a test keeps it so); appending the note there only repeated it.
+  Read-only lists of parameters (the trace, run-history edits) get a grey caption,
+  `labels.PERIODS_NOTE`, for the parameters the registry marks `counted_in_periods`.
+  The step summary already writes the unit ("Window: 12 weeks").
+

@@ -36,6 +36,8 @@ from conftest import SCENARIO_5_APPROVALS, as_plan, volatility_plan
 from fakes import FakeAnthropicClient, text_response
 
 PAGES = PROJECT_ROOT / "app" / "pages"
+# labels.PERIODS_NOTE, as the analyst reads it (app/ is importable only inside a test).
+PERIODS_NOTE = "Measured in periods of the series' frequency (e.g. weeks for weekly data)."
 SCENARIO_5_REQUEST = SCENARIOS_BY_ID["buy_the_dip_tech"].request
 
 
@@ -497,8 +499,9 @@ def test_weekly_to_daily_edit_re_validates_and_runs_after_re_approval(app_env: S
     app = plan_scenario_5(app_env)
     assert any("adjust parameters below" in i.value for i in app.info)
     history = next(n for n in app.number_input if n.key.endswith("-s4-min_periods"))
-    assert history.label == "Minimum history (in periods of the series frequency)"
-    assert history.value == 52
+    # The label is the parameter's name; what its number is counted in is in the tooltip.
+    assert history.label == "Minimum history" and history.value == 52
+    assert "counted in periods of the input's frequency" in history.help
 
     next(s for s in app.selectbox if s.key.endswith("-s2-freq")).select("D").run()
     assert button(app, "Execute").disabled  # the change is not applied yet
@@ -516,6 +519,8 @@ def test_weekly_to_daily_edit_re_validates_and_runs_after_re_approval(app_env: S
     params = dict(zip(trace["step"], trace["params"], strict=True))
     assert "Frequency: Daily (edited, was Weekly)" in params["s2"]
     assert "(edited" not in params["s4"]  # planner-proposed values are not marked
+    # Under the trace, a grey note says what the minimum history is counted in.
+    assert any(c.value == f"Minimum history: m{PERIODS_NOTE[1:]}" for c in app.caption)
 
 
 def test_one_click_applies_a_typed_value(app_env: Settings) -> None:
@@ -612,14 +617,15 @@ def test_edits_are_marked_and_period_counts_follow_the_frequency(app_env: Settin
     button(app, "Apply changes").click().run()
     headers = step_headers(app)
     assert headers[1] == (
-        "Step 2 · C02 · Resample · Frequency: Daily, how: last :blue-badge[:material/edit: edited]",
+        "Step 2 · C02 · Resample · Frequency: Daily, how: Last :blue-badge[:material/edit: edited]",
         False,
     )
-    # min_periods 52 now counts trading days: its field says it is counted in periods
+    # min_periods 52 now counts trading days: its tooltip says it is counted in periods
     # of the series frequency (the summary of a window shows the unit: see
     # test_step_summary_falls_back_to_every_parameter), and nothing warns.
     history = next(n for n in app.number_input if n.key.endswith("-s4-min_periods"))
-    assert history.label == "Minimum history (in periods of the series frequency)"
+    assert history.label == "Minimum history"
+    assert "counted in periods of the input's frequency" in history.help
     assert history.value == 52
     assert not any("Warning]" in label for label, _ in headers)
     # The new V10 approvals of this plan version open nothing and add no badge.
@@ -692,6 +698,12 @@ def test_every_registered_choice_has_a_label_that_round_trips(app_env: Settings)
         "Daily", "Weekly", "Monthly",
     ]  # fmt: skip
     assert labels.param_label("resample", "freq") == "Frequency"
+    # resample's `how`: its values are capitalised, its name is kept.
+    how = REGISTRY["resample"].param("how")
+    assert [labels.param_value_label("resample", "how", c) for c in how.choices] == [
+        "Last", "Mean",
+    ]  # fmt: skip
+    assert labels.param_label("resample", "how") == "how"
     # Every labelled parameter: each allowed code has its own label, and the label leads
     # back to the code (label -> code -> label), so the editor can show labels and
     # still write codes.
@@ -712,9 +724,18 @@ def test_every_registered_choice_has_a_label_that_round_trips(app_env: Settings)
             for code, label in shown.items():
                 assert to_code[label] == code  # label -> code
                 assert labels.param_value_label(spec.name, spec_param.name, code) == label
+    # Every parameter counted in periods: a short label, and a description (the editor's
+    # tooltip) that says what its number is counted in; read-only views add the note.
+    for spec in REGISTRY.values():
+        for spec_param in spec.params:
+            if spec_param.counted_in_periods:
+                assert "(in periods" not in labels.param_label(spec.name, spec_param.name)
+                assert "counted in periods of the input's frequency" in spec_param.description
+                assert labels.param_note(spec.name, spec_param.name) == PERIODS_NOTE
+    assert labels.param_note("flag_regime", "quantile") is None
     # Anything unmapped is shown as it is.
-    assert labels.param_label("resample", "how") == "how"
-    assert labels.param_value_label("resample", "how", "last") == "last"
+    assert labels.param_label("compute_returns", "periods") == "periods"
+    assert labels.param_value_label("compute_returns", "periods", 1) == "1"
     assert labels.param_label("arima", "steps_ahead") == "steps_ahead"
     assert labels.stat_label("n_eff") == "n_eff" and labels.kind_label("new_kind") == "new_kind"
 
@@ -722,13 +743,22 @@ def test_every_registered_choice_has_a_label_that_round_trips(app_env: Settings)
 def test_the_editor_shows_labels_but_the_plan_keeps_its_codes(app_env: Settings) -> None:
     app = plan_scenario_5(app_env)
     headers = step_headers(app)
-    assert headers[1][0] == "Step 2 · C02 · Resample · Frequency: Weekly, how: last"
+    assert headers[1][0] == "Step 2 · C02 · Resample · Frequency: Weekly, how: Last"
     freq = next(s for s in app.selectbox if s.key.endswith("-s2-freq"))
     assert freq.label == "Frequency" and freq.options == ["Daily", "Weekly", "Monthly"]
     assert freq.value == "W"  # the field's value is the code
     # Choosing the label already shown is no edit: Apply stays white, the plan unchanged.
     freq.select("W").run()
     assert app.button(key="apply-edits").proto.type == "secondary"
+    # The same for `how`: the field shows "Last" and holds "last"; choosing "Last" again
+    # marks nothing as edited or pending.
+    how = next(s for s in app.selectbox if s.key.endswith("-s2-how"))
+    assert how.options == ["Last", "Mean"] and how.value == "last"
+    how.select_index(how.options.index("Last")).run()
+    assert app.button(key="apply-edits").proto.type == "secondary"
+    assert not any("not applied yet" in c.value for c in app.caption)
+    assert step_headers(app)[1][0] == "Step 2 · C02 · Resample · Frequency: Weekly, how: Last"
+    assert app.session_state["session"].plan.steps[1].params["how"] == "last"
     # A real edit stores the code.
     next(s for s in app.selectbox if s.key.endswith("-s2-freq")).select("D").run()
     assert app.button(key="apply-edits").proto.type == "primary"

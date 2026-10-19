@@ -26,6 +26,7 @@ from labels import (
     kind_label,
     param_label,
     param_value_label,
+    periods_caption,
     stat_label,
 )
 
@@ -615,6 +616,9 @@ def render_trace(result: TraceResult, catalog: Catalog) -> None:
         ]
     )
     st.dataframe(chain, hide_index=True, alt="Lineage chain")
+    note = periods_caption((s.capability, name) for s in result.chain for name in s.params)
+    if note:
+        st.caption(note)
     sources = pd.DataFrame(
         [
             {
@@ -717,11 +721,10 @@ def param_widget(
         The value chosen in the widget: always the registry's code (e.g. "W"), never
         its label, so the plan, its hash and edit detection are unaffected by labels.
     """
+    # The tooltip is the registry's description. For a number counted in periods it
+    # already says what the number is counted in (52 = 52 weeks on weekly data, 52
+    # trading days on daily data), so the label stays short ("Minimum history").
     label, help_text = param_label(capability, spec_param.name), spec_param.description
-    if spec_param.counted_in_periods:
-        # The same number means a different span at another frequency: 12 is 12
-        # weeks on weekly data but 12 trading days on daily data.
-        label = f"{label} (in periods of the series frequency)"
     if spec_param.name == "dataset_id":
         options = catalog.ids()
         index = options.index(current) if current in options else 0

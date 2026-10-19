@@ -8,15 +8,17 @@ parameter or code never breaks a page. Guardrail codes (V09...), capability code
 (C07...), identifiers and hashes are deliberately left as they are.
 """
 
+from collections.abc import Iterable
 from typing import Any
 
 from quantlab.data import Catalog
-from quantlab.registry import capability_code
+from quantlab.registry import REGISTRY, capability_code
 
 # Parameter names: (capability, parameter) -> label, or (None, parameter) for a
 # parameter that means the same in every capability. `method` means different things
 # (a return type, a threshold's window), so it is labelled per capability. Parameters
-# without an entry (e.g. resample's `how`, `periods`) keep their names.
+# without an entry (e.g. resample's `how`, `periods`) keep their names, though their
+# values may have labels.
 PARAM_LABELS: dict[tuple[str | None, str], str] = {
     (None, "dataset_id"): "Dataset",
     (None, "freq"): "Frequency",
@@ -44,7 +46,13 @@ VALUE_LABELS: dict[tuple[str | None, str], dict[Any, str]] = {
         "full_sample": "Full history (look-ahead)",
     },
     (None, "direction"): {"above": "Above the threshold", "below": "Below the threshold"},
+    ("resample", "how"): {"last": "Last", "mean": "Mean"},
 }
+
+# What a parameter counted in periods (registry `counted_in_periods`: a window, a
+# minimum history) is measured in: the same number is 12 weeks on weekly data but 12
+# trading days on daily data. Shown beside the parameter, not in its label.
+PERIODS_NOTE = "Measured in periods of the series' frequency (e.g. weeks for weekly data)."
 
 # What a series means (types.SeriesKind) and an output's data type (types.DataType).
 KIND_LABELS = {
@@ -109,6 +117,34 @@ def param_value_label(capability: str | None, name: str, value: Any) -> str:
         return labels.get(value, str(value))
     except TypeError:  # an unhashable value (e.g. a list) has no label
         return str(value)
+
+
+def param_note(capability: str | None, name: str) -> str | None:
+    """What a parameter's number is measured in, for those counted in periods; else None.
+
+    E.g. ("flag_regime", "min_periods") -> PERIODS_NOTE. Read from the registry, so a
+    new parameter counted in periods gets the note too.
+    """
+    spec = REGISTRY.get(capability) if capability else None
+    spec_param = spec.param(name) if spec else None
+    return PERIODS_NOTE if spec_param is not None and spec_param.counted_in_periods else None
+
+
+def periods_caption(params: Iterable[tuple[str | None, str]]) -> str | None:
+    """The grey note under a read-only list of parameters, for those counted in periods.
+
+    Args:
+        params: the (capability, parameter name) pairs a view shows.
+
+    Returns:
+        E.g. "Minimum history: measured in periods of the series' frequency (e.g.
+        weeks for weekly data)."; None when no parameter shown is counted in periods.
+    """
+    names = [param_label(capability, name) for capability, name in params
+             if param_note(capability, name)]  # fmt: skip
+    if not names:
+        return None
+    return f"{' and '.join(dict.fromkeys(names))}: {PERIODS_NOTE[0].lower()}{PERIODS_NOTE[1:]}"
 
 
 def frequency_label(code: Any) -> str:
