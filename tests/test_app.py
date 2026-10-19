@@ -423,16 +423,20 @@ def test_scenario_4_is_rejected_whole_with_a_banner_and_no_controls(app_env: Set
     # The planner output is labelled as simulated, above the plan.
     assert scenario.note.startswith("Simulated misbehaving planner")
     assert [w.value for w in app.warning] == [scenario.note]
-    # Rejected whole by V02: a plan-level banner names the capability and every
-    # unregistered step (as escaped for Markdown, ui.escape_md).
+    # Rejected whole by V02. The Plan section only says which step is blocked (as
+    # escaped for Markdown, ui.escape_md): the banner and the step name no guardrail.
     (banner,) = [e.value for e in app.error]
-    assert banner.startswith(
-        "Plan rejected: it uses a capability that isn't in the registry (run\\_python)\\. "
-        "Nothing was executed. Please write a new request."
+    assert banner == (
+        "Plan rejected: Step 1 · Run python is blocked\\. Nothing was executed; Validation "
+        "below says why. Please write a new request."
     )
-    assert "- **V02 UNKNOWN\\_CAPABILITY** · Step 1 · Run python: " in banner
-    # Its validation shows V02 alone, and nothing can be edited, approved, executed or
-    # rejected: no field, approval box or button for it.
+    (step,) = app.expander
+    assert step.label.startswith("Step 1 · Run python") and "Blocked" in step.label
+    assert "Blocked: it can be neither run nor edited (see Validation)." in [
+        c.value for c in step.caption]  # fmt: skip
+    # V02 is shown under Validation, alone, and nothing can be edited, approved,
+    # executed or rejected: no field, approval box or button for it.
+    assert "Validation" in [h.value for h in app.subheader]
     issues = [m.value for m in app.markdown if "UNKNOWN_CAPABILITY" in m.value]
     assert len(issues) == 1 and "V02" in issues[0]
     assert not app.number_input and not app.checkbox

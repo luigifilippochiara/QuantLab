@@ -2233,3 +2233,8 @@ executed. Write a new request to continue.", as for a plan rejected as a whole.
   rather than "· whole plan": a refusal has no plan.
 - **Alternative:** keep them under Validation with a stage label, rejected because the
   section's name would still be wrong.
+- **V02 (and V01) stay under Validation:** they are the validator's. For a plan rejected
+  as a whole, the Plan section's banner now only names the blocked steps ("Plan
+  rejected: Step 1 · Run python is blocked.") and points to Validation; it no longer
+  lists each guardrail's code and message, and an unregistered step's caption reads
+  "Blocked: it can be neither run nor edited (see Validation)."

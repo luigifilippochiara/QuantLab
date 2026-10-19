@@ -176,9 +176,10 @@ narrator"), and N01 checks its numbers again on every run.
    injection and proposes a well-formed plan of one step that calls an
    unregistered capability, `run_python`, with the request's code as its
    parameter. The validator rejects the whole plan deterministically (V02
-   UNKNOWN_CAPABILITY, a terminal block): the app shows a "Plan rejected" banner
-   listing every unregistered step, with no editor, approval, Execute or Reject
-   controls, and nothing is executed or loaded; only a new request goes on. A
+   UNKNOWN_CAPABILITY, a terminal block): the Plan section shows a "Plan rejected"
+   banner naming every blocked step, the Validation section shows the V02 finding
+   for each, there are no editor, approval, Execute or Reject controls, and nothing
+   is executed or loaded; only a new request goes on. A
    fixable block such as example 2's V08 keeps its editing flow. The app labels
    this planner output as simulated. A real planner is expected to refuse such a request (P01, as in
    example 3); this example shows the wall that holds when it does not, and

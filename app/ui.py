@@ -192,34 +192,28 @@ def step_summary(
 def render_rejection(report: ValidationReport, plan: Plan) -> None:
     """The banner of a plan rejected as a whole (a terminal block: V01, V02).
 
-    Says why the plan was rejected, that nothing ran and that only a new request goes
-    on, then lists every step (or plan-level finding) that rejected it with its code.
+    Says which steps are blocked (or that the plan as a whole is), that nothing ran
+    and that only a new request goes on. It names no guardrail: why each step is
+    blocked (code, message, suggestion) is shown in the Validation section.
 
     Args:
-        report: the validation report (its rejections are listed).
-        plan: the rejected plan (for step names and capabilities).
+        report: the validation report (its rejections say which steps are blocked).
+        plan: the rejected plan (for the step names).
     """
     issues = report.rejections
-    capabilities = {step.id: step.capability for step in plan.steps}
-    reasons = []
-    unknown = [capabilities[i.step_id] for i in issues if i.code == "V02" and i.step_id]
-    if unknown:
-        names = ", ".join(dict.fromkeys(unknown))
-        reasons.append(f"it uses a capability that isn't in the registry ({names})")
-    if any(i.code != "V02" for i in issues):
-        reasons.append("it is not a valid plan")
     titles = step_titles(plan)
-    # The capability names and messages may come from the planner: escaped, so they
+    # Each blocked step once, in plan order.
+    blocked = [titles[s.id] for s in plan.steps if any(i.step_id == s.id for i in issues)]
+    parts = []
+    if blocked:
+        parts.append(f"{', '.join(blocked)} {'is' if len(blocked) == 1 else 'are'} blocked")
+    if any(i.step_id is None for i in issues):
+        parts.append("the plan as a whole is blocked")
+    # Step names may come from the planner (an invented capability): escaped, so they
     # are shown literally.
-    found = "\n".join(
-        f"- **{i.code} {escape_md(i.name)}** · {escape_md(titles.get(i.step_id or '', 'plan'))}: "
-        f"{escape_md(i.message)}"
-        for i in issues
-    )
     st.error(
-        escape_md(f"Plan rejected: {' and '.join(reasons)}.")
-        + " Nothing was executed. Please write a new request.\n\n"
-        + found,
+        escape_md(f"Plan rejected: {' and '.join(parts)}.")
+        + " Nothing was executed; Validation below says why. Please write a new request.",
         icon=":material/block:",
     )
 

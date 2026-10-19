@@ -237,7 +237,7 @@ else:
                 f"{ui.escape_md(step.rationale)}"
             )
             if spec is None:
-                st.caption("Not a registered capability: it can be neither run nor edited.")
+                st.caption("Blocked: it can be neither run nor edited (see Validation).")
                 continue
             if rejected:
                 continue  # read only: the whole plan was rejected
