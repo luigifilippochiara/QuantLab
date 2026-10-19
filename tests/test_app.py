@@ -132,6 +132,22 @@ def test_example_1_button_fills_in_the_flagship_request(app_env: Settings) -> No
     assert app.text_area(key="request_text").value == FLAGSHIP_REQUEST
 
 
+def test_the_examples_caption_matches_their_order(app_env: Settings) -> None:
+    app = open_page("analysis.py")
+    assert (
+        "Ready-made requests: complete analyses (1, 5), a blocked request you can fix and "
+        "re-run (2), and out-of-scope or unsafe requests QuantLab stops (3, 4)."
+    ) in [c.value for c in app.sidebar.caption]
+    labels = [b.label for b in app.sidebar.button]
+    assert labels == [
+        "1 · Is the Swiss franc a safe haven?",
+        "2 · Frequency-alignment protection",
+        "3 · Out-of-scope forecast request",
+        "4 · Prompt injection",
+        "5 · Buy the dip in tech?",
+    ]
+
+
 def test_header_describes_the_product(app_env: Settings) -> None:
     app = open_page("analysis.py")
     assert app.title[0].value.endswith("QuantLab")

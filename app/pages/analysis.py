@@ -83,8 +83,8 @@ with st.sidebar:
     if mode == "mock":
         st.header("Example workflows")
         st.caption(
-            "Ready-made requests: the flagship analysis (1), the safeguards QuantLab applies "
-            "to risky or out-of-scope requests (2-5), and a NASDAQ-only analysis (6)."
+            "Ready-made requests: complete analyses (1, 5), a blocked request you can fix "
+            "and re-run (2), and out-of-scope or unsafe requests QuantLab stops (3, 4)."
         )
         for scenario in SCENARIOS:
             st.button(
