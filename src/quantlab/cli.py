@@ -6,6 +6,7 @@
     uv run python -m quantlab.cli trace <run_id> <step_id> # where does this number come from?
     uv run python -m quantlab.cli eval --mode mock         # planner evaluation report
     uv run python -m quantlab.cli eval --mode live --case s1_chf_safe_haven
+    uv run python -m quantlab.cli eval --set adversarial --mode live   # refuse or plan?
 
 Role in the architecture: a thin, headless front end over engine.py,
 lineage.py and evaluation.py; it contains no analysis logic of its own.
@@ -17,7 +18,12 @@ from collections.abc import Sequence
 
 from quantlab.config import LLM_MODES, Settings, load_settings
 from quantlab.engine import Session, run_request
-from quantlab.evaluation import run_evaluation, write_report
+from quantlab.evaluation import (
+    run_adversarial,
+    run_evaluation,
+    write_adversarial_report,
+    write_report,
+)
 from quantlab.lineage import TraceResult, load_run, replay, trace
 from quantlab.mock_scenarios import SCENARIOS
 from quantlab.plan import describe_plan
@@ -218,8 +224,11 @@ def cmd_eval(args: argparse.Namespace, settings: Settings) -> int:
     """Evaluate the planner on the golden requests and write a Markdown report.
 
     Item checks (expected versus planned) are printed for the cases named with
-    --case, all of them; without --case, only the items that do not match.
+    --case, all of them; without --case, only the items that do not match. With
+    --set adversarial, the adversarial set is evaluated instead (cmd_eval_adversarial).
     """
+    if args.set == "adversarial":
+        return cmd_eval_adversarial(args, settings)
     report = run_evaluation(args.mode, settings, case_ids=args.cases)
     path = write_report(report)
     print_table(
@@ -241,6 +250,28 @@ def cmd_eval(args: argparse.Namespace, settings: Settings) -> int:
     print("\nMetrics:")
     for name, value in report.metrics.items():
         print(f"  {name}: {'n/a' if value is None else value}")
+    print(f"\nReport written to {path}")
+    return 0
+
+
+def cmd_eval_adversarial(args: argparse.Namespace, settings: Settings) -> int:
+    """Evaluate the planner on the adversarial set (refuse or plan) and write a report."""
+    report = run_adversarial(args.mode, settings, holdout=args.holdout)
+    path = write_adversarial_report(report)
+    print_table(
+        ["case", "category", "holdout", "expect", "actual", "correct"],
+        [
+            [s.case.id, s.case.category, "yes" if s.case.holdout else "", s.case.expect,
+             s.outcome, "yes" if s.correct else "NO"]
+            for s in report.scores
+        ],
+    )  # fmt: skip
+    summary = report.summary
+    print(f"\nCorrect: {summary['correct']}/{summary['cases']}; false plans: "
+          f"{summary['false_plans']}; false refusals: {summary['false_refusals']}; "
+          f"blocked: {summary['blocked']}; failed: {summary['failed']}")  # fmt: skip
+    print(f"Tokens: {summary['input_tokens']} in, {summary['output_tokens']} out; "
+          f"cost: {summary['cost_usd']}")  # fmt: skip
     print(f"\nReport written to {path}")
     return 0
 
@@ -272,6 +303,14 @@ def build_parser() -> argparse.ArgumentParser:
 
     evaluate = commands.add_parser("eval", help="evaluate the planner on golden requests")
     evaluate.add_argument("--mode", choices=LLM_MODES, default="mock")
+    evaluate.add_argument(
+        "--set", choices=("golden", "adversarial"), default="golden",
+        help="golden: known requests and their plans; adversarial: refuse or plan",
+    )  # fmt: skip
+    evaluate.add_argument(
+        "--holdout", choices=("include", "exclude", "only"), default="include",
+        help="adversarial set: include, exclude or only the held-out cases",
+    )  # fmt: skip
     evaluate.add_argument(
         "--case", action="append", dest="cases", help="evaluate only this golden case (repeatable)"
     )

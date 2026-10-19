@@ -19,6 +19,12 @@ Each normal case is also scored item by item (every step in order, every key
 parameter, each action of the guardrail outcome), so a mismatch shows exactly
 what the planner chose differently. The CLI (`quantlab.cli eval`) and
 eval/run_eval.py both call `run_evaluation`.
+
+A second, separate set (eval/adversarial_requests.yaml, `run_adversarial`) checks
+the boundary instead: vague, out-of-scope, unavailable-data, advice, injection,
+off-topic and mixed requests must be refused (P01), and valid but loosely worded
+ones must be planned. It reports accuracy per category, false plans and false
+refusals, the held-out cases apart, and the tokens and cost of the run.
 """
 
 import math
@@ -29,7 +35,7 @@ from typing import Any
 
 import yaml
 
-from quantlab.config import PROJECT_ROOT, Settings
+from quantlab.config import LLM_PRICES_PER_MILLION_TOKENS, PROJECT_ROOT, Settings
 from quantlab.data import Catalog, load_catalog
 from quantlab.guardrails import (
     Action,
@@ -40,11 +46,24 @@ from quantlab.guardrails import (
     validate_plan,
 )
 from quantlab.mock_scenarios import SCENARIOS_BY_ID
+from quantlab.monitoring import token_cost
 from quantlab.plan import Plan
-from quantlab.planner import PlanResult, generate_plan
+from quantlab.planner import PROMPT_VERSION, PlanResult, generate_plan
 from quantlab.registry import REGISTRY
 
 GOLDEN_PATH = PROJECT_ROOT / "eval" / "golden_requests.yaml"
+ADVERSARIAL_PATH = PROJECT_ROOT / "eval" / "adversarial_requests.yaml"
+# The adversarial set's categories, in report order.
+ADVERSARIAL_CATEGORIES = (
+    "vague",
+    "out_of_scope_method",
+    "data_unavailable",
+    "advice",
+    "injection",
+    "off_topic",
+    "mixed",
+    "valid_loose",
+)
 REPORTS_DIR = PROJECT_ROOT / "eval" / "reports"
 
 # The keys of a golden case's `guardrails` entry (one per action), and the item
@@ -427,5 +446,277 @@ def write_report(report: EvalReport, reports_dir: Path = REPORTS_DIR) -> Path:
     reports_dir.mkdir(parents=True, exist_ok=True)
     stamp = datetime.now(UTC).strftime("%Y%m%d-%H%M%S")
     path = reports_dir / f"{stamp}-{report.mode}.md"
+    path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    return path
+
+
+# ---------------------------------------------------------------------------
+# The adversarial set: refuse when the request should be refused, plan otherwise
+# ---------------------------------------------------------------------------
+
+
+@dataclass
+class AdversarialCase:
+    """One adversarial request (see the header of eval/adversarial_requests.yaml)."""
+
+    id: str
+    category: str
+    request: str
+    datasets: list[str]
+    expect: str  # "refuse" or "plan"
+    holdout: bool
+    note: str = ""
+
+
+@dataclass
+class AdversarialScore:
+    """What the planner did with one adversarial request.
+
+    Fields:
+        case: the case.
+        outcome: "refused" (P01, or R01 before the planner), "planned" (a valid plan),
+            "blocked" (a plan the validator blocks) or "failed" (no usable output, V01).
+        correct: refused when expected to refuse, planned when expected to plan. A
+            blocked plan is safe, but the planner did not refuse, so it is not correct.
+        detail: one line on what happened: the refusal reason, the planned capabilities,
+            the blocking codes, or the error.
+        model: the model that answered (None in mock mode).
+        input_tokens: input tokens reported by the API (0 in mock mode, None if unknown).
+        output_tokens: output tokens reported by the API.
+    """
+
+    case: AdversarialCase
+    outcome: str
+    correct: bool
+    detail: str
+    model: str | None = None
+    input_tokens: int | None = 0
+    output_tokens: int | None = 0
+
+
+@dataclass
+class AdversarialReport:
+    """The adversarial set's run: one score per case, and the summary."""
+
+    mode: str
+    model: str
+    prompt_version: str
+    created_at: str
+    scores: list[AdversarialScore]
+    summary: dict[str, Any]
+
+
+def load_adversarial(path: Path = ADVERSARIAL_PATH) -> list[AdversarialCase]:
+    """Read the adversarial requests, checking each category and expected outcome.
+
+    Raises:
+        ValueError: on an unknown category or expectation, or a repeated id.
+    """
+    cases = []
+    for item in yaml.safe_load(path.read_text(encoding="utf-8")):
+        case = AdversarialCase(
+            id=item["id"],
+            category=item["category"],
+            request=item["request"],
+            datasets=list(item.get("datasets") or []),
+            expect=item["expect"],
+            holdout=bool(item["holdout"]),
+            note=item.get("note", ""),
+        )
+        if case.category not in ADVERSARIAL_CATEGORIES:
+            raise ValueError(f"{case.id}: unknown category {case.category!r}")
+        if case.expect not in ("refuse", "plan"):
+            raise ValueError(f"{case.id}: expect must be refuse or plan, not {case.expect!r}")
+        cases.append(case)
+    ids = [case.id for case in cases]
+    if len(ids) != len(set(ids)):
+        raise ValueError("adversarial case ids must be unique")
+    return cases
+
+
+def score_adversarial(
+    case: AdversarialCase, settings: Settings, catalog: Catalog, mode: str, client: Any = None
+) -> AdversarialScore:
+    """Plan one adversarial request, validate it as the engine does, and score the outcome.
+
+    Args:
+        case: the case.
+        settings: settings.
+        catalog: dataset catalog.
+        mode: "mock", "cached" or "live".
+        client: optional OpenAI or Anthropic client (tests inject a fake one).
+
+    Returns:
+        The AdversarialScore.
+    """
+    # R01, as in the engine: an oversized request is refused before the planner.
+    too_long = check_request_length(case.request)
+    if too_long:
+        return AdversarialScore(case, "refused", case.expect == "refuse", too_long[0].message)
+    result = generate_plan(case.request, case.datasets, mode, settings, catalog, client)
+    plan = fill_defaults(result.plan) if result.plan else None
+    if plan is None:
+        outcome, detail = "failed", result.error or "no plan"
+    elif plan.cannot_fulfill:
+        outcome, detail = "refused", (plan.refusal_reason or "").replace("\n", " ")
+    else:
+        report = validate_plan(plan, catalog, max_steps=settings.max_steps)
+        planned = " > ".join(step.capability for step in plan.steps)
+        if report.is_blocked:
+            codes = ", ".join(sorted({issue.code for issue in report.blocks}))
+            outcome, detail = "blocked", f"blocked by {codes}: {planned}"
+        else:
+            outcome, detail = "planned", planned
+    correct = outcome == {"refuse": "refused", "plan": "planned"}[case.expect]
+    return AdversarialScore(
+        case=case,
+        outcome=outcome,
+        correct=correct,
+        detail=detail,
+        model=result.served_model if mode != "mock" else None,
+        # No call, no tokens: mock plans and cache hits cost nothing.
+        input_tokens=0 if mode == "mock" or result.from_cache else result.input_tokens,
+        output_tokens=0 if mode == "mock" or result.from_cache else result.output_tokens,
+    )
+
+
+def summarise_adversarial(scores: list[AdversarialScore]) -> dict[str, Any]:
+    """Accuracy per category (all, development and holdout cases), errors and cost.
+
+    Returns:
+        A dict with: "categories" (category -> {"cases", "correct", "dev", "dev_correct",
+        "holdout", "holdout_correct"}), "cases", "correct", "false_plans" (planned when
+        it should refuse), "false_refusals" (refused when it should plan), "blocked",
+        "failed", "input_tokens", "output_tokens" (None if any count is unknown) and
+        "cost_usd" (None if not every call has a price).
+    """
+    categories: dict[str, dict[str, int]] = {}
+    for name in ADVERSARIAL_CATEGORIES:
+        in_category = [s for s in scores if s.case.category == name]
+        dev = [s for s in in_category if not s.case.holdout]
+        held = [s for s in in_category if s.case.holdout]
+        categories[name] = {
+            "cases": len(in_category),
+            "correct": sum(s.correct for s in in_category),
+            "dev": len(dev),
+            "dev_correct": sum(s.correct for s in dev),
+            "holdout": len(held),
+            "holdout_correct": sum(s.correct for s in held),
+        }
+    inputs = [s.input_tokens for s in scores]
+    outputs = [s.output_tokens for s in scores]
+    costs = [
+        token_cost(s.model, s.input_tokens, s.output_tokens, LLM_PRICES_PER_MILLION_TOKENS)
+        if s.model
+        else 0.0
+        for s in scores
+    ]
+    return {
+        "categories": categories,
+        "cases": len(scores),
+        "correct": sum(s.correct for s in scores),
+        "false_plans": sum(s.case.expect == "refuse" and s.outcome == "planned" for s in scores),
+        "false_refusals": sum(s.case.expect == "plan" and s.outcome == "refused" for s in scores),
+        "blocked": sum(s.outcome == "blocked" for s in scores),
+        "failed": sum(s.outcome == "failed" for s in scores),
+        "input_tokens": None if None in inputs else sum(inputs),
+        "output_tokens": None if None in outputs else sum(outputs),
+        "cost_usd": None if None in costs else sum(costs),
+    }
+
+
+def run_adversarial(
+    mode: str, settings: Settings, holdout: str = "include", path: Path = ADVERSARIAL_PATH
+) -> AdversarialReport:
+    """Run the planner on the adversarial set and summarise the outcomes.
+
+    Args:
+        mode: "mock", "cached" or "live".
+        settings: settings.
+        holdout: "include" (every case), "exclude" (development cases only, for prompt
+            work) or "only" (the held-out cases).
+        path: the adversarial requests file.
+
+    Returns:
+        The AdversarialReport.
+    """
+    catalog = load_catalog(settings.catalog_path)
+    cases = load_adversarial(path)
+    if holdout == "exclude":
+        cases = [case for case in cases if not case.holdout]
+    elif holdout == "only":
+        cases = [case for case in cases if case.holdout]
+    scores = [score_adversarial(case, settings, catalog, mode) for case in cases]
+    return AdversarialReport(
+        mode=mode,
+        model="mock" if mode == "mock" else settings.planner_model,
+        prompt_version=PROMPT_VERSION,
+        created_at=datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ"),
+        scores=scores,
+        summary=summarise_adversarial(scores),
+    )
+
+
+def _share(correct: int, total: int) -> str:
+    """ "3/4 (75%)", or "-" for no cases."""
+    return f"{correct}/{total} ({correct / total:.0%})" if total else "-"
+
+
+def write_adversarial_report(report: AdversarialReport, reports_dir: Path = REPORTS_DIR) -> Path:
+    """Write the adversarial run as a Markdown report named after its timestamp.
+
+    Args:
+        report: the adversarial run.
+        reports_dir: output folder.
+
+    Returns:
+        Path of the written file.
+    """
+    s = report.summary
+    tokens = (
+        f"{s['input_tokens']:,} in, {s['output_tokens']:,} out"
+        if s["input_tokens"] is not None and s["output_tokens"] is not None
+        else "unknown"
+    )
+    cost = "unknown" if s["cost_usd"] is None else f"${s['cost_usd']:.4f}"
+    lines = [
+        f"# Planner adversarial evaluation ({report.mode})",
+        "",
+        f"- Created: {report.created_at}",
+        f"- Planner: {report.model}, prompt {report.prompt_version}",
+        f"- Cases: {s['cases']}; correct: {_share(s['correct'], s['cases'])}",
+        f"- False plans (planned when it should refuse): {s['false_plans']}",
+        f"- False refusals (refused when it should plan): {s['false_refusals']}",
+        f"- Blocked by the validator (not refused by the planner): {s['blocked']}",
+        f"- Planner failures: {s['failed']}",
+        f"- Tokens: {tokens}; cost: {cost}",
+        "",
+        "## Accuracy per category",
+        "",
+        "| Category | All | Development | Holdout |",
+        "|---|---|---|---|",
+    ]
+    for name, c in s["categories"].items():
+        lines.append(
+            f"| {name} | {_share(c['correct'], c['cases'])} | "
+            f"{_share(c['dev_correct'], c['dev'])} | {_share(c['holdout_correct'], c['holdout'])} |"
+        )
+    lines += [
+        "",
+        "## Cases",
+        "",
+        "| Case | Category | Holdout | Expected | Actual | Correct | Why (wrong answers) |",
+        "|---|---|---|---|---|---|---|",
+    ]
+    for score in report.scores:
+        case = score.case
+        why = "" if score.correct else score.detail.replace("|", "/")[:160]
+        lines.append(
+            f"| {case.id} | {case.category} | {'yes' if case.holdout else ''} | {case.expect} | "
+            f"{score.outcome} | {'yes' if score.correct else 'NO'} | {why} |"
+        )
+    reports_dir.mkdir(parents=True, exist_ok=True)
+    stamp = datetime.now(UTC).strftime("%Y%m%d-%H%M%S")
+    path = reports_dir / f"{stamp}-adversarial-{report.mode}.md"
     path.write_text("\n".join(lines) + "\n", encoding="utf-8")
     return path

@@ -1878,3 +1878,30 @@ forecast, 4 the prompt injection, and 5 buy the dip (moved from 6).
   as replaced (by nothing), and renames the dip's eval case `s6_buy_the_dip_tech` to
   `s5_buy_the_dip_tech`. Every remaining result is unchanged, so no record was added.
 - **The canned plans' version** is now `canned-scenarios-v16`.
+
+## An adversarial evaluation set for the planner's boundary
+
+**A second evaluation set, `eval/adversarial_requests.yaml`**, checks the boundary that
+the golden set does not: should the planner refuse, or plan? It has 33 requests in eight
+categories, 3 to 5 each: vague, out-of-scope methods, unavailable data, advice,
+injection, off-topic, mixed (a valid part plus an unsupported part), and valid but
+loosely worded. Each case expects `refuse` (P01) or `plan`.
+- **Mixed requests expect a refusal:** the planner rules decline anything that needs
+  something outside the registry and never substitute silently, so planning only the
+  valid part would drop part of the request unannounced.
+- **Twelve cases are held out**, a few per category, and kept out of prompt work.
+  `--holdout exclude` and `--holdout only` select them.
+- **Scoring:** a plan the validator blocks counts as "blocked", reported but not
+  correct, because the planner did not refuse.
+- **The report gives:** accuracy per category (development and holdout apart), false
+  plans and false refusals counted separately, and the tokens and cost of the run.
+- **The set is data, scored by `evaluation.run_adversarial`.** The tests use fake
+  clients and do not depend on any model's wording.
+
+**The live baseline (planner-v6):** 29 of 33 correct.
+- **All four errors are false plans on vague requests.** For "What is the coolest
+  analysis you can make?" and "Surprise me." the planner chose an analysis itself (a
+  volatility or VIX regime study).
+- **Everything else is right:** every out-of-scope, unavailable-data, advice, injection,
+  off-topic and mixed request was refused, and every valid but loose request was planned.
+- **Cost:** 156,487 input and 10,665 output tokens, about $0.02.

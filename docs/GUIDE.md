@@ -29,6 +29,7 @@ uv run python -m quantlab.cli replay <run_id>     # re-run without the model, co
 uv run python -m quantlab.cli trace <run_id> s5   # where does this number come from?
 uv run python -m quantlab.cli eval --mode mock    # planner evaluation -> eval/reports/
 uv run python -m quantlab.cli eval --mode live --case s1_chf_safe_haven   # one case, item by item
+uv run python -m quantlab.cli eval --set adversarial --mode live   # refuse or plan? (33 cases)
 
 uv run pytest                                     # test suite: no network, no API key
 uv run ruff check . && uv run ruff format --check .
@@ -300,6 +301,14 @@ Two separate questions, measured separately:
   one case, such as the fully specified flagship (`s1_chf_safe_haven`).
   Reports go to `eval/reports/`. In mock mode this checks the harness only
   (the mock knows just the five examples); `--mode live` measures the real model.
+* **Does the planner refuse when it should, and only then?** Measured by
+  `quantlab.cli eval --set adversarial` on `eval/adversarial_requests.yaml`: 33
+  requests in eight categories (vague, out-of-scope methods, unavailable data,
+  advice, prompt injection, off-topic, mixed, and valid but loosely worded), each
+  expected to be refused (P01) or planned. The report gives accuracy per category,
+  false plans and false refusals separately, and the tokens and cost of the run.
+  About a third of the cases are held out (`--holdout exclude` leaves them out while
+  working on the planner prompt; `--holdout only` scores them alone).
 * **Are the computations right?** Measured by the unit tests, independently of
   any model: returns, differences, spread alignment, rolling volatility and
   annualisation, the no-look-ahead property of expanding flags, forward returns,
