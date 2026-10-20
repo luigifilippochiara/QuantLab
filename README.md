@@ -30,7 +30,7 @@ never data) and the comment, and returns a complete revised plan. The comment ge
 the same request check as a request, and the revision goes through every validator
 guardrail before the reviewer sees it. Up to 3 change requests per run; after that,
 only Execute or Reject. It needs live mode: in mock and cached mode the button is
-disabled. A plan rejected as a whole (V01, V02) ends the run instead. Every revision
+disabled; otherwise it turns grey once a comment is written and can be sent. A plan rejected as a whole (V01, V02) ends the run instead. Every revision
 stays in the one run record, under its run id: the Analysis page shows the revision
 number and what changed, and the trace lists the revision history.
 

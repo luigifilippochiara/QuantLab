@@ -1229,6 +1229,11 @@ def request_changes(app: AppTest, comment: str) -> None:
     assert not app.exception, app.exception
 
 
+def grey_styles(app: AppTest) -> list[str]:
+    """The style blocks that colour the Request changes button grey (ready to send)."""
+    return [h.proto.body for h in app.get("html") if "#5f6368" in h.proto.body]
+
+
 def test_a_change_request_revises_the_plan_on_the_page(app_env: Settings) -> None:
     narrative = text_response("The flagged weeks are the most inverted of the whole history.")
     app = live_page(app_env, [tool_response(spread_weekly_plan()), narrative])
@@ -1286,3 +1291,27 @@ def test_a_refusal_can_be_sent_back_with_a_change_request(app_env: Settings) -> 
     assert app.main.caption[-1].value == (
         "Nothing was executed. Request changes above, or write a new request."
     )
+
+
+@pytest.mark.parametrize("scenario_id", [SPREAD.id, "arima_forecast_block"])
+def test_request_changes_turns_grey_once_a_comment_is_written(
+    scenario_id: str, app_env: Settings
+) -> None:
+    app = live_page(app_env, [], scenario_id=scenario_id)  # a plan, and a refusal (P01)
+    comment = app.text_area(key=f"comment-{app.session_state['run'].state['run_id']}-0")
+    assert grey_styles(app) == []  # no comment yet: the neutral button
+    comment.input(CHANGE_REQUEST_COMMENT).run()
+    (style,) = grey_styles(app)
+    assert ".st-key-request-changes button:not(:disabled)" in style
+    comment.input("   ").run()  # blank is no comment
+    assert grey_styles(app) == []
+
+
+def test_request_changes_is_not_grey_while_a_parameter_change_is_pending(
+    app_env: Settings,
+) -> None:
+    app = live_page(app_env, [])
+    comment = app.text_area(key=f"comment-{app.session_state['run'].state['run_id']}-0")
+    comment.input(CHANGE_REQUEST_COMMENT).run()
+    next(n for n in app.number_input if n.key.endswith("-quantile")).set_value(0.2).run()
+    assert app.button(key="request-changes").disabled and grey_styles(app) == []

@@ -714,6 +714,20 @@ def describe_params(
 # Change requests
 # ---------------------------------------------------------------------------
 
+# Request changes turns grey once it can be sent. Streamlit has no colour option for a
+# button, so its key gives its container a CSS class and this rule colours it while
+# enabled. White text on #5f6368: contrast 6.0:1.
+CHANGE_REQUEST_READY_CSS = """
+<style>
+.st-key-request-changes button:not(:disabled) {
+  background-color: #5f6368; border-color: #5f6368; color: #ffffff;
+}
+.st-key-request-changes button:not(:disabled):hover {
+  background-color: #3c4043; border-color: #3c4043;
+}
+</style>
+"""
+
 
 def render_change_request(
     state: GraphState, box: Any, button_area: Any, pending: bool
@@ -725,7 +739,8 @@ def render_change_request(
     button's tooltip. While parameter edits are not applied it waits: they would be
     lost. An empty comment does not disable the button: a text area sends its value
     only when it loses focus, so a button disabled until then would swallow the first
-    click; the graph refuses an empty comment instead, with its reason.
+    click; the graph refuses an empty comment instead, with its reason. Once a comment
+    is written (the box has lost focus) and it can be sent, the button is grey.
 
     Args:
         state: the run's state.
@@ -760,6 +775,9 @@ def render_change_request(
         help=tooltip,
         width="stretch",
     )
+    if not refusal and not pending and comment.strip():
+        # Style only: Streamlit applies it without taking space on the page.
+        st.html(CHANGE_REQUEST_READY_CSS)
     return comment if clicked else None
 
 
