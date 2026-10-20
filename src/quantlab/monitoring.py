@@ -6,15 +6,17 @@ the log is a simple audit trail and is trivial to ship to a real log platform
 later.
 
 The Monitoring page counts only decided runs started on the Analysis page
-(monitored_runs); replays count from every source (monitored_events). It reads
-two sources, and the functions below turn them into its numbers (the page only
-lays them out):
+(monitored_runs); replays count from every source (monitored_events). One user
+question is one run id, however many revisions the reviewer asked for, and every
+status metric counts the run's final outcome: a run blocked at revision 0 and
+executed at revision 1 is completed. It reads two sources, and the functions below
+turn them into its numbers (the page only lays them out):
 - run records (runs/<run_id>/manifest.json), one per run in its final state:
   activity (planner refusals included), human review, narratives, warnings, tokens and cost,
   latency and failures;
 - the event log, for what can happen several times in a run or after it:
-  guardrail firings (one raised by an edit and then fixed still counts),
-  capability executions and replays.
+  guardrail firings (one raised by an edit or an earlier revision and then fixed
+  still counts), capability executions and replays.
 
 The event types are listed in EVENT_TYPES below: the spec's list plus
 "plan_validated" and "execution_finished", which carry the validation and
@@ -406,7 +408,10 @@ def mode_counts(records: list["RunRecord"]) -> dict[str, int]:
 
 
 def approval_waits(records: list["RunRecord"]) -> list[float]:
-    """Seconds from a plan being shown to its approval, for every approved run given.
+    """Seconds from the first plan being shown to its final approval, for every approved run.
+
+    plan_shown_at is set once, when the run's first plan is shown, so the wait includes
+    every revision the reviewer asked for.
 
     Older records lack the timestamps and are left out.
 
@@ -423,22 +428,43 @@ def approval_waits(records: list["RunRecord"]) -> list[float]:
     ]
 
 
+def human_changed(record: "RunRecord") -> bool:
+    """Whether the reviewer changed the plan before deciding: by editing parameters by
+    hand (manual_edits) or by a change request (change_requests).
+
+    A record made before change requests existed has no manual_edits (None): it counts
+    the parameters whose final value differs from the planner's proposal (param_diff),
+    as the edit rate always did, and its change_requests are 0.
+
+    Args:
+        record: a run record.
+
+    Returns:
+        True if either counter is above zero.
+    """
+    manual = record.manual_edits if record.manual_edits is not None else len(record.param_diff)
+    return manual > 0 or record.change_requests > 0
+
+
 def review_outcomes(records: list["RunRecord"]) -> dict[str, Any]:
     """What reviewers decided about the plans they were shown.
+
+    Each run counts once, by its final decision: a change request is not a decision,
+    and only an explicit Reject is a rejection.
 
     Args:
         records: run records (on the page, monitored_runs: decided on the Analysis page).
 
     Returns:
         Dict with approved, rejected, approval_rate (approved / (approved +
-        rejected)), edited (approved plans whose parameters the reviewer changed),
-        edit_rate (edited / approved), approval_median_s and approval_p95_s (seconds
-        from plan shown to approved).
+        rejected)), edited (approved runs whose plan the reviewer changed, by manual
+        edit or change request: human_changed), edit_rate (edited / approved),
+        approval_median_s and approval_p95_s (seconds from the first plan shown to the
+        final approval, every revision included).
     """
     approved = [r for r in records if r.decision == "approved"]
     rejected = [r for r in records if r.decision == "rejected"]
-    # param_diff: parameters whose final value differs from the planner's proposal.
-    edited = sum(1 for r in approved if r.param_diff)
+    edited = sum(1 for r in approved if human_changed(r))
     waits = approval_waits(records)
     median, p95 = (
         (float(np.median(waits)), float(np.percentile(waits, 95))) if waits else (None, None)

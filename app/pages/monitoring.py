@@ -256,7 +256,8 @@ with edit_col:
         "Edit rate",
         count_and_share(review["edited"], review["edit_rate"]),
         out_of(review["approved"], "plan approved", "plans approved"),
-        help="Approved plans whose parameters the reviewer changed first, and their share.",
+        help="Share of executed runs where the human changed the plan, by manual edit or "
+        "change request.",
     )
 with time_col:
     median, p95 = review["approval_median_s"], review["approval_p95_s"]
@@ -264,8 +265,8 @@ with time_col:
         "Approval time: median, p95",
         duration(median) if median is None else f"{duration(median)}, {duration(p95)}",
         out_of(len(approval_waits(runs)), "plan approved", "plans approved", "over"),
-        help="Time from the plan being shown to its approval: the median, then the 95th "
-        "percentile.",
+        help="Time from the first plan shown to the final approval, including every "
+        "revision: the median, then the 95th percentile.",
     )
 with warned_col:
     card(
@@ -314,6 +315,10 @@ else:
 # ---------------------------------------------------------------- guardrails
 
 st.subheader("Guardrails")
+st.caption(
+    "Every validation counts, including those of earlier revisions, so blocks fixed along "
+    "the way stay visible."
+)
 fired = guardrail_counts(events, include_unused=False)
 if fired:
     st.plotly_chart(

@@ -2326,3 +2326,22 @@ timestamps), under the one run id.
   the loop in `engine.Session` as well (rejected: the same logic twice); revisions in
   mock mode with canned plans (rejected: the app's examples stay the five, and a canned
   revision would hide what a real planner does with a comment).
+- **Monitoring: one question is one run.** A run keeps its run id through every
+  revision, so every metric counts run ids, never revisions, and every status metric
+  (completed, failed, completed with warnings, blocked, plan refused, rejected by
+  human) counts the run's final outcome: blocked at revision 0 and executed at
+  revision 1 is completed. A change request is never a rejection: only an explicit
+  Reject is. The approval rate is unchanged (final decisions). The edit rate now counts
+  an executed run as edited when the reviewer changed the plan by hand
+  (`RunRecord.manual_edits`, parameters left changed from each revision's proposal) or
+  by a change request (`change_requests`): `monitoring.human_changed`. The approval
+  time runs from the first plan shown (`plan_shown_at`, set once) to the final
+  approval, every revision included. Guardrail counts count every validation (events),
+  earlier revisions included, so a block fixed along the way stays visible. Grounded
+  narratives and the replay match rate are unchanged; replay re-executes the final
+  approved plan only. A record made before change requests existed reads as one
+  revision: `change_requests` 0 and `manual_edits` taken from its `param_diff`, which
+  is what the edit rate always counted, so the dashboard over existing runs is
+  identical. Alternative: count every applied edit, undone ones included (rejected:
+  it changes the edit rate of existing runs, 12 of 37 approved runs on the current
+  store becoming 17); or old records at 0 (rejected: their edits would stop counting).

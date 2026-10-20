@@ -6,8 +6,10 @@ from typing import Any
 import pytest
 
 from quantlab.executor import StepRecord
+from quantlab.graph import build_graph, resume_run, start_run
 from quantlab.guardrails import GUARDRAILS, Action, ValidationReport, make_issue
-from quantlab.lineage import LLMInfo, ParamChange, RunRecord
+from quantlab.lineage import LLMInfo, ParamChange, RunRecord, load_runs
+from quantlab.mock_scenarios import SCENARIOS_BY_ID
 from quantlab.monitoring import (
     KPI_TARGETS,
     OUTCOMES,
@@ -21,12 +23,14 @@ from quantlab.monitoring import (
     failure_point,
     grounded_narratives,
     guardrail_counts,
+    human_changed,
     is_planner_refusal,
     latency_table,
     log_event,
     mode_counts,
     monitored_events,
     monitored_runs,
+    parse_time,
     read_events,
     recent_failures,
     replay_results,
@@ -39,6 +43,9 @@ from quantlab.monitoring import (
 )
 from quantlab.registry import REGISTRY
 from quantlab.types import TokenUsage
+
+from conftest import CHANGE_REQUEST_COMMENT, spread_weekly_plan
+from fakes import FakeAnthropicClient, text_response, tool_response
 
 PRICES = {"gpt-6-luna": {"input": 0.10, "output": 0.50}}
 
@@ -437,3 +444,88 @@ def test_recent_failures_newest_first() -> None:
         record("20261001-100000-000000", "2026-10-01T10:00:00.900Z", status="failed"),
     ]
     assert recent_failures(same_second)[0]["run_id"] == "20261001-100000-000000"
+
+
+# ---------------------------------------------------------------- change requests
+# One user question is one run id however many revisions; status metrics count the
+# final outcome. The runs below go through the graph as on the Analysis page.
+
+
+def graph_run(settings: Any, scenario_id: str, *answers: dict, mode: str = "mock") -> str:
+    """Run an example interactively through the graph, answering each review in turn;
+    returns its run id. In live mode a fake LLM serves example 2's plan, then the
+    revised plan (conftest.spread_weekly_plan) and a narrative."""
+    scenario = SCENARIOS_BY_ID[scenario_id]
+    client = None
+    if mode == "live":
+        narrative = text_response("The flagged weeks are the most inverted of the whole history.")
+        client = FakeAnthropicClient(
+            [tool_response(scenario.plan), tool_response(spread_weekly_plan()), narrative]
+        )
+    graph = build_graph()
+    run = start_run(graph, scenario.request, list(scenario.dataset_ids), settings, mode, True,
+                    client)  # fmt: skip
+    for answer in answers:
+        if answer.get("action") == "approve" and "issue_ids" not in answer:
+            ids = [issue["issue_id"] for issue in run.paused_for["open_approvals"]]
+            answer = {**answer, "issue_ids": ids}  # every open approval: the Execute click
+        run = resume_run(graph, run, answer)
+    return run.state["run_id"]
+
+
+EXECUTE = {"action": "approve"}
+CHANGE_REQUEST = {"action": "request_changes", "comment": CHANGE_REQUEST_COMMENT}
+
+
+def test_a_block_fixed_by_a_change_request_counts_once_as_completed_and_edited(
+    settings: Any,
+) -> None:
+    run_id = graph_run(settings, "spread_frequency_mismatch_block", CHANGE_REQUEST, EXECUTE,
+                       mode="live")  # fmt: skip
+    runs = monitored_runs(load_runs(settings.runs_dir))
+    [run] = runs  # one run id, two revisions
+    assert run.run_id == run_id and len(run.revisions) == 2
+    counts = activity(runs)
+    assert (counts["total"], counts["completed"], counts["blocked"]) == (1, 1, 0)
+    review = review_outcomes(runs)
+    assert (review["approved"], review["rejected"], review["edited"]) == (1, 0, 1)
+    # The block fixed along the way still shows in the guardrail counts.
+    events = monitored_events(read_events(settings.events_path), runs)
+    fired = {row["code"]: row["count"] for row in guardrail_counts(events, include_unused=False)}
+    assert fired["V08"] == 1 and fired["V09"] == 2  # V09 raised by both revisions
+    # The approval time runs from the first plan shown, before the revision, to the decision.
+    assert run.plan_shown_at <= run.revisions[1].requested_at <= run.decided_at
+    wait = (parse_time(run.decided_at) - parse_time(run.plan_shown_at)).total_seconds()
+    assert approval_waits(runs) == [wait]
+
+
+def test_edit_rate_counts_manual_edits_and_change_requests(settings: Any) -> None:
+    dip = "buy_the_dip_tech"
+    graph_run(settings, dip, EXECUTE)  # unchanged
+    graph_run(settings, dip, {"action": "edit", "edits": {"s4": {"min_periods": 104}}}, EXECUTE)
+    graph_run(settings, "spread_frequency_mismatch_block", CHANGE_REQUEST, EXECUTE, mode="live")
+    graph_run(settings, dip, {"action": "reject"})  # rejected: not in the edit rate
+    runs = monitored_runs(load_runs(settings.runs_dir))
+    by_counters = sorted((r.status, r.manual_edits, r.change_requests) for r in runs)
+    assert by_counters == [
+        ("completed", 0, 0), ("completed", 0, 1), ("completed", 1, 0), ("rejected", 0, 0)
+    ]  # fmt: skip
+    review = review_outcomes(runs)
+    assert (review["approved"], review["edited"]) == (3, 2)
+    assert review["edit_rate"] == pytest.approx(2 / 3)
+    assert review["approval_rate"] == pytest.approx(3 / 4)  # Reject is the only rejection
+    assert activity(runs)["rejected"] == 1
+
+
+def test_an_old_record_reads_as_one_revision_with_no_change_request() -> None:
+    # A manifest written before change requests existed: no revisions, no counters.
+    edit = ParamChange(step_id="s4", param="window", original=12, final=26, edited_at="t")
+    for diff, edited in [([edit], True), ([], False)]:
+        dumped = record("old", decision="approved", param_diff=diff).model_dump(mode="json")
+        for field in ("revisions", "manual_edits", "change_requests"):
+            dumped.pop(field)
+        old = RunRecord.model_validate(dumped)
+        assert (old.revisions, old.manual_edits, old.change_requests) == ([], None, 0)
+        # Its manual edits are read from param_diff, as the edit rate always did.
+        assert human_changed(old) is edited
+        assert review_outcomes([old])["edited"] == int(edited)
