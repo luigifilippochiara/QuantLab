@@ -176,6 +176,9 @@ def build_graph(checkpointer: InMemorySaver | None = None) -> CompiledStateGraph
     builder.add_node("recorder", recorder_node)
 
     builder.add_edge(START, "request_check")
+    builder.add_conditional_edges(
+        "request_check", after_request_check, ["planner", "approval", "recorder"]
+    )
     builder.add_conditional_edges("planner", after_planner, ["validator", "recorder"])
     builder.add_conditional_edges(
         "validator", after_validation, ["approval", "executor", "recorder"]
@@ -184,9 +187,6 @@ def build_graph(checkpointer: InMemorySaver | None = None) -> CompiledStateGraph
         "approval",
         after_review,
         ["validator", "request_check", "executor", "approval", "recorder"],
-    )
-    builder.add_conditional_edges(
-        "request_check", after_request_check, ["planner", "approval", "recorder"]
     )
     builder.add_conditional_edges("executor", after_execution, ["narrator", "recorder"])
     builder.add_edge("narrator", "recorder")
