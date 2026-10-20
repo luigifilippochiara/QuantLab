@@ -14,7 +14,7 @@ Pages (in app/pages/):
 
 The sidebar shows the "QuantLab" title, then the page menu, then the page's own
 controls. The app is only a user interface: every action goes through
-quantlab.engine (the same orchestrator the CLI and notebooks use).
+quantlab.graph (the same orchestrator the CLI and notebooks use).
 """
 
 import streamlit as st

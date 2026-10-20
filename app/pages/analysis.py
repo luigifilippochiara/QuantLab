@@ -4,7 +4,7 @@ All state lives in st.session_state.run (a quantlab.graph.GraphRun), whose run
 waits at the graph's approval interrupt while the reviewer decides. Each button
 resumes it with one decision (edit, execute, reject or request changes); the page
 then redraws from the run's state. The graph and its in-memory checkpointer, one
-per browser session, are st.session_state.graph.
+per browser tab, are st.session_state.graph.
 """
 
 from pathlib import Path
@@ -59,7 +59,7 @@ catalog = ui.get_catalog(settings)
 
 for key, default in {**ui.analysis_defaults(), "llm_mode": settings.llm_mode}.items():
     st.session_state.setdefault(key, default)
-# One graph per browser session: its checkpointer holds the runs waiting for a decision.
+# One graph per browser tab: its checkpointer holds the runs waiting for a decision.
 if st.session_state.get("graph") is None:
     st.session_state.graph = build_graph()
 graph = st.session_state.graph

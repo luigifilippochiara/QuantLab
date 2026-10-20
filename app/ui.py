@@ -1,7 +1,7 @@
 """Shared helpers for the Streamlit pages: charts, issue and table rendering, widgets.
 
 Role in the architecture: user interface only. Every number shown comes from the
-engine's results (artifacts, facts sheet, run records); nothing here computes
+executor's results (artifacts, facts sheet, run records); nothing here computes
 analysis results or talks to an LLM.
 
 Chart colours: one blue for series and one orange for flagged regimes. The pair
@@ -152,7 +152,7 @@ def render_header() -> None:
     )
     st.caption(
         "**How it works:** The LLM proposes a plan made only of approved capabilities. The "
-        "system validates it, you review and approve it, and a deterministic engine runs it."
+        "system validates it, you review and approve it, and a deterministic executor runs it."
     )
 
 

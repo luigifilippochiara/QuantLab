@@ -1143,26 +1143,31 @@ def resume_run(graph: CompiledStateGraph, run: GraphRun, decision: dict[str, Any
 def run_graph(
     request: str,
     dataset_ids: list[str],
+    mode: str | None = None,
     approve: bool = False,
     settings: Settings | None = None,
+    client: Any = None,
     graph: CompiledStateGraph | None = None,
 ) -> GraphState:
-    """Run the whole graph headlessly, like engine.run_request.
+    """Run the whole graph headlessly (CLI, notebooks, tests): no person reviews the plan.
 
     Args:
         request: the user's request.
         dataset_ids: selected datasets.
-        approve: approve every open APPROVE issue at the interrupt (else none is,
-            and the run is recorded as blocked, nothing executed).
+        mode: LLM mode (default: the configured one).
+        approve: approve every open APPROVE issue at the interrupt (CLI --approve-all;
+            else none is, and the run is recorded as blocked, nothing executed).
         settings: settings (default load_settings()).
+        client: optional OpenAI or Anthropic client (tests inject a fake one).
         graph: a graph to run on (default: a new one).
 
     Returns:
         The final state. Its status says how far the run got: "blocked",
-        "failed" or "completed".
+        "failed" or "completed"; its record is the saved run record.
     """
+    settings = settings or load_settings()
     graph = graph or build_graph()
-    run = start_run(graph, request, dataset_ids, settings or load_settings())
+    run = start_run(graph, request, dataset_ids, settings, mode or settings.llm_mode, client=client)
     if run.paused_for is not None:
         open_ids = [issue["issue_id"] for issue in run.paused_for["open_approvals"]]
         decision = {"action": "approve", "issue_ids": open_ids if approve else []}

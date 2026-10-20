@@ -255,7 +255,7 @@ def score_case(
     Returns:
         The CaseScore.
     """
-    # R01, as in the engine: an oversized request never reaches the planner.
+    # R01, as in the graph's request check: an oversized request never reaches the planner.
     too_long = check_request_length(case.request)
     if too_long:
         result = PlanResult(plan=None, issues=too_long, error=too_long[0].message)
@@ -537,7 +537,7 @@ def load_adversarial(path: Path = ADVERSARIAL_PATH) -> list[AdversarialCase]:
 def score_adversarial(
     case: AdversarialCase, settings: Settings, catalog: Catalog, mode: str, client: Any = None
 ) -> AdversarialScore:
-    """Plan one adversarial request, validate it as the engine does, and score the outcome.
+    """Plan one adversarial request, validate it as the graph does, and score the outcome.
 
     Args:
         case: the case.
@@ -549,7 +549,8 @@ def score_adversarial(
     Returns:
         The AdversarialScore.
     """
-    # R01, as in the engine: an oversized request is refused before the planner.
+    # R01, as in the graph's request check: an oversized request is refused before the
+    # planner.
     too_long = check_request_length(case.request)
     if too_long:
         return AdversarialScore(case, "refused", case.expect == "refuse", too_long[0].message)

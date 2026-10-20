@@ -7,7 +7,6 @@ from typing import Any
 import pytest
 from pydantic import ValidationError
 
-from quantlab.cli import all_issue_codes, main
 from quantlab.config import Settings
 from quantlab.engine import run_request
 from quantlab.graph import (
@@ -19,7 +18,7 @@ from quantlab.graph import (
     start_run,
 )
 from quantlab.guardrails import MAX_REQUEST_WORDS
-from quantlab.lineage import RunRecord, list_runs, load_run, replay
+from quantlab.lineage import RunRecord, load_run, replay
 from quantlab.mock_scenarios import SCENARIOS, SCENARIOS_BY_ID
 from quantlab.monitoring import read_events
 from quantlab.types import artifact_hash
@@ -65,9 +64,8 @@ def test_every_example_runs_exactly_as_in_the_engine(
     scenario: Any, approve: bool, settings: Settings
 ) -> None:
     session = run_request(scenario.request, list(scenario.dataset_ids), "mock", approve, settings)
-    state = run_graph(scenario.request, list(scenario.dataset_ids), approve, settings)
+    state = run_graph(scenario.request, list(scenario.dataset_ids), "mock", approve, settings)
     assert state["status"] == session.status
-    assert issue_codes(state) == all_issue_codes(session)
     engine = load_run(session.run_id, settings.runs_dir)
     graph = load_run(state["run_id"], settings.runs_dir)
     # The whole run record: plan, issues, approvals, step hashes, narrative, error...
@@ -106,7 +104,8 @@ def test_a_run_pauses_at_approval_and_resumes_with_the_same_state(settings: Sett
 
 def test_the_checkpoint_round_trips_the_whole_state(settings: Settings) -> None:
     graph = build_graph()
-    state = run_graph(SUCCESS.request, list(SUCCESS.dataset_ids), True, settings, graph)
+    state = run_graph(SUCCESS.request, list(SUCCESS.dataset_ids), "mock", True, settings,
+                      graph=graph)  # fmt: skip
     saved = graph.get_state({"configurable": {"thread_id": state["run_id"]}}).values
     assert isinstance(saved["record"], RunRecord)
     # Artifacts hold pandas Series, so they are compared by hash and metadata.
@@ -197,7 +196,8 @@ def test_r01_ends_the_run_before_the_planner(
         raise AssertionError("the planner must not be called")
 
     monkeypatch.setattr("quantlab.graph.generate_plan", no_planner)
-    state = run_graph(" ".join(["word"] * (MAX_REQUEST_WORDS + 1)), ["NASDAQCOM"], False, settings)
+    text = " ".join(["word"] * (MAX_REQUEST_WORDS + 1))
+    state = run_graph(text, ["NASDAQCOM"], "mock", False, settings)
     assert issue_codes(state) == ["R01"] and state["status"] == "blocked"
     record = load_run(state["run_id"], settings.runs_dir)
     assert "1,000 words" in record.error and record.stage_tokens == {}
@@ -208,18 +208,6 @@ def test_an_unknown_mode_is_refused(settings: Settings) -> None:
         start_run(build_graph(), SUCCESS.request, ["NASDAQCOM"], settings, mode="offline")
 
 
-def test_graph_demo_behaves_as_expected(
-    settings: Settings, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture
-) -> None:
-    monkeypatch.setenv("QUANTLAB_DATA_DIR", str(settings.data_dir))
-    monkeypatch.setenv("QUANTLAB_RUNS_DIR", str(settings.runs_dir))
-    assert main(["graph-demo"]) == 0
-    output = capsys.readouterr().out
-    assert "All scenarios behaved as expected." in output and "MISMATCH" not in output
-    assert ",".join(SCENARIO_5_APPROVALS) in output  # example 5 paused for both approvals
-    assert len(list_runs(settings.runs_dir)) == len(SCENARIOS)
-
-
 def test_every_checkpointed_class_is_allowlisted(
     settings: Settings, caplog: pytest.LogCaptureFixture
 ) -> None:
@@ -227,5 +215,5 @@ def test_every_checkpointed_class_is_allowlisted(
     # back as a plain dict (or, for an enum, a plain string).
     caplog.set_level(logging.WARNING)
     for scenario in SCENARIOS:
-        run_graph(scenario.request, list(scenario.dataset_ids), True, settings)
+        run_graph(scenario.request, list(scenario.dataset_ids), "mock", True, settings)
     assert not [r.getMessage() for r in caplog.records if r.name.startswith("langgraph")]

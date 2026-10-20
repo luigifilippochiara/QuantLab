@@ -7,6 +7,8 @@ from quantlab.config import Settings
 from quantlab.lineage import list_runs
 from quantlab.narrator import NUMBERS_CHECKED_NOTE
 
+from conftest import SCENARIO_5_APPROVALS
+
 
 @pytest.fixture
 def cli_env(settings: Settings, monkeypatch: pytest.MonkeyPatch) -> Settings:
@@ -22,6 +24,7 @@ def test_demo_behaves_as_expected(cli_env: Settings, capsys: pytest.CaptureFixtu
     assert "All scenarios behaved as expected." in output
     assert "MISMATCH" not in output
     assert len(list_runs(cli_env.runs_dir)) == 5
+    assert ",".join(SCENARIO_5_APPROVALS) in output  # example 5 paused for both approvals
     for scenario_id in ["chf_safe_haven_success", "spread_frequency_mismatch_block",
                         "buy_the_dip_tech"]:  # fmt: skip
         assert scenario_id in output
