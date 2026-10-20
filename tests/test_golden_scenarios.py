@@ -99,7 +99,7 @@ from quantlab.guardrails import GUARDRAILS, Issue
 from quantlab.mock_scenarios import SCENARIOS
 from quantlab.nodes import GraphState
 from quantlab.planner import generate_plan
-from quantlab.planner_evaluation import load_golden, score_case
+from quantlab.planner_evaluation import GOLDEN, load_cases, score_case
 from quantlab.types import DataType, canonical_text
 from quantlab.validator import fill_defaults, validate_plan
 
@@ -538,7 +538,7 @@ def describe_eval_cases(settings: Settings) -> dict[str, dict[str, Any]]:
     """
     catalog = load_catalog(settings.catalog_path)
     cases = {}
-    for case in load_golden():
+    for case in load_cases(GOLDEN):
         result = generate_plan(case.request, case.datasets, "mock", settings, catalog)
         plan = fill_defaults(result.plan) if result.plan else None
         report = validate_plan(plan, catalog, max_steps=settings.max_steps) if plan else None

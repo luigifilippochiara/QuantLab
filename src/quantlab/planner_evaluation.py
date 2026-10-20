@@ -1,30 +1,38 @@
-"""Planner evaluation: does the planner pick the right plan for known requests?
+"""Planner evaluation: does the planner pick the right plan, and refuse only when it should?
 
-Role in the architecture: this measures PLANNER accuracy only. It runs the
-planner (mock or live) on the golden requests in planner_eval/golden_requests.yaml,
-validates each plan, and scores it against the expected capability sequence,
-key parameters and (where given) the expected guardrail outcome. It does not
+Role in the architecture: this measures PLANNER accuracy only. It runs the planner
+(mock or live) on a set of requests, validates each plan, and scores it. It does not
 execute anything: whether the computations themselves are right is measured
 separately, by the unit tests.
 
-Metrics (normal cases = expect "plan"; adversarial = expect "refuse_or_block"):
-- valid-plan rate: normal cases whose plan has no BLOCK and is not a refusal;
-- exact sequence match: capability list equals the expected list, in order;
-- capability-set Jaccard: |expected AND planned| / |expected OR planned|, averaged;
-- key-param accuracy: share of expected parameter values found in the plan;
-- guardrail-outcome match: cases whose validation issues are exactly the expected ones;
-- correct refusal/block rate: adversarial cases that were refused or blocked.
+Two sets share one schema (EvalCase), one scorer and one report:
+- the golden set (planner_eval/golden_requests.yaml): known requests and the plan each
+  should get, scored against the expected capability sequence, key parameters and
+  (where given) the expected guardrail outcome;
+- the adversarial set (planner_eval/adversarial_requests.yaml): the boundary, where
+  vague, out-of-scope, unavailable-data, advice, injection, off-topic and mixed
+  requests must be refused (P01), and valid but loosely worded ones must be planned.
+Every case has a category, and may be held out of prompt work: the report gives the
+accuracy per category, development and held-out cases apart.
 
-Each normal case is also scored item by item (every step in order, every key
-parameter, each action of the guardrail outcome), so a mismatch shows exactly
-what the planner chose differently. The CLI (`quantlab.cli eval`) and
+A case expects one of three outcomes:
+- plan: a valid plan (no BLOCK); when the case gives the plan (`capabilities`), also
+  that exact capability sequence and, where given, its guardrail outcome;
+- refuse: the planner itself declines (P01, or R01 before it). A plan the validator
+  blocks is safe, but not correct: the planner did not refuse;
+- refuse_or_block: anything but a valid plan (a refusal, a block, or no plan at all).
+
+Metrics: valid-plan rate (cases expecting a plan); exact sequence match and
+capability-set Jaccard (|expected AND planned| / |expected OR planned|, averaged), over
+the cases that give the plan; key-parameter accuracy (share of expected parameter
+values found in the plan); guardrail-outcome match; correct refusal rate (cases
+expecting a refusal or a block); overall correct. With them, the counts of false plans,
+false refusals, blocks and planner failures, and the tokens and cost of the run.
+
+Each case that gives a plan or an outcome is also scored item by item (every step in
+order, every key parameter, each action of the guardrail outcome), so a mismatch shows
+exactly what the planner chose differently. The CLI (`quantlab.cli eval`) and
 planner_eval/run_eval.py both call `run_evaluation`.
-
-A second, separate set (planner_eval/adversarial_requests.yaml, `run_adversarial`) checks
-the boundary instead: vague, out-of-scope, unavailable-data, advice, injection,
-off-topic and mixed requests must be refused (P01), and valid but loosely worded
-ones must be planned. It reports accuracy per category, false plans and false
-refusals, the held-out cases apart, and the tokens and cost of the run.
 """
 
 import math
@@ -47,7 +55,19 @@ from quantlab.validator import effective_params, fill_defaults, validate_plan
 
 GOLDEN_PATH = PROJECT_ROOT / "planner_eval" / "golden_requests.yaml"
 ADVERSARIAL_PATH = PROJECT_ROOT / "planner_eval" / "adversarial_requests.yaml"
-# The adversarial set's categories, in report order.
+REPORTS_DIR = PROJECT_ROOT / "planner_eval" / "reports"
+
+# Each set's categories, in report order.
+GOLDEN_CATEGORIES = (
+    "example",
+    "variation",
+    "paraphrase",
+    "capability",
+    "parameter",
+    "trap",
+    "dataset",
+    "refusal",
+)
 ADVERSARIAL_CATEGORIES = (
     "vague",
     "out_of_scope_method",
@@ -58,10 +78,14 @@ ADVERSARIAL_CATEGORIES = (
     "mixed",
     "valid_loose",
 )
-REPORTS_DIR = PROJECT_ROOT / "planner_eval" / "reports"
 
-# The keys of a golden case's `guardrails` entry (one per action), and the item
-# names they are reported under.
+# What a case may expect (see the module docstring).
+EXPECTATIONS = ("plan", "refuse", "refuse_or_block")
+# The cases a run scores: all of them, the development cases only, or the held-out ones.
+HOLDOUT_CHOICES = ("include", "exclude", "only")
+
+# The keys of a case's `guardrails` entry (one per action), and the item names they
+# are reported under.
 GUARDRAIL_ITEMS = {
     "approve": (Action.APPROVE, "approvals"),
     "warn": (Action.WARN, "warnings"),
@@ -69,22 +93,59 @@ GUARDRAIL_ITEMS = {
 }
 
 
+@dataclass(frozen=True)
+class EvalSet:
+    """One evaluation set.
+
+    Fields:
+        name: "golden" or "adversarial" (the CLI's --set, and part of the report's name).
+        path: its YAML file.
+        categories: its categories, in report order.
+    """
+
+    name: str
+    path: Path
+    categories: tuple[str, ...]
+
+
+GOLDEN = EvalSet("golden", GOLDEN_PATH, GOLDEN_CATEGORIES)
+ADVERSARIAL = EvalSet("adversarial", ADVERSARIAL_PATH, ADVERSARIAL_CATEGORIES)
+EVAL_SETS = {eval_set.name: eval_set for eval_set in (GOLDEN, ADVERSARIAL)}
+
+
 @dataclass
-class GoldenCase:
-    """One golden request (see the YAML file header for the fields)."""
+class EvalCase:
+    """One request of an evaluation set (the YAML files' headers describe the fields).
+
+    Fields:
+        id: short name, unique in its set.
+        category: one of its set's categories.
+        request: the request, as an analyst would type it.
+        datasets: datasets selected in the app ([]: none, so every dataset is offered).
+        expect: "plan", "refuse" or "refuse_or_block".
+        holdout: kept out of prompt work, and scored apart (--holdout).
+        note: why the expected outcome is the right one ("" when it is obvious).
+        capabilities: the expected capability sequence, or None when the case does not
+            give the plan (then only its outcome is scored).
+        key_params: capability -> {param: expected value}.
+        guardrails: the expected issue codes of each action, or None.
+    """
 
     id: str
+    category: str
     request: str
     datasets: list[str]
     expect: str
-    capabilities: list[str] = field(default_factory=list)
+    holdout: bool = False
+    note: str = ""
+    capabilities: list[str] | None = None
     key_params: dict[str, dict[str, Any]] = field(default_factory=dict)
     guardrails: dict[str, list[str]] | None = None
 
 
 @dataclass
 class ItemCheck:
-    """One scored item of a golden case: what was expected and what the planner chose.
+    """One scored item of a case: what was expected and what the planner chose.
 
     Fields:
         item: what is checked, e.g. "step 6", "forward_return.method" or "approvals".
@@ -101,29 +162,34 @@ class ItemCheck:
 
 @dataclass
 class CaseScore:
-    """How the planner did on one golden case.
+    """How the planner did on one case.
 
     Fields:
-        case_id: the case.
-        expect: "plan" or "refuse_or_block".
+        case: the case.
+        outcome: "refused" (P01, or R01 before the planner), "planned" (a valid plan),
+            "blocked" (a plan the validator blocks) or "failed" (no usable output, V01).
+        detail: one line on what happened: the refusal reason, the planned
+            capabilities, the blocking codes, or the error.
         planned: capability sequence the planner produced ([] if none).
-        issue_codes: validation issue codes.
-        valid: plan exists, is not a refusal and has no BLOCK.
-        refused_or_blocked: no plan, a refusal, or a BLOCK.
-        sequence_match: capability sequence equals the expected one.
+        issue_codes: validation issue codes (the planner's own, when there is no plan).
+        valid: a valid plan: not a refusal, no BLOCK.
+        refused_or_blocked: anything but a valid plan (a refusal, a block, no plan).
+        sequence_match: capability sequence equals the expected one ([] if none is given).
         jaccard: capability-set overlap with the expected set.
         params_hit: expected parameter values found.
         params_total: expected parameter values checked.
-        correct: valid + exact sequence (+ the expected guardrail outcome, where given)
-            for normal cases; refused/blocked for adversarial ones.
+        correct: the expected outcome was reached (see score_case).
         error: planner error, if any.
         guardrails_match: issues are exactly the expected ones (None if not specified).
-        checks: the item-by-item comparison (normal cases, and adversarial cases that
-            give an expected outcome).
+        checks: the item-by-item comparison (cases that give a plan or an outcome).
+        model: the model that answered (None in mock mode, or when R01 stopped the request).
+        input_tokens: input tokens reported by the API (0 without a call, None if unknown).
+        output_tokens: output tokens reported by the API.
     """
 
-    case_id: str
-    expect: str
+    case: EvalCase
+    outcome: str
+    detail: str
     planned: list[str]
     issue_codes: list[str]
     valid: bool
@@ -136,55 +202,84 @@ class CaseScore:
     error: str | None
     guardrails_match: bool | None = None
     checks: list[ItemCheck] = field(default_factory=list)
+    model: str | None = None
+    input_tokens: int | None = 0
+    output_tokens: int | None = 0
 
 
 @dataclass
 class EvalReport:
-    """Aggregate result of an evaluation run."""
+    """One run of an evaluation set.
 
+    Fields:
+        eval_set: the set's name.
+        mode: LLM mode.
+        model: the planner model ("mock" in mock mode).
+        prompt_version: the planner prompt's version.
+        created_at: UTC timestamp.
+        holdout: which cases were scored: "include", "exclude" or "only".
+        scores: one per case.
+        metrics: the headline rates (see summarise).
+        summary: the counts per outcome and category, tokens and cost (see count_outcomes).
+    """
+
+    eval_set: str
     mode: str
     model: str
+    prompt_version: str
     created_at: str
+    holdout: str
     scores: list[CaseScore]
     metrics: dict[str, float | None]
+    summary: dict[str, Any]
 
 
-def load_golden(path: Path = GOLDEN_PATH) -> list[GoldenCase]:
-    """Read the golden requests, resolving `scenario:` references to their request text.
+def load_cases(eval_set: EvalSet = GOLDEN) -> list[EvalCase]:
+    """Read an evaluation set, resolving `scenario:` references to their request text.
 
     Args:
-        path: the YAML file.
+        eval_set: the set (GOLDEN or ADVERSARIAL).
 
     Returns:
         The cases, in file order.
 
     Raises:
-        ValueError: if a case's `guardrails` entry has a key other than block,
-            approve or warn.
+        ValueError: on an unknown category or expectation, a repeated id, or a
+            `guardrails` key other than approve, warn or block.
     """
     cases = []
-    for item in yaml.safe_load(path.read_text(encoding="utf-8")):
+    for item in yaml.safe_load(eval_set.path.read_text(encoding="utf-8")):
         if "scenario" in item:
             scenario = SCENARIOS_BY_ID[item["scenario"]]
             request, datasets = scenario.request, list(scenario.dataset_ids)
         else:
-            request, datasets = item["request"], item["datasets"]
-        unknown = sorted(set(item.get("guardrails") or {}) - set(GUARDRAIL_ITEMS))
+            request, datasets = item["request"], list(item["datasets"])
+        case = EvalCase(
+            id=item["id"],
+            category=item["category"],
+            request=request,
+            datasets=datasets,
+            expect=item["expect"],
+            holdout=bool(item["holdout"]),
+            note=item.get("note", ""),
+            capabilities=item.get("capabilities"),
+            key_params=item.get("key_params", {}),
+            guardrails=item.get("guardrails"),
+        )
+        if case.category not in eval_set.categories:
+            raise ValueError(f"{case.id}: unknown category {case.category!r}")
+        if case.expect not in EXPECTATIONS:
+            raise ValueError(f"{case.id}: expect must be one of {list(EXPECTATIONS)}, "
+                             f"not {case.expect!r}")  # fmt: skip
+        unknown = sorted(set(case.guardrails or {}) - set(GUARDRAIL_ITEMS))
         if unknown:
             # A misspelt key would otherwise be silently ignored, and pass as "none".
-            raise ValueError(f"{item['id']}: unknown guardrails key(s) {unknown}; "
+            raise ValueError(f"{case.id}: unknown guardrails key(s) {unknown}; "
                              f"use {list(GUARDRAIL_ITEMS)}.")  # fmt: skip
-        cases.append(
-            GoldenCase(
-                id=item["id"],
-                request=request,
-                datasets=datasets,
-                expect=item["expect"],
-                capabilities=item.get("capabilities", []),
-                key_params=item.get("key_params", {}),
-                guardrails=item.get("guardrails"),
-            )
-        )
+        cases.append(case)
+    ids = [case.id for case in cases]
+    if len(ids) != len(set(ids)):
+        raise ValueError(f"{eval_set.name} case ids must be unique")
     return cases
 
 
@@ -235,16 +330,21 @@ def guardrail_checks(expected: dict[str, list[str]], issues: list[Issue]) -> lis
 
 
 def score_case(
-    case: GoldenCase, settings: Settings, catalog: Catalog, mode: str, client: Any = None
+    case: EvalCase, settings: Settings, catalog: Catalog, mode: str, client: Any = None
 ) -> CaseScore:
-    """Plan one golden request, validate it and score it.
+    """Plan one case's request, validate the plan as the graph does, and score it.
+
+    Correct means, by what the case expects: "plan", a valid plan and, when the case
+    gives the plan, exactly its capability sequence and (where given) its guardrail
+    outcome; "refuse", a refusal by the planner (or R01); "refuse_or_block", anything
+    but a valid plan.
 
     Args:
-        case: the golden case.
+        case: the case.
         settings: settings.
         catalog: dataset catalog.
         mode: "mock", "cached" or "live".
-        client: optional Anthropic client (tests inject a fake one).
+        client: optional OpenAI or Anthropic client (tests inject a fake one).
 
     Returns:
         The CaseScore.
@@ -260,42 +360,65 @@ def score_case(
 
     planned = [step.capability for step in plan.steps] if plan else []
     codes = report.codes() if report else sorted({i.code for i in result.issues})
-    refused = plan is None or plan.cannot_fulfill
-    blocked = report is not None and report.is_blocked
-    valid = not refused and not blocked
+    if too_long:
+        outcome, detail = "refused", too_long[0].message
+    elif plan is None:
+        outcome, detail = "failed", result.error or "no plan"
+    elif plan.cannot_fulfill:
+        outcome, detail = "refused", (plan.refusal_reason or "").replace("\n", " ")
+    elif report.is_blocked:
+        blocking = ", ".join(sorted({issue.code for issue in report.blocks}))
+        outcome, detail = "blocked", f"blocked by {blocking}: {' > '.join(planned)}"
+    else:
+        outcome, detail = "planned", " > ".join(planned)
+    valid = outcome == "planned"
 
-    expected_set, planned_set = set(case.capabilities), set(planned)
+    expected = case.capabilities or []
+    expected_set, planned_set = set(expected), set(planned)
     union = expected_set | planned_set
     jaccard = len(expected_set & planned_set) / len(union) if union else 1.0
 
     params = param_checks(case.key_params, plan)
     guardrails_match = None
     checks: list[ItemCheck] = []
-    if case.expect == "plan":
-        checks = sequence_checks(case.capabilities, planned) + params
+    gives_plan = case.expect == "plan" and case.capabilities is not None
+    if gives_plan:
+        checks = sequence_checks(expected, planned) + params
     if case.guardrails is not None:
-        # An adversarial case with an expected outcome (an example workflow) is reported
-        # item by item too, for information: it stays correct if refused or blocked for
-        # another reason, e.g. a live planner refusing what the canned plan lets the
-        # validator block.
+        # A case expecting a refusal or a block that gives an outcome (an example
+        # workflow) is reported item by item too, for information: it stays correct if
+        # refused or blocked for another reason, e.g. a live planner refusing what the
+        # canned plan lets the validator block.
         if case.expect != "plan":
-            checks = sequence_checks(case.capabilities, planned)
-        outcome = guardrail_checks(case.guardrails, report.issues if report else result.issues)
-        guardrails_match = all(check.match for check in outcome)
-        checks += outcome
+            checks = sequence_checks(expected, planned)
+        issues = report.issues if report else result.issues
+        outcome_checks = guardrail_checks(case.guardrails, issues)
+        guardrails_match = all(check.match for check in outcome_checks)
+        checks += outcome_checks
 
-    sequence_match = planned == case.capabilities
+    sequence_match = planned == expected
     if case.expect == "plan":
-        correct = valid and sequence_match and guardrails_match is not False
+        correct = valid and (sequence_match or not gives_plan) and guardrails_match is not False
+    elif case.expect == "refuse":
+        correct = outcome == "refused"
     else:
-        correct = refused or blocked
+        correct = not valid
+
+    if too_long or mode == "mock":
+        model, input_tokens, output_tokens = None, 0, 0
+    else:
+        # A plan served from the cache made no call, so it costs nothing.
+        model = result.served_model
+        input_tokens = 0 if result.from_cache else result.input_tokens
+        output_tokens = 0 if result.from_cache else result.output_tokens
     return CaseScore(
-        case_id=case.id,
-        expect=case.expect,
+        case=case,
+        outcome=outcome,
+        detail=detail,
         planned=planned,
         issue_codes=codes,
         valid=valid,
-        refused_or_blocked=refused or blocked,
+        refused_or_blocked=not valid,
         sequence_match=sequence_match,
         jaccard=round(jaccard, 4),
         params_hit=sum(check.match for check in params),
@@ -304,279 +427,47 @@ def score_case(
         error=result.error,
         guardrails_match=guardrails_match,
         checks=checks,
+        model=model,
+        input_tokens=input_tokens,
+        output_tokens=output_tokens,
     )
 
 
 def summarise(scores: list[CaseScore]) -> dict[str, float | None]:
-    """Aggregate the per-case scores into the headline metrics (None when not applicable)."""
-    normal = [s for s in scores if s.expect == "plan"]
-    adversarial = [s for s in scores if s.expect == "refuse_or_block"]
+    """Aggregate the per-case scores into the headline rates (None when no case applies)."""
+    expect_plan = [s for s in scores if s.case.expect == "plan"]
+    give_plan = [s for s in expect_plan if s.case.capabilities is not None]
+    expect_refusal = [s for s in scores if s.case.expect != "plan"]
 
     def rate(values: list[bool]) -> float | None:
         return round(sum(values) / len(values), 4) if values else None
 
-    params_total = sum(s.params_total for s in normal)
+    params_total = sum(s.params_total for s in expect_plan)
     return {
-        "valid_plan_rate": rate([s.valid for s in normal]),
-        "exact_sequence_match": rate([s.sequence_match for s in normal]),
-        "mean_jaccard": round(sum(s.jaccard for s in normal) / len(normal), 4) if normal else None,
+        "valid_plan_rate": rate([s.valid for s in expect_plan]),
+        "exact_sequence_match": rate([s.sequence_match for s in give_plan]),
+        "mean_jaccard": (
+            round(sum(s.jaccard for s in give_plan) / len(give_plan), 4) if give_plan else None
+        ),
         "key_param_accuracy": (
-            round(sum(s.params_hit for s in normal) / params_total, 4) if params_total else None
+            round(sum(s.params_hit for s in expect_plan) / params_total, 4)
+            if params_total
+            else None
         ),
         "guardrail_outcome_match": rate(
-            [s.guardrails_match for s in normal if s.guardrails_match is not None]
+            [s.guardrails_match for s in expect_plan if s.guardrails_match is not None]
         ),
-        "correct_refusal_block_rate": rate([s.refused_or_blocked for s in adversarial]),
+        "correct_refusal_block_rate": rate([s.correct for s in expect_refusal]),
         "overall_correct": rate([s.correct for s in scores]),
     }
 
 
-def run_evaluation(
-    mode: str,
-    settings: Settings,
-    golden_path: Path = GOLDEN_PATH,
-    case_ids: list[str] | None = None,
-) -> EvalReport:
-    """Run the planner on the golden requests and compute the metrics.
-
-    Args:
-        mode: "mock", "cached" or "live".
-        settings: settings.
-        golden_path: the golden requests file.
-        case_ids: evaluate only these cases (None = all of them).
-
-    Returns:
-        The EvalReport.
-
-    Raises:
-        ValueError: if a requested case id is not in the golden file.
-    """
-    catalog = load_catalog(settings.catalog_path)
-    cases = load_golden(golden_path)
-    if case_ids is not None:
-        unknown = sorted(set(case_ids) - {case.id for case in cases})
-        if unknown:
-            raise ValueError(f"unknown golden case id(s): {', '.join(unknown)}")
-        cases = [case for case in cases if case.id in case_ids]
-    scores = [score_case(case, settings, catalog, mode) for case in cases]
-    return EvalReport(
-        mode=mode,
-        model="mock" if mode == "mock" else settings.planner_model,
-        created_at=datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ"),
-        scores=scores,
-        metrics=summarise(scores),
-    )
-
-
-def _percent(value: float | None) -> str:
-    """Format a rate as a percentage, or "n/a"."""
-    return "n/a" if value is None else f"{value:.0%}"
-
-
-def write_report(report: EvalReport, reports_dir: Path = REPORTS_DIR) -> Path:
-    """Write the evaluation as a Markdown report named after its timestamp.
-
-    Args:
-        report: the evaluation result.
-        reports_dir: output folder.
-
-    Returns:
-        Path of the written file.
-    """
-    m = report.metrics
-    lines = [
-        f"# Planner evaluation ({report.mode})",
-        "",
-        f"- Created: {report.created_at}",
-        f"- Planner: {report.model}",
-        f"- Cases: {len(report.scores)}",
-        "",
-    ]
-    if report.mode == "mock":
-        lines += [
-            "> Mock mode tests the evaluation harness, not an LLM: the mock planner only",
-            "> knows the five example workflows, and refuses everything else. Run with",
-            "> `--mode live` to measure the real planner.",
-            "",
-        ]
-    lines += [
-        "## Metrics",
-        "",
-        "| Metric | Value |",
-        "|---|---|",
-        f"| Valid-plan rate (normal cases) | {_percent(m['valid_plan_rate'])} |",
-        f"| Exact capability-sequence match | {_percent(m['exact_sequence_match'])} |",
-        f"| Mean capability-set Jaccard | {m['mean_jaccard']} |",
-        f"| Key-parameter accuracy | {_percent(m['key_param_accuracy'])} |",
-        f"| Guardrail-outcome match | {_percent(m['guardrail_outcome_match'])} |",
-        f"| Correct refusal/block rate (adversarial) | "
-        f"{_percent(m['correct_refusal_block_rate'])} |",
-        f"| Overall correct | {_percent(m['overall_correct'])} |",
-        "",
-        "## Cases",
-        "",
-        "| Case | Expect | Correct | Valid | Sequence | Jaccard | Params | Issues | Planned |",
-        "|---|---|---|---|---|---|---|---|---|",
-    ]
-    for s in report.scores:
-        params = f"{s.params_hit}/{s.params_total}" if s.params_total else "-"
-        lines.append(
-            f"| {s.case_id} | {s.expect} | {'yes' if s.correct else 'NO'} | "
-            f"{'yes' if s.valid else 'no'} | {'yes' if s.sequence_match else 'no'} | "
-            f"{s.jaccard} | {params} | {', '.join(s.issue_codes) or '-'} | "
-            f"{' > '.join(s.planned) or '(none)'} |"
-        )
-    lines += ["", "## Item checks", ""]
-    for s in report.scores:
-        if not s.checks:
-            continue
-        lines += [f"### {s.case_id}", "", "| Item | Expected | Planned | Match |"]
-        lines.append("|---|---|---|---|")
-        lines += [
-            f"| {c.item} | {c.expected} | {c.actual} | {'yes' if c.match else 'NO'} |"
-            for c in s.checks
-        ]
-        lines.append("")
-    reports_dir.mkdir(parents=True, exist_ok=True)
-    stamp = datetime.now(UTC).strftime("%Y%m%d-%H%M%S")
-    path = reports_dir / f"{stamp}-{report.mode}.md"
-    path.write_text("\n".join(lines) + "\n", encoding="utf-8")
-    return path
-
-
-# ---------------------------------------------------------------------------
-# The adversarial set: refuse when the request should be refused, plan otherwise
-# ---------------------------------------------------------------------------
-
-
-@dataclass
-class AdversarialCase:
-    """One adversarial request (see the header of planner_eval/adversarial_requests.yaml)."""
-
-    id: str
-    category: str
-    request: str
-    datasets: list[str]
-    expect: str  # "refuse" or "plan"
-    holdout: bool
-    note: str = ""
-
-
-@dataclass
-class AdversarialScore:
-    """What the planner did with one adversarial request.
-
-    Fields:
-        case: the case.
-        outcome: "refused" (P01, or R01 before the planner), "planned" (a valid plan),
-            "blocked" (a plan the validator blocks) or "failed" (no usable output, V01).
-        correct: refused when expected to refuse, planned when expected to plan. A
-            blocked plan is safe, but the planner did not refuse, so it is not correct.
-        detail: one line on what happened: the refusal reason, the planned capabilities,
-            the blocking codes, or the error.
-        model: the model that answered (None in mock mode).
-        input_tokens: input tokens reported by the API (0 in mock mode, None if unknown).
-        output_tokens: output tokens reported by the API.
-    """
-
-    case: AdversarialCase
-    outcome: str
-    correct: bool
-    detail: str
-    model: str | None = None
-    input_tokens: int | None = 0
-    output_tokens: int | None = 0
-
-
-@dataclass
-class AdversarialReport:
-    """The adversarial set's run: one score per case, and the summary."""
-
-    mode: str
-    model: str
-    prompt_version: str
-    created_at: str
-    scores: list[AdversarialScore]
-    summary: dict[str, Any]
-
-
-def load_adversarial(path: Path = ADVERSARIAL_PATH) -> list[AdversarialCase]:
-    """Read the adversarial requests, checking each category and expected outcome.
-
-    Raises:
-        ValueError: on an unknown category or expectation, or a repeated id.
-    """
-    cases = []
-    for item in yaml.safe_load(path.read_text(encoding="utf-8")):
-        case = AdversarialCase(
-            id=item["id"],
-            category=item["category"],
-            request=item["request"],
-            datasets=list(item.get("datasets") or []),
-            expect=item["expect"],
-            holdout=bool(item["holdout"]),
-            note=item.get("note", ""),
-        )
-        if case.category not in ADVERSARIAL_CATEGORIES:
-            raise ValueError(f"{case.id}: unknown category {case.category!r}")
-        if case.expect not in ("refuse", "plan"):
-            raise ValueError(f"{case.id}: expect must be refuse or plan, not {case.expect!r}")
-        cases.append(case)
-    ids = [case.id for case in cases]
-    if len(ids) != len(set(ids)):
-        raise ValueError("adversarial case ids must be unique")
-    return cases
-
-
-def score_adversarial(
-    case: AdversarialCase, settings: Settings, catalog: Catalog, mode: str, client: Any = None
-) -> AdversarialScore:
-    """Plan one adversarial request, validate it as the graph does, and score the outcome.
-
-    Args:
-        case: the case.
-        settings: settings.
-        catalog: dataset catalog.
-        mode: "mock", "cached" or "live".
-        client: optional OpenAI or Anthropic client (tests inject a fake one).
-
-    Returns:
-        The AdversarialScore.
-    """
-    # R01, as in the graph's request check: an oversized request is refused before the
-    # planner.
-    too_long = check_request_length(case.request)
-    if too_long:
-        return AdversarialScore(case, "refused", case.expect == "refuse", too_long[0].message)
-    result = generate_plan(case.request, case.datasets, mode, settings, catalog, client)
-    plan = fill_defaults(result.plan) if result.plan else None
-    if plan is None:
-        outcome, detail = "failed", result.error or "no plan"
-    elif plan.cannot_fulfill:
-        outcome, detail = "refused", (plan.refusal_reason or "").replace("\n", " ")
-    else:
-        report = validate_plan(plan, catalog, max_steps=settings.max_steps)
-        planned = " > ".join(step.capability for step in plan.steps)
-        if report.is_blocked:
-            codes = ", ".join(sorted({issue.code for issue in report.blocks}))
-            outcome, detail = "blocked", f"blocked by {codes}: {planned}"
-        else:
-            outcome, detail = "planned", planned
-    correct = outcome == {"refuse": "refused", "plan": "planned"}[case.expect]
-    return AdversarialScore(
-        case=case,
-        outcome=outcome,
-        correct=correct,
-        detail=detail,
-        model=result.served_model if mode != "mock" else None,
-        # No call, no tokens: mock plans and cache hits cost nothing.
-        input_tokens=0 if mode == "mock" or result.from_cache else result.input_tokens,
-        output_tokens=0 if mode == "mock" or result.from_cache else result.output_tokens,
-    )
-
-
-def summarise_adversarial(scores: list[AdversarialScore]) -> dict[str, Any]:
+def count_outcomes(scores: list[CaseScore], categories: tuple[str, ...]) -> dict[str, Any]:
     """Accuracy per category (all, development and holdout cases), errors and cost.
+
+    Args:
+        scores: the per-case scores.
+        categories: the set's categories, in report order.
 
     Returns:
         A dict with: "categories" (category -> {"cases", "correct", "dev", "dev_correct",
@@ -585,12 +476,12 @@ def summarise_adversarial(scores: list[AdversarialScore]) -> dict[str, Any]:
         "failed", "input_tokens", "output_tokens" (None if any count is unknown) and
         "cost_usd" (None if not every call has a price).
     """
-    categories: dict[str, dict[str, int]] = {}
-    for name in ADVERSARIAL_CATEGORIES:
+    by_category: dict[str, dict[str, int]] = {}
+    for name in categories:
         in_category = [s for s in scores if s.case.category == name]
         dev = [s for s in in_category if not s.case.holdout]
         held = [s for s in in_category if s.case.holdout]
-        categories[name] = {
+        by_category[name] = {
             "cases": len(in_category),
             "correct": sum(s.correct for s in in_category),
             "dev": len(dev),
@@ -607,10 +498,10 @@ def summarise_adversarial(scores: list[AdversarialScore]) -> dict[str, Any]:
         for s in scores
     ]
     return {
-        "categories": categories,
+        "categories": by_category,
         "cases": len(scores),
         "correct": sum(s.correct for s in scores),
-        "false_plans": sum(s.case.expect == "refuse" and s.outcome == "planned" for s in scores),
+        "false_plans": sum(s.case.expect != "plan" and s.outcome == "planned" for s in scores),
         "false_refusals": sum(s.case.expect == "plan" and s.outcome == "refused" for s in scores),
         "blocked": sum(s.outcome == "blocked" for s in scores),
         "failed": sum(s.outcome == "failed" for s in scores),
@@ -620,36 +511,57 @@ def summarise_adversarial(scores: list[AdversarialScore]) -> dict[str, Any]:
     }
 
 
-def run_adversarial(
-    mode: str, settings: Settings, holdout: str = "include", path: Path = ADVERSARIAL_PATH
-) -> AdversarialReport:
-    """Run the planner on the adversarial set and summarise the outcomes.
+def run_evaluation(
+    mode: str,
+    settings: Settings,
+    eval_set: EvalSet = GOLDEN,
+    case_ids: list[str] | None = None,
+    holdout: str = "include",
+) -> EvalReport:
+    """Run the planner on an evaluation set and compute the metrics.
 
     Args:
         mode: "mock", "cached" or "live".
         settings: settings.
+        eval_set: the set to run (GOLDEN or ADVERSARIAL).
+        case_ids: evaluate only these cases (None = all of them).
         holdout: "include" (every case), "exclude" (development cases only, for prompt
             work) or "only" (the held-out cases).
-        path: the adversarial requests file.
 
     Returns:
-        The AdversarialReport.
+        The EvalReport.
+
+    Raises:
+        ValueError: if a requested case id is not in the set.
     """
     catalog = load_catalog(settings.catalog_path)
-    cases = load_adversarial(path)
+    cases = load_cases(eval_set)
+    if case_ids is not None:
+        unknown = sorted(set(case_ids) - {case.id for case in cases})
+        if unknown:
+            raise ValueError(f"unknown {eval_set.name} case id(s): {', '.join(unknown)}")
+        cases = [case for case in cases if case.id in case_ids]
     if holdout == "exclude":
         cases = [case for case in cases if not case.holdout]
     elif holdout == "only":
         cases = [case for case in cases if case.holdout]
-    scores = [score_adversarial(case, settings, catalog, mode) for case in cases]
-    return AdversarialReport(
+    scores = [score_case(case, settings, catalog, mode) for case in cases]
+    return EvalReport(
+        eval_set=eval_set.name,
         mode=mode,
         model="mock" if mode == "mock" else settings.planner_model,
         prompt_version=PROMPT_VERSION,
         created_at=datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ"),
+        holdout=holdout,
         scores=scores,
-        summary=summarise_adversarial(scores),
+        metrics=summarise(scores),
+        summary=count_outcomes(scores, eval_set.categories),
     )
+
+
+def _percent(value: float | None) -> str:
+    """Format a rate as a percentage, or "n/a"."""
+    return "n/a" if value is None else f"{value:.0%}"
 
 
 def _share(correct: int, total: int) -> str:
@@ -657,34 +569,59 @@ def _share(correct: int, total: int) -> str:
     return f"{correct}/{total} ({correct / total:.0%})" if total else "-"
 
 
-def write_adversarial_report(report: AdversarialReport, reports_dir: Path = REPORTS_DIR) -> Path:
-    """Write the adversarial run as a Markdown report named after its timestamp.
+def write_report(report: EvalReport, reports_dir: Path = REPORTS_DIR) -> Path:
+    """Write an evaluation run as a Markdown report named after its timestamp and set.
 
     Args:
-        report: the adversarial run.
+        report: the evaluation run.
         reports_dir: output folder.
 
     Returns:
         Path of the written file.
     """
-    s = report.summary
+    m, s = report.metrics, report.summary
     tokens = (
         f"{s['input_tokens']:,} in, {s['output_tokens']:,} out"
         if s["input_tokens"] is not None and s["output_tokens"] is not None
         else "unknown"
     )
     cost = "unknown" if s["cost_usd"] is None else f"${s['cost_usd']:.4f}"
+    held = sum(score.case.holdout for score in report.scores)
+    scope = "" if report.holdout == "include" else f", --holdout {report.holdout}"
     lines = [
-        f"# Planner adversarial evaluation ({report.mode})",
+        f"# Planner evaluation: {report.eval_set} set ({report.mode})",
         "",
         f"- Created: {report.created_at}",
         f"- Planner: {report.model}, prompt {report.prompt_version}",
-        f"- Cases: {s['cases']}; correct: {_share(s['correct'], s['cases'])}",
+        f"- Cases: {s['cases']} ({held} held out{scope}); "
+        f"correct: {_share(s['correct'], s['cases'])}",
         f"- False plans (planned when it should refuse): {s['false_plans']}",
         f"- False refusals (refused when it should plan): {s['false_refusals']}",
         f"- Blocked by the validator (not refused by the planner): {s['blocked']}",
         f"- Planner failures: {s['failed']}",
         f"- Tokens: {tokens}; cost: {cost}",
+        "",
+    ]
+    if report.mode == "mock":
+        lines += [
+            "> Mock mode tests the evaluation harness, not an LLM: the mock planner only",
+            "> knows the five example workflows, and refuses everything else. Run with",
+            "> `--mode live` to measure the real planner.",
+            "",
+        ]
+    lines += [
+        "## Metrics",
+        "",
+        "| Metric | Value |",
+        "|---|---|",
+        f"| Valid-plan rate (cases expecting a plan) | {_percent(m['valid_plan_rate'])} |",
+        f"| Exact capability-sequence match | {_percent(m['exact_sequence_match'])} |",
+        f"| Mean capability-set Jaccard | {m['mean_jaccard']} |",
+        f"| Key-parameter accuracy | {_percent(m['key_param_accuracy'])} |",
+        f"| Guardrail-outcome match | {_percent(m['guardrail_outcome_match'])} |",
+        f"| Correct refusal rate (cases expecting a refusal or a block) | "
+        f"{_percent(m['correct_refusal_block_rate'])} |",
+        f"| Overall correct | {_percent(m['overall_correct'])} |",
         "",
         "## Accuracy per category",
         "",
@@ -692,26 +629,50 @@ def write_adversarial_report(report: AdversarialReport, reports_dir: Path = REPO
         "|---|---|---|---|",
     ]
     for name, c in s["categories"].items():
-        lines.append(
-            f"| {name} | {_share(c['correct'], c['cases'])} | "
-            f"{_share(c['dev_correct'], c['dev'])} | {_share(c['holdout_correct'], c['holdout'])} |"
-        )
+        if c["cases"]:
+            lines.append(
+                f"| {name} | {_share(c['correct'], c['cases'])} | "
+                f"{_share(c['dev_correct'], c['dev'])} | "
+                f"{_share(c['holdout_correct'], c['holdout'])} |"
+            )
     lines += [
         "",
         "## Cases",
         "",
-        "| Case | Category | Holdout | Expected | Actual | Correct | Why (wrong answers) |",
-        "|---|---|---|---|---|---|---|",
+        "| Case | Category | Holdout | Expect | Outcome | Correct | Sequence | Params | "
+        "Issues | Planned |",
+        "|---|---|---|---|---|---|---|---|---|---|",
     ]
     for score in report.scores:
         case = score.case
-        why = "" if score.correct else score.detail.replace("|", "/")[:160]
+        sequence = "-" if case.capabilities is None else ("yes" if score.sequence_match else "no")
+        params = f"{score.params_hit}/{score.params_total}" if score.params_total else "-"
         lines.append(
             f"| {case.id} | {case.category} | {'yes' if case.holdout else ''} | {case.expect} | "
-            f"{score.outcome} | {'yes' if score.correct else 'NO'} | {why} |"
+            f"{score.outcome} | {'yes' if score.correct else 'NO'} | {sequence} | {params} | "
+            f"{', '.join(score.issue_codes) or '-'} | {' > '.join(score.planned) or '(none)'} |"
         )
+    wrong = [score for score in report.scores if not score.correct]
+    if wrong:
+        lines += ["", "## Wrong answers", ""]
+        for score in wrong:
+            why = f" Expected because: {score.case.note}" if score.case.note else ""
+            detail = score.detail.rstrip(".")  # a refusal reason may end with its own
+            lines.append(f"- **{score.case.id}** (expected {score.case.expect}, "
+                         f"{score.outcome}): {detail}.{why}")  # fmt: skip
+    lines += ["", "## Item checks", ""]
+    for score in report.scores:
+        if not score.checks:
+            continue
+        lines += [f"### {score.case.id}", "", "| Item | Expected | Planned | Match |"]
+        lines.append("|---|---|---|---|")
+        lines += [
+            f"| {c.item} | {c.expected} | {c.actual} | {'yes' if c.match else 'NO'} |"
+            for c in score.checks
+        ]
+        lines.append("")
     reports_dir.mkdir(parents=True, exist_ok=True)
     stamp = datetime.now(UTC).strftime("%Y%m%d-%H%M%S")
-    path = reports_dir / f"{stamp}-adversarial-{report.mode}.md"
+    path = reports_dir / f"{stamp}-{report.eval_set}-{report.mode}.md"
     path.write_text("\n".join(lines) + "\n", encoding="utf-8")
     return path

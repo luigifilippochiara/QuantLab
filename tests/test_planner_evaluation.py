@@ -11,16 +11,15 @@ from quantlab.data import Catalog
 from quantlab.guardrails import MAX_REQUEST_WORDS
 from quantlab.mock_scenarios import SCENARIOS, SCENARIOS_BY_ID
 from quantlab.planner_evaluation import (
+    ADVERSARIAL,
     ADVERSARIAL_CATEGORIES,
-    AdversarialCase,
-    GoldenCase,
-    load_adversarial,
-    load_golden,
-    run_adversarial,
+    GOLDEN,
+    GOLDEN_CATEGORIES,
+    EvalCase,
+    EvalSet,
+    load_cases,
     run_evaluation,
-    score_adversarial,
     score_case,
-    write_adversarial_report,
     write_report,
 )
 
@@ -29,7 +28,7 @@ from fakes import FakeAnthropicClient, tool_response
 
 
 def test_golden_file_resolves_scenarios() -> None:
-    cases = {case.id: case for case in load_golden()}
+    cases = {case.id: case for case in load_cases(GOLDEN)}
     assert len(cases) >= 10
     scenario_1 = SCENARIOS_BY_ID["chf_safe_haven_success"]
     assert cases["s1_chf_safe_haven"].request == scenario_1.request
@@ -40,14 +39,14 @@ def test_golden_file_resolves_scenarios() -> None:
 
 def test_golden_file_starts_with_the_example_workflows_in_order() -> None:
     # Each example's case id starts with its number, e.g. "s2_" for example 2.
-    first = load_golden()[: len(SCENARIOS)]
+    first = load_cases(GOLDEN)[: len(SCENARIOS)]
     assert [case.request for case in first] == [s.request for s in SCENARIOS]
     assert [case.id.split("_")[0] for case in first] == [f"s{s.number}" for s in SCENARIOS]
 
 
 def test_mock_evaluation_scores_and_report(settings: Settings, tmp_path: Path) -> None:
     report = run_evaluation("mock", settings)
-    scores = {s.case_id: s for s in report.scores}
+    scores = {s.case.id: s for s in report.scores}
     for case_id in ["s1_chf_safe_haven", "s5_buy_the_dip_tech"]:
         assert (
             scores[case_id].correct and scores[case_id].params_hit == scores[case_id].params_total
@@ -61,13 +60,18 @@ def test_mock_evaluation_scores_and_report(settings: Settings, tmp_path: Path) -
 
     # Every example gives its canned outcome. Other cases with an expected outcome (the
     # examples' paraphrases, among others) mostly fail in mock mode, by design.
-    examples = load_golden()[: len(SCENARIOS)]
+    examples = load_cases(GOLDEN)[: len(SCENARIOS)]
     assert all(scores[case.id].guardrails_match for case in examples)
 
     path = write_report(report, tmp_path)
     text = path.read_text()
     assert "Valid-plan rate" in text and "Mock mode tests the evaluation harness" in text
     assert "## Item checks" in text and "| flag_regime.direction | below | below | yes |" in text
+    # The same report as the adversarial set's: accuracy per category, and each wrong
+    # answer with the note on why its expectation holds.
+    assert "## Accuracy per category" in text and "| example | 5/5 (100%) |" in text
+    assert "- **cov_load_vix_history** (expected plan, refused)" in text
+    assert "Expected because: Nothing to compute" in text
 
 
 def test_example_workflows_report_their_canned_outcome_item_by_item(settings: Settings) -> None:
@@ -83,7 +87,7 @@ def test_a_different_block_reason_is_reported_but_still_correct(
     settings: Settings, catalog: Catalog
 ) -> None:
     # A live planner that refuses scenario 2 outright instead of planning it.
-    case = next(c for c in load_golden() if c.id == "s2_spread_frequency_mismatch")
+    case = next(c for c in load_cases(GOLDEN) if c.id == "s2_spread_frequency_mismatch")
     refusal = {"dataset_ids": [], "steps": [], "cannot_fulfill": True, "refusal_reason": "no"}
     score = score_case(case, settings, catalog, "live", FakeAnthropicClient(tool_response(refusal)))
     assert score.correct and score.guardrails_match is False
@@ -93,14 +97,14 @@ def test_a_different_block_reason_is_reported_but_still_correct(
 
 def test_one_case_can_be_evaluated_on_its_own(settings: Settings) -> None:
     report = run_evaluation("mock", settings, case_ids=["s1_chf_safe_haven"])
-    assert [s.case_id for s in report.scores] == ["s1_chf_safe_haven"]
+    assert [s.case.id for s in report.scores] == ["s1_chf_safe_haven"]
     with pytest.raises(ValueError, match="no_such_case"):
         run_evaluation("mock", settings, case_ids=["no_such_case"])
 
 
-def golden_case(case_id: str) -> GoldenCase:
+def golden_case(case_id: str) -> EvalCase:
     """A golden case by id, e.g. example 1's: every step, its parameters, its outcome."""
-    return next(c for c in load_golden() if c.id == case_id)
+    return next(c for c in load_cases(GOLDEN) if c.id == case_id)
 
 
 def test_live_scoring_of_scenario_1_with_a_perfect_fake_planner(
@@ -120,8 +124,9 @@ def test_live_scoring_of_scenario_1_with_a_perfect_fake_planner(
 
 # A golden case for the volatility plan (conftest), the only one using log returns and
 # rolling_volatility: every step, the parameters its request states, and its outcome.
-VOLATILITY_CASE = GoldenCase(
+VOLATILITY_CASE = EvalCase(
     id="volatility_plan",
+    category="capability",
     request="Using NASDAQ, calculate weekly log returns, 12-week volatility, and flag unusually "
     "volatile weeks. Compare next-week simple returns after volatile weeks with those after "
     "normal weeks, then test whether the difference in means is statistically significant.",
@@ -156,7 +161,8 @@ def test_an_oversized_request_is_scored_as_blocked_without_the_planner(
 ) -> None:
     client = FakeAnthropicClient(error=AssertionError("must not be called"))
     text = " ".join(["word"] * (MAX_REQUEST_WORDS + 1))
-    case = GoldenCase(id="too_long", request=text, datasets=["VIXCLS"], expect="refuse_or_block")
+    case = EvalCase(id="too_long", category="refusal", request=text, datasets=["VIXCLS"],
+                    expect="refuse_or_block")  # fmt: skip
     score = score_case(case, settings, catalog, "live", client)
     assert score.correct and score.refused_or_blocked and score.issue_codes == ["R01"]
     assert client.calls == []  # R01 runs before the planner, as in the graph
@@ -188,8 +194,22 @@ def test_a_live_mismatch_shows_what_the_planner_chose_differently(
 # --- the adversarial set: refuse when it should, plan when it should ----------------
 
 
+def test_every_golden_category_has_cases() -> None:
+    counts = Counter(case.category for case in load_cases(GOLDEN))
+    assert set(counts) == set(GOLDEN_CATEGORIES)
+    assert counts["example"] == len(SCENARIOS)
+
+
+def test_an_unknown_expectation_is_refused(tmp_path: Path) -> None:
+    path = tmp_path / "cases.yaml"
+    path.write_text('- {id: c, category: trap, request: r, datasets: [], expect: maybe, '
+                    'holdout: false}\n', encoding="utf-8")  # fmt: skip
+    with pytest.raises(ValueError, match="expect must be one of"):
+        load_cases(EvalSet("test", path, GOLDEN_CATEGORIES))
+
+
 def test_the_adversarial_set_covers_every_category_with_a_holdout() -> None:
-    cases = load_adversarial()
+    cases = load_cases(ADVERSARIAL)
     counts = Counter(case.category for case in cases)
     assert set(counts) == set(ADVERSARIAL_CATEGORIES)
     assert all(3 <= n <= 5 for n in counts.values())
@@ -213,15 +233,18 @@ REFUSAL = {"dataset_ids": [], "steps": [], "cannot_fulfill": True,
         (ARIMA_PLAN, "refuse", "blocked", False),  # safe, but the planner did not refuse
         (SPREAD_PLAN, "plan", "planned", True),
         (REFUSAL, "plan", "refused", False),  # a false refusal
+        (REFUSAL, "refuse_or_block", "refused", True),
+        (ARIMA_PLAN, "refuse_or_block", "blocked", True),  # a block is enough here
+        (SPREAD_PLAN, "refuse_or_block", "planned", False),
     ],
 )
-def test_adversarial_outcomes_are_scored(
+def test_every_expectation_is_scored(
     output: dict, expect: str, outcome: str, correct: bool, settings: Settings, catalog: Catalog
 ) -> None:
-    case = AdversarialCase(id="t", category="vague", request="a request",
-                           datasets=["DGS10", "DGS2"], expect=expect, holdout=False)  # fmt: skip
+    case = EvalCase(id="t", category="vague", request="a request",
+                    datasets=["DGS10", "DGS2"], expect=expect, holdout=False)  # fmt: skip
     client = FakeAnthropicClient(tool_response(copy.deepcopy(output)))
-    score = score_adversarial(case, settings, catalog, "live", client)
+    score = score_case(case, settings, catalog, "live", client)
     assert (score.outcome, score.correct) == (outcome, correct)
     if outcome == "refused":
         assert score.detail == "The request has no concrete question."
@@ -235,9 +258,9 @@ def test_an_oversized_adversarial_request_is_refused_before_the_planner(
 ) -> None:
     client = FakeAnthropicClient(error=AssertionError("must not be called"))
     text = " ".join(["word"] * (MAX_REQUEST_WORDS + 1))
-    case = AdversarialCase(id="t", category="injection", request=text, datasets=[],
-                           expect="refuse", holdout=False)  # fmt: skip
-    score = score_adversarial(case, settings, catalog, "live", client)
+    case = EvalCase(id="t", category="injection", request=text, datasets=[],
+                    expect="refuse", holdout=False)  # fmt: skip
+    score = score_case(case, settings, catalog, "live", client)
     assert (score.outcome, score.correct) == ("refused", True) and client.calls == []
 
 
@@ -246,16 +269,16 @@ def test_the_adversarial_report_counts_errors_per_category(
 ) -> None:
     # The mock planner knows only the examples, so it refuses almost everything: every
     # valid but loose request is a false refusal, and nothing is a false plan.
-    report = run_adversarial("mock", settings)
+    report = run_evaluation("mock", settings, ADVERSARIAL)
     summary = report.summary
-    assert summary["cases"] == len(load_adversarial())
+    assert summary["cases"] == len(load_cases(ADVERSARIAL))
     assert summary["false_refusals"] == summary["categories"]["valid_loose"]["cases"]
     assert summary["false_plans"] == 0 and summary["failed"] == 0
     assert summary["input_tokens"] == 0 and summary["cost_usd"] == 0.0  # no calls
     assert sum(c["cases"] for c in summary["categories"].values()) == summary["cases"]
     assert all(c["dev"] + c["holdout"] == c["cases"] for c in summary["categories"].values())
-    held = run_adversarial("mock", settings, holdout="only")
+    held = run_evaluation("mock", settings, ADVERSARIAL, holdout="only")
     assert {s.case.holdout for s in held.scores} == {True}
-    text = write_adversarial_report(report, tmp_path).read_text()
+    text = write_report(report, tmp_path).read_text()
     assert "## Accuracy per category" in text and "| valid_loose | 0/5 (0%) |" in text
     assert "False refusals (refused when it should plan): 5" in text

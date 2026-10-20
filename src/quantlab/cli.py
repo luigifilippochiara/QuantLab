@@ -23,12 +23,7 @@ from quantlab.lineage import TraceResult, load_run, replay, trace
 from quantlab.mock_scenarios import SCENARIOS
 from quantlab.nodes import GraphState, issue_codes, unresolved_approvals
 from quantlab.plan import describe_plan
-from quantlab.planner_evaluation import (
-    run_adversarial,
-    run_evaluation,
-    write_adversarial_report,
-    write_report,
-)
+from quantlab.planner_evaluation import EVAL_SETS, HOLDOUT_CHOICES, run_evaluation, write_report
 
 
 def print_table(headers: Sequence[str], rows: Sequence[Sequence[object]]) -> None:
@@ -225,20 +220,18 @@ def cmd_trace(args: argparse.Namespace, settings: Settings) -> int:
 
 
 def cmd_eval(args: argparse.Namespace, settings: Settings) -> int:
-    """Planner evaluation: score the planner on the golden requests and write a report.
+    """Planner evaluation: score the planner on a set (golden by default), write a report.
 
     Item checks (expected versus planned) are printed for the cases named with
-    --case, all of them; without --case, only the items that do not match. With
-    --set adversarial, the adversarial set is evaluated instead (cmd_eval_adversarial).
+    --case, all of them; without --case, only the items that do not match.
     """
-    if args.set == "adversarial":
-        return cmd_eval_adversarial(args, settings)
-    report = run_evaluation(args.mode, settings, case_ids=args.cases)
+    report = run_evaluation(args.mode, settings, EVAL_SETS[args.set], args.cases, args.holdout)
     path = write_report(report)
     print_table(
-        ["case", "expect", "correct", "planned / issues"],
+        ["case", "category", "holdout", "expect", "outcome", "correct", "planned / issues"],
         [
-            [s.case_id, s.expect, "yes" if s.correct else "NO",
+            [s.case.id, s.case.category, "yes" if s.case.holdout else "", s.case.expect,
+             s.outcome, "yes" if s.correct else "NO",
              f"{len(s.planned)} steps; {','.join(s.issue_codes) or '-'}"]
             for s in report.scores
         ],
@@ -246,7 +239,7 @@ def cmd_eval(args: argparse.Namespace, settings: Settings) -> int:
     for s in report.scores:
         shown = s.checks if args.cases else [c for c in s.checks if not c.match]
         if shown:
-            print(f"\n{s.case_id}, item by item:")
+            print(f"\n{s.case.id}, item by item:")
             print_table(
                 ["item", "expected", "planned", "match"],
                 [[c.item, c.expected, c.actual, "yes" if c.match else "NO"] for c in shown],
@@ -254,22 +247,6 @@ def cmd_eval(args: argparse.Namespace, settings: Settings) -> int:
     print("\nMetrics:")
     for name, value in report.metrics.items():
         print(f"  {name}: {'n/a' if value is None else value}")
-    print(f"\nReport written to {path}")
-    return 0
-
-
-def cmd_eval_adversarial(args: argparse.Namespace, settings: Settings) -> int:
-    """Planner evaluation on the adversarial set (refuse or plan): score it, write a report."""
-    report = run_adversarial(args.mode, settings, holdout=args.holdout)
-    path = write_adversarial_report(report)
-    print_table(
-        ["case", "category", "holdout", "expect", "actual", "correct"],
-        [
-            [s.case.id, s.case.category, "yes" if s.case.holdout else "", s.case.expect,
-             s.outcome, "yes" if s.correct else "NO"]
-            for s in report.scores
-        ],
-    )  # fmt: skip
     summary = report.summary
     print(f"\nCorrect: {summary['correct']}/{summary['cases']}; false plans: "
           f"{summary['false_plans']}; false refusals: {summary['false_refusals']}; "
@@ -310,15 +287,15 @@ def build_parser() -> argparse.ArgumentParser:
     )
     evaluate.add_argument("--mode", choices=LLM_MODES, default="mock")
     evaluate.add_argument(
-        "--set", choices=("golden", "adversarial"), default="golden",
+        "--set", choices=tuple(EVAL_SETS), default="golden",
         help="golden: known requests and their plans; adversarial: refuse or plan",
     )  # fmt: skip
     evaluate.add_argument(
-        "--holdout", choices=("include", "exclude", "only"), default="include",
-        help="adversarial set: include, exclude or only the held-out cases",
+        "--holdout", choices=HOLDOUT_CHOICES, default="include",
+        help="include, exclude or only the held-out cases",
     )  # fmt: skip
     evaluate.add_argument(
-        "--case", action="append", dest="cases", help="evaluate only this golden case (repeatable)"
+        "--case", action="append", dest="cases", help="evaluate only this case (repeatable)"
     )
     return parser
 

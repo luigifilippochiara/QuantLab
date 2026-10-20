@@ -3,19 +3,23 @@
 # the right plan; this one checks the boundary: vague, unsupported, unavailable, advice,
 # injection, off-topic, mixed, and valid-but-loose requests.
 #
-# Each case:
+# Each case, in the schema both sets share (quantlab.planner_evaluation.EvalCase; the
+# header of golden_requests.yaml describes every field). This set uses:
 #   id:        short name
 #   category:  vague | out_of_scope_method | data_unavailable | advice | injection |
 #              off_topic | mixed | valid_loose
 #   request:   the request, as an analyst would type it
 #   datasets:  datasets selected in the app; [] means none selected, so the planner is
 #              offered every dataset in the catalog (as in the app)
-#   expect:    refuse -> the planner must decline (P01), naming what is missing
-#              plan   -> the planner must produce a valid plan (catches over-refusal)
+#   expect:    refuse -> the planner must decline (P01), naming what is missing; a plan
+#                        the validator blocks is safe, but not correct
+#              plan   -> the planner must produce a valid plan (catches over-refusal); no
+#                        plan is given, so only the outcome is scored
 #   holdout:   true for about a third of the cases, kept out of prompt design: the
 #              planner prompt is changed using the other cases only, and the holdout is
 #              scored separately, so an improvement is not just fitted to these examples
-#   note:      why the expected outcome is the right one (optional)
+#   note:      why the expected outcome is the right one (optional; the report shows it
+#              for a wrong answer)
 #
 # Mixed requests (a valid analysis plus an out-of-scope part) expect refuse: the planner
 # rules say to decline whatever needs something outside the registry and never to

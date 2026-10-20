@@ -1157,7 +1157,7 @@ human must decide) and WARN (the run continues and the result is flagged).** The
 value describes what happens next, so it is named for that; APPROVAL became APPROVE
 to read as an instruction like the other two. Renamed everywhere: the enum
 (`guardrails.Action`), the table, issues, run records, monitoring events, the
-golden set's `guardrails` keys (`approve`, `warn`, `block`; `load_golden` now
+golden set's `guardrails` keys (`approve`, `warn`, `block`; `load_cases` now
 rejects any other key, so a stale one cannot be silently ignored), the UI, the CLI,
 notebooks and docs. Alternative: an auto-fix action, rejected because the human must
 approve exactly what runs.
@@ -1897,7 +1897,7 @@ loosely worded. Each case expects `refuse` (P01) or `plan`.
   correct, because the planner did not refuse.
 - **The report gives:** accuracy per category (development and holdout apart), false
   plans and false refusals counted separately, and the tokens and cost of the run.
-- **The set is data, scored by `evaluation.run_adversarial`.** The tests use fake
+- **The set is data, scored by `planner_evaluation.run_evaluation`.** The tests use fake
   clients and do not depend on any model's wording.
 
 **The live baseline (planner-v6):** 29 of 33 correct.
@@ -2507,3 +2507,25 @@ planner generalises: wording, every capability and parameter, the methodological
 rules and dataset naming each needed cases of their own. **Alternatives.** Generating
 cases from templates (many near-identical requests, little new wording); more refusal
 cases here (the adversarial set covers that boundary).
+
+
+## The two planner evaluation sets share one schema
+
+**What.** The golden and adversarial sets keep their own files (different questions,
+different headline metrics), but now share one schema, `EvalCase`: `id`, `category`,
+`scenario` or `request` and `datasets`, `expect`, `holdout`, `note`, and, for a case that
+gives its plan, `capabilities`, `key_params` and `guardrails`. `expect` takes three values:
+`plan`; `refuse`, met only when the planner itself declines (a validator block is safe
+but not correct); and `refuse_or_block`, met by anything but a valid plan. A case without
+`capabilities` is scored on its outcome alone. One loader (`load_cases`), one scorer
+(`score_case`), one summary and one report serve both sets, so the golden report now
+also gives accuracy per category, development and held-out cases apart, false plans
+and refusals, tokens and cost, and every wrong answer with its note; `--case` and
+`--holdout` work on either set. The golden cases gained `category` and `holdout`, and the
+comments attached to single cases became their `note`, word for word. Every score of
+both sets in mock mode is identical to before, so the golden record is unchanged. Report
+files are now named `<time>-<set>-<mode>.md`. **Why.** The schemas differed by history,
+not by need: the adversarial set added categories and a holdout when the prompt was
+tuned on it, and the golden set had neither, nor notes a report could show.
+**Alternatives.** One file for both sets (rejected: it mixes the two questions' metrics
+in one report); keeping two schemas (two loaders, scorers and reports to keep in step).

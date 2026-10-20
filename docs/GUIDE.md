@@ -331,7 +331,12 @@ to **mock**: everything keeps working offline with the canned plans.
 
 ## Quality assurance
 
-Two separate questions, measured separately:
+Two separate questions, measured separately. The planner's two sets share one schema
+(each case has a category, an expected outcome, and may be held out of prompt work), one
+scorer and one report: accuracy per category with development and held-out cases apart,
+false plans and false refusals, each wrong answer with the note on why its expectation
+holds, and the tokens and cost of the run. `--case <id>` runs single cases, and
+`--holdout exclude` or `--holdout only` leave out or score alone the held-out cases.
 
 * **Does the planner choose the right plan?** Measured by `quantlab.cli eval` (or
   `planner_eval/run_eval.py`) on `planner_eval/golden_requests.yaml`: 50 cases, each
@@ -345,11 +350,10 @@ Two separate questions, measured separately:
   needed; and out-of-scope requests (such as a forecast or a correlation) that must end
   in a refusal or a BLOCK. Every expected plan was checked with the validator.
   Metrics: valid-plan rate, exact capability-sequence match, capability-set Jaccard,
-  key-parameter accuracy, guardrail-outcome match and correct refusal/block rate.
-  Each case is also reported item by item (every
-  step in order, every key parameter, the issues of each action), so a live
-  mismatch shows exactly what the planner chose differently; `--case <id>` runs
-  one case, such as example 1's (`s1_chf_safe_haven`).
+  key-parameter accuracy, guardrail-outcome match and correct refusal rate. Each case
+  is also reported item by item (every step in order, every key parameter, the issues
+  of each action), so a live mismatch shows exactly what the planner chose
+  differently; `--case s1_chf_safe_haven` runs example 1's case alone.
   Reports go to `planner_eval/reports/`. In mock mode this checks the harness only
   (the mock knows just the five examples, so most cases fail there by design);
   `--mode live` measures the real model.
@@ -357,11 +361,9 @@ Two separate questions, measured separately:
   `quantlab.cli eval --set adversarial` on `planner_eval/adversarial_requests.yaml`: 33
   requests in eight categories (vague, out-of-scope methods, unavailable data,
   advice, prompt injection, off-topic, mixed, and valid but loosely worded), each
-  expected to be refused (P01) or planned. The report gives accuracy per category,
-  false plans and false refusals separately, and the tokens and cost of the run.
-  About a third of the cases are held out (`--holdout exclude` leaves them out while
-  working on the planner prompt; `--holdout only` scores them alone). Live results
-  with gpt-6-luna:
+  expected to be refused (P01) or planned; a plan the validator blocks is safe but
+  not correct, because the planner did not refuse. About a third of the cases are held
+  out, kept out of prompt work. Live results with gpt-6-luna:
 
   | Category | planner-v6 | planner-v7 |
   |---|---|---|
