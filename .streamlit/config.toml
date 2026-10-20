@@ -3,3 +3,10 @@
 [browser]
 # No usage telemetry: an enterprise deployment must not send data to third parties.
 gatherUsageStats = false
+
+[runner]
+# One script run at a time per browser session. With fast reruns (Streamlit's default)
+# a click made while the page waits on the LLM (a change request, Execute plan) starts a
+# second run at once, which resumes the same paused graph run a second time. Off, the
+# click waits until the running decision has finished.
+fastReruns = false

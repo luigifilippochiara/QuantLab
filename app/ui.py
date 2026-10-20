@@ -715,16 +715,14 @@ def describe_params(
 # ---------------------------------------------------------------------------
 
 # Request changes turns grey once it can be sent. Streamlit has no colour option for a
-# button, so its key gives its container a CSS class and this rule colours it while
-# enabled. White text on #5f6368: contrast 6.0:1.
+# button, so its key gives its container a CSS class (KEY, replaced by the key) and
+# this rule colours it while enabled. White text on #5f6368: contrast 6.0:1.
 CHANGE_REQUEST_READY_CSS = """
 <style>
-.st-key-request-changes button:not(:disabled) {
+.st-key-KEY button:not(:disabled) {
   background-color: #5f6368; border-color: #5f6368; color: #ffffff;
 }
-.st-key-request-changes button:not(:disabled):hover {
-  background-color: #3c4043; border-color: #3c4043;
-}
+.st-key-KEY button:not(:disabled):hover { background-color: #3c4043; border-color: #3c4043; }
 </style>
 """
 
@@ -742,6 +740,10 @@ def render_change_request(
     click; the graph refuses an empty comment instead, with its reason. Once a comment
     is written (the box has lost focus) and it can be sent, the button is grey.
 
+    Both widgets are keyed by revision: after a change request the page draws new ones,
+    so a click made while the planner was revising (Streamlit queues it, see
+    .streamlit/config.toml) does not send the comment a second time.
+
     Args:
         state: the run's state.
         box: where the comment box goes (a container above the decision row).
@@ -752,9 +754,10 @@ def render_change_request(
         The comment when the button was clicked, else None.
     """
     refusal = change_request_refusal(state)
+    version = f"{state['run_id']}-{revision_number(state)}"
     comment = box.text_area(
         "Change request",
-        key=f"comment-{state['run_id']}-{revision_number(state)}",
+        key=f"comment-{version}",
         height=80,
         placeholder="What should the planner change? e.g. resample both series to weekly",
         disabled=bool(refusal),
@@ -767,9 +770,10 @@ def render_change_request(
         tooltip = "Apply or reset your parameter changes first."
     else:
         tooltip = "Send the plan back to the planner with your comment."
+    key = f"request-changes-{version}"
     clicked = button_area.button(
         "Request changes",
-        key="request-changes",
+        key=key,
         icon=":material/edit_note:",
         disabled=bool(refusal) or pending,
         help=tooltip,
@@ -777,7 +781,7 @@ def render_change_request(
     )
     if not refusal and not pending and comment.strip():
         # Style only: Streamlit applies it without taking space on the page.
-        st.html(CHANGE_REQUEST_READY_CSS)
+        st.html(CHANGE_REQUEST_READY_CSS.replace("KEY", key))
     return comment if clicked else None
 
 

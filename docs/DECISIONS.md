@@ -2345,3 +2345,22 @@ timestamps), under the one run id.
   identical. Alternative: count every applied edit, undone ones included (rejected:
   it changes the edit rate of existing runs, 12 of 37 approved runs on the current
   store becoming 17); or old records at 0 (rejected: their edits would stop counting).
+
+## One decision at a time on the Analysis page (QuantLab_LangGraph)
+
+**What.** Streamlit's fast reruns are off (`.streamlit/config.toml`,
+`runner.fastReruns = false`); the Request changes button and its comment box are keyed
+by revision; a spinner ("Asking the planner to revise the plan...") shows while the
+planner revises. **Why.** A change request is an LLM call of several seconds, and
+nothing on the page showed it was running, so a reviewer clicked again. With fast
+reruns (Streamlit's default) each click starts a new script run at once, beside the
+one still waiting on the LLM, and each resumed the same paused graph run: a live P01
+run sent the same comment to the planner five times, in parallel, and the last answer
+to land (a refusal again) was what the page showed, as if the button did nothing. With
+fast reruns off, a click waits until the running decision has finished; keyed by
+revision, a click queued on the old button does not count on the revised plan, so the
+comment is not sent twice. Execute plan and Reject plan keep their keys: a click queued
+after the run ends resumes a finished graph run, which does nothing. **Alternatives.** A
+"busy" flag in the session state (rejected: the second run would draw the stale page,
+and the first, stopped by Streamlit, could not redraw it); disabling the button while
+the planner runs (rejected: Streamlit cannot change a widget during a blocking call).

@@ -167,6 +167,15 @@ def decide(decision: dict[str, Any], done: str | None = None) -> None:
     st.rerun()
 
 
+def request_changes(comment: str) -> None:
+    """Send the plan back to the planner with the reviewer's comment, then redraw the page.
+
+    The planner is an LLM call that can take seconds: the spinner shows it is running.
+    """
+    with st.spinner("Asking the planner to revise the plan..."):
+        decide({"action": "request_changes", "comment": comment})
+
+
 # ---------------------------------------------------------------- plan
 
 st.divider()
@@ -365,7 +374,7 @@ if plan is not None and plan.cannot_fulfill:
     area = st.container()
     comment = ui.render_change_request(state, area, area, bool(pending))
     if comment is not None:
-        decide({"action": "request_changes", "comment": comment})
+        request_changes(comment)
     if change_request_refusal(state):
         st.caption("Nothing was executed. Write a new request to continue.")
     else:
@@ -433,7 +442,7 @@ if offer_changes:
     execute_col, change_col, reject_col = st.columns(3)
     comment = ui.render_change_request(state, comment_box, change_col, bool(pending))
     if comment is not None:
-        decide({"action": "request_changes", "comment": comment})
+        request_changes(comment)
 else:
     execute_col, reject_col = st.columns(2)
 if execute_col.button(

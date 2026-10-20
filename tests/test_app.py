@@ -10,6 +10,7 @@ import ast
 import dataclasses
 import json
 import re
+import tomllib
 
 import pandas as pd
 import pytest
@@ -1225,7 +1226,7 @@ def request_changes(app: AppTest, comment: str) -> None:
     state = app.session_state["run"].state
     revision = len(state["revisions"]) - 1
     app.text_area(key=f"comment-{state['run_id']}-{revision}").input(comment).run()
-    app.button(key="request-changes").click().run()
+    button(app, "Request changes").click().run()
     assert not app.exception, app.exception
 
 
@@ -1238,7 +1239,7 @@ def test_a_change_request_revises_the_plan_on_the_page(app_env: Settings) -> Non
     narrative = text_response("The flagged weeks are the most inverted of the whole history.")
     app = live_page(app_env, [tool_response(spread_weekly_plan()), narrative])
     # Blocked by V08: no Execute, but Execute | Request changes | Reject are offered.
-    assert button(app, "Execute plan").disabled and not app.button(key="request-changes").disabled
+    assert button(app, "Execute plan").disabled and not button(app, "Request changes").disabled
     request_changes(app, CHANGE_REQUEST_COMMENT)
     # The revision: its number, the comment, and the diff of steps and parameters.
     badge = next(m.value for m in app.markdown if "Revision 1 of 3" in m.value)
@@ -1269,7 +1270,7 @@ def test_request_changes_is_live_only_on_the_page(mode: str, app_env: Settings) 
         button(app, "Generate plan").click().run()
     else:  # the cache is empty, so the fake LLM answers the first plan
         app = live_page(app_env, [], mode="cached")
-    change = app.button(key="request-changes")
+    change = button(app, "Request changes")
     assert change.disabled and change.help == "Available in live mode."
 
 
@@ -1285,12 +1286,29 @@ def test_after_the_last_change_request_only_execute_and_reject_remain(app_env: S
 
 
 def test_a_refusal_can_be_sent_back_with_a_change_request(app_env: Settings) -> None:
-    app = live_page(app_env, [], scenario_id="arima_forecast_block")
-    assert app.error[0].proto.title == "The planner declined this request"
-    assert not app.button(key="request-changes").disabled
+    revision = tool_response(spread_weekly_plan())
+    app = live_page(app_env, [revision], scenario_id="arima_forecast_block")
+    declined = "The planner declined this request"
+    assert app.error[0].proto.title == declined
+    assert not button(app, "Request changes").disabled
     assert app.main.caption[-1].value == (
         "Nothing was executed. Request changes above, or write a new request."
     )
+    request_changes(app, CHANGE_REQUEST_COMMENT)
+    # The planner's revision replaces the refusal: a plan to review and validate.
+    assert any("Revision 1 of 3" in m.value for m in app.markdown)
+    assert declined not in [e.proto.title for e in app.error]
+    assert "Validation" in [h.value for h in app.subheader]
+    # The new revision has a new button: a click queued on the old one while the planner
+    # was revising cannot send the comment a second time.
+    run_id = app.session_state["run"].state["run_id"]
+    assert button(app, "Request changes").key == f"request-changes-{run_id}-1"
+
+
+def test_streamlit_runs_one_decision_at_a_time() -> None:
+    # A click made while the LLM answers waits, instead of resuming the same run twice.
+    with open(PROJECT_ROOT / ".streamlit" / "config.toml", "rb") as config:
+        assert tomllib.load(config)["runner"]["fastReruns"] is False
 
 
 @pytest.mark.parametrize("scenario_id", [SPREAD.id, "arima_forecast_block"])
@@ -1302,7 +1320,7 @@ def test_request_changes_turns_grey_once_a_comment_is_written(
     assert grey_styles(app) == []  # no comment yet: the neutral button
     comment.input(CHANGE_REQUEST_COMMENT).run()
     (style,) = grey_styles(app)
-    assert ".st-key-request-changes button:not(:disabled)" in style
+    assert f".st-key-{button(app, 'Request changes').key} button:not(:disabled)" in style
     comment.input("   ").run()  # blank is no comment
     assert grey_styles(app) == []
 
@@ -1314,4 +1332,4 @@ def test_request_changes_is_not_grey_while_a_parameter_change_is_pending(
     comment = app.text_area(key=f"comment-{app.session_state['run'].state['run_id']}-0")
     comment.input(CHANGE_REQUEST_COMMENT).run()
     next(n for n in app.number_input if n.key.endswith("-quantile")).set_value(0.2).run()
-    assert app.button(key="request-changes").disabled and grey_styles(app) == []
+    assert button(app, "Request changes").disabled and grey_styles(app) == []
