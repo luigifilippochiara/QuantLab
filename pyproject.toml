@@ -7,10 +7,10 @@ requires-python = ">=3.12"
 # Direct dependencies are pinned to exact versions so a run record's
 # "environment" section can be reproduced; uv.lock pins everything else.
 # The library surface is deliberately small: statsmodels only for the significance
-# test (it installs scipy, which QuantLab never imports); no scikit-learn, arch,
-# LangChain. Exception, on the QuantLab_LangGraph branch only: langgraph, for the
-# orchestration prototype in graph.py; it brings langchain-core with it (see
-# docs/DECISIONS.md, "LangGraph orchestration prototype").
+# test (it installs scipy, which QuantLab never imports); no scikit-learn, arch or
+# LangChain. One accepted exception: langgraph, the orchestrator in graph.py; it
+# brings langchain-core with it, which QuantLab never imports (see the LangGraph
+# entries in docs/DECISIONS.md).
 dependencies = [
     "anthropic==1.14.0",
     "langgraph==1.2.16",
@@ -26,7 +26,7 @@ dependencies = [
 ]
 
 [dependency-groups]
-# Tools used while developing, not needed to run the engine itself.
+# Tools used while developing, not needed to run QuantLab itself.
 dev = [
     "ipykernel==7.4.0",
     "jupyter==1.1.1",

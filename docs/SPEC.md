@@ -72,7 +72,7 @@ quantlab/
     narrator.py      # facts sheet builder, LLM narrator, template fallback, numeric grounding check
     lineage.py       # run record/manifest, save/load, replay, trace(step_id)
     monitoring.py    # JSONL event log + metric aggregation
-    engine.py        # orchestration used by UI, CLI and notebooks: plan -> validate -> approve -> execute -> narrate -> record
+    graph.py         # orchestration used by UI, CLI and notebooks (a LangGraph graph): plan -> validate -> approve -> execute -> narrate -> record
     cli.py           # `python -m quantlab.cli demo | run | replay <run_id> | eval`
   app/streamlit_app.py + app/pages/*.py
   notebooks/01..08 (see below)
@@ -155,7 +155,7 @@ Runtime checks (during execution, need data). A failing BLOCK stops the run clea
 - E04 ALIGNMENT_LOSS (WARN): an inner join drops more than 10% of rows.
 - E05 LOW_EFFECTIVE_SAMPLE (WARN): fewer than 5 distinct flagged episodes in compare_groups/ols_hac, so the test has low power.
 
-Approvals: the engine refuses to execute while any BLOCK exists or any APPROVE is unresolved. Approvals are recorded with timestamp and the exact issue they resolve.
+Approvals: the orchestrator refuses to execute while any BLOCK exists or any APPROVE is unresolved. Approvals are recorded with timestamp and the exact issue they resolve.
 
 ## Planner (planner.py)
 
@@ -190,10 +190,9 @@ Run record saved as runs/<run_id>/manifest.json, with outputs saved alongside (C
 Append-only runs/events.jsonl. One event per line: timestamp, run_id, event_type (request_received, plan_generated, plan_failed, validation_issue, approval_granted, execution_started, step_completed, step_failed, guardrail_triggered, narrative_checked, run_completed, run_failed, replay_completed), stage latency in ms, and details (capability, issue code, action, error message).
 Aggregation functions for the dashboard: number of runs, success/blocked/failed rates, mean and p95 latency per stage (planning, validation, execution, narration), capability invocation counts, guardrail events by code and action, recent errors, plan-cache hit rate.
 
-## Engine (engine.py)
+## Orchestrator (graph.py)
 
-A small orchestrator used identically by the UI, CLI and notebooks:
-create_plan(request, dataset_ids, mode) -> validate(plan) -> apply_param_edits(plan, edits) (re-validates) -> approve(issue_ids) -> execute() -> narrate() -> save_record(). Every stage emits monitoring events. Keep it simple and stateful in an obvious way (e.g. a Session dataclass).
+A small orchestrator used identically by the UI, CLI and notebooks: a LangGraph graph with one node per stage, request check -> planner -> validator -> approval -> executor -> narrator -> recorder. The approval node is an interrupt: the run pauses until the reviewer approves, edits parameter values (re-validated by the same validator), rejects or requests changes. Every stage emits monitoring events. The run's state is one typed dict, checkpointed after every node, so a paused run resumes exactly where it stopped.
 
 ## Streamlit app (app/)
 
@@ -267,7 +266,7 @@ Delivered in phases. After each phase the tests are run and any failure is fixed
 3. plan and validation, with guardrail tests.
 4. executor, lineage, monitoring, with end-to-end mock test and replay test.
 5. planner (Anthropic + mock + cache) and narrator with grounding check.
-6. engine and CLI (`demo` must pass all scenarios as expected).
+6. orchestrator (graph.py) and CLI (`demo` must pass all scenarios as expected).
 7. Streamlit app (all four pages).
 8. eval, notebooks, README, DECISIONS.md, CLAUDE.md.
 

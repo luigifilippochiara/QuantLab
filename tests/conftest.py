@@ -137,7 +137,7 @@ def build_synthetic_data_dir(data_dir: Path, missing_every: int = 50) -> Path:
 
 @pytest.fixture(scope="session")
 def synthetic_data_template(tmp_path_factory: pytest.TempPathFactory) -> Path:
-    """Build the synthetic data folder once per test session (it takes ~0.3 s)."""
+    """Build the synthetic data folder once for the whole test run (it takes ~0.3 s)."""
     data_dir = tmp_path_factory.mktemp("template") / "data"
     build_synthetic_data_dir(data_dir)
     return data_dir

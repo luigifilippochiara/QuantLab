@@ -54,7 +54,7 @@ from conftest import (
 
 
 def validate(raw: dict[str, Any], catalog: Catalog, **budgets: int) -> ValidationReport:
-    """Parse and validate a plan dict (defaults filled, as the engine does)."""
+    """Parse and validate a plan dict (defaults filled, as the planner node does)."""
     plan = Plan.model_validate({"plan_id": "p-test", "request": "test request", **raw})
     return validate_plan(fill_defaults(plan), catalog, **budgets)
 
@@ -494,7 +494,7 @@ def make_issue_codes() -> set[tuple[str, str]]:
 
 
 # The module that raises the issues of each code prefix. guardrails.py holds the
-# request check (R, called by the engine before the planner) and the validator's V
+# request check (R, called by the graph before the planner) and the validator's V
 # codes, and turns the planner's refusal (P01) into a BLOCK, so a refused plan can
 # never run; the executor raises the E codes and the narrator check the N codes. In
 # particular, no executor check can be labelled R.

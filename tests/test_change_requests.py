@@ -110,7 +110,7 @@ def test_a_planner_refusal_partway_through_can_be_revised_again(settings: Settin
     # The refusal (P01) is not a terminal block: the reviewer can ask again.
     assert run.paused_for is not None and run.state["report"].codes() == ["P01"]
     assert run.paused_for["revision"] == 1
-    # A refusal is not a plan to reject (as in the engine).
+    # A refusal is not a plan to reject.
     refused = resume_run(graph, run, {"action": "reject"})
     assert refused.paused_for["error"] == "There is no plan to reject."
     run = approve_all(graph, ask(graph, refused))

@@ -234,8 +234,7 @@ class RunRecord(BaseModel):
             decision has been made (a plan left undecided is abandoned).
         decided_at: when the decision was made.
         revisions: every round of planning, in order: revision 0, then one per change
-            request (empty in records made before change requests existed, and in
-            records saved by engine.Session, which has no change requests).
+            request (empty in records made before change requests existed).
         manual_edits: parameters the reviewer changed by hand, summed over revisions
             (each revision's manual_changes); None where revisions is empty (the
             Monitoring page then reads param_diff).

@@ -25,7 +25,7 @@ Every guardrail, whoever enforces it, is described in the single GUARDRAILS
 table below. The first letter of its code names the pipeline stage that enforces
 it, in pipeline order (ENFORCERS):
     R  the request check (deterministic), before the planner: this module, called
-       by the engine
+       by the graph's request_check node
     P  the planner (LLM): it refuses, and the validator turns the refusal into a BLOCK
     V  the validator (deterministic), on the plan before anything runs: this module
     E  the executor, at run time on the data: executor.py
@@ -633,7 +633,7 @@ def check_planner_refused(plan: Plan) -> list[Issue]:
 def check_request_length(request: str) -> list[Issue]:
     """R01 REQUEST_TOO_LONG: refuse a request over MAX_REQUEST_WORDS words or MAX_REQUEST_CHARS.
 
-    The engine (and the evaluation) call it before the planner, so an oversized
+    The graph (and the evaluation) call it before the planner, so an oversized
     request costs no LLM call. Without it, a pasted document could blow up prompt
     size and cost, and gives room for instructions stuffed inside it to steer the
     planner. Words are counted as whitespace-separated pieces of text.

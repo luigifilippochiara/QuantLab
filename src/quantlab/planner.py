@@ -645,7 +645,7 @@ def unplanned_result(issues: list[Issue], mode: str, settings: Settings) -> Plan
 
     Args:
         issues: the issues that stopped the request (R01).
-        mode: the session's LLM mode.
+        mode: the run's LLM mode.
         settings: settings (provider and planner model).
 
     Returns:

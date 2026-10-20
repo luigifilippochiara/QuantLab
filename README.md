@@ -21,6 +21,11 @@ a deterministic check verifies every number it writes (N01). Every run is saved,
 be replayed without the LLM and traced to the source file. The LLM proposes, the
 system disposes.
 
+One LangGraph graph ([src/quantlab/graph.py](src/quantlab/graph.py)) runs this
+pipeline for the app, the CLI and the notebooks: each stage is a node, and the review
+is an interrupt where the run pauses, its state checkpointed, until the reviewer
+answers.
+
 ## Request changes
 
 When a plan needs more than new parameter values (another resampling, a different
@@ -30,9 +35,10 @@ never data) and the comment, and returns a complete revised plan. The comment ge
 the same request check as a request, and the revision goes through every validator
 guardrail before the reviewer sees it. Up to 3 change requests per run; after that,
 only Execute or Reject. It needs live mode: in mock and cached mode the button is
-disabled; otherwise it turns grey once a comment is written and can be sent. A plan rejected as a whole (V01, V02) ends the run instead. Every revision
-stays in the one run record, under its run id: the Analysis page shows the revision
-number and what changed, and the trace lists the revision history.
+disabled; otherwise it turns grey once a comment is written and can be sent. A plan
+rejected as a whole (V01, V02) ends the run instead. Every revision stays in the one
+run record, under its run id: the Analysis page shows the revision number and what
+changed, and the trace lists the revision history.
 
 ## What's inside
 
@@ -112,7 +118,7 @@ the snapshots. The full roadmap is in
 | [docs/DECISIONS.md](docs/DECISIONS.md) | Every design decision, with its reason and the alternatives |
 | [docs/SPEC.md](docs/SPEC.md) | The original v1 specification |
 | [data/README.md](data/README.md) | Datasets, sources, licences and snapshot hashes |
-| [src/quantlab/](src/quantlab/) | The package: registry, guardrails, planner, executor, narrator, lineage, engine |
+| [src/quantlab/](src/quantlab/) | The package: registry, guardrails, planner, executor, narrator, lineage, and the graph that orchestrates them |
 | [app/](app/) | The Streamlit app |
 | [notebooks/](notebooks/) | One notebook per layer, run in mock mode |
 | [tests/](tests/) | The test suite, with synthetic data and simulated LLM clients |

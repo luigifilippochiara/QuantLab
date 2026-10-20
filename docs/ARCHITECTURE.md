@@ -31,7 +31,7 @@ recorded.
    plans, and asks for explicit approval where a modelling choice matters.
 3. **Review.** The analyst reviews the plan, can adjust parameter values (every
    change is re-validated by the same validator) and approves it.
-4. **Execute.** A deterministic engine runs the approved plan by looking each
+4. **Execute.** The deterministic executor runs the approved plan by looking each
    capability up in the registry. A name that is not registered has no code
    behind it, so it cannot run.
 5. **Explain.** A second model call writes a short summary from a facts sheet of
@@ -50,7 +50,7 @@ In practice this means:
   each with a written reason;
 * requests outside the registry (a forecast, a model, running code) are declined,
   never improvised;
-* every number shown comes from the engine, and the narrative is checked against it;
+* every number shown comes from the executor, and the narrative is checked against it;
 * every result can be traced back to the exact source file and replayed.
 
 QuantLab also runs fully offline in **mock mode**, which needs no API key.
@@ -74,12 +74,37 @@ QuantLab also runs fully offline in **mock mode**, which needs no API key.
 | `narrator.py` | Facts sheet, LLM narrator, template fallback, numeric grounding check (N01) |
 | `lineage.py` | Run record (manifest), save/load, replay, trace |
 | `monitoring.py` | Append-only JSONL event log; the Monitoring page's metrics, from run records and events, and its attention thresholds |
-| `engine.py` | `Session`: plan, validate, edit, approve, reject or execute, narrate, save; used by app, CLI, notebooks |
+| `graph.py` | The orchestrator, a LangGraph graph: one node per stage, review as an interrupt, edits and change requests back through validation, every run saved; used by app, CLI, notebooks |
 | `evaluation.py` | Planner evaluation on golden requests |
 | `cli.py` | `python -m quantlab.cli demo / run / replay / trace / eval` |
 
 The language model appears only in `planner.py` and `narrator.py` (a test
 enforces this). Everything else is deterministic Python.
+
+### Orchestration: one graph
+
+`graph.py` runs every request, for the app, the CLI and the notebooks, as a LangGraph
+`StateGraph`. Each stage is a node that calls one module's function and returns the
+fields of the run's state it changes:
+
+```text
+request_check -> planner -> validator -> approval -> executor -> narrator -> recorder
+```
+
+* **Review is an interrupt.** The `approval` node calls `interrupt()`: the run pauses,
+  and an in-memory checkpointer keeps its whole state (one thread per run id). The
+  reviewer's answer (Execute with approvals, an edit, Reject or a change request) is
+  validated as a `ReviewDecision` and resumes the run from that checkpoint.
+* **Every change goes back through validation.** An edit returns to the validator; a
+  change request returns through the request check and the planner, then the
+  validator. Only a plan without BLOCKs is routed to the executor, which validates it
+  again before it starts.
+* **Routing is plain functions of the state.** After the validator, a plan rejected
+  as a whole (V01, V02) goes to the recorder. On the Analysis page every other plan
+  pauses for review, blocked or not; headless (CLI, notebooks), a BLOCK ends the run,
+  open approvals pause it and a clean plan runs.
+* **Every run ends at the recorder**, which saves the run record. A plan awaiting a
+  decision is saved as soon as it is validated, so every plan shown is on record.
 
 ## Why plans instead of generated code
 
@@ -158,12 +183,16 @@ underlying library call.
 **A deliberately small library surface:** pandas and numpy (time series),
 statsmodels (the regression with Newey-West standard errors behind the
 significance test), pydantic (strict plan parsing), streamlit and plotly (UI),
-the official `openai` and `anthropic` SDKs, python-dotenv and pyyaml.
-Deliberately excluded: scipy as a direct dependency (statsmodels installs it;
-QuantLab never calls it), scikit-learn (no machine-learning models),
-`arch` (no GARCH), and LangChain or any agent framework (two structured model
-calls do not need an orchestration layer, and every extra abstraction is more to
-audit). Fewer libraries means fewer versions to pin, record and explain.
+the official `openai` and `anthropic` SDKs, langgraph (the orchestrator),
+python-dotenv and pyyaml. Deliberately excluded: scipy as a direct dependency
+(statsmodels installs it; QuantLab never calls it), scikit-learn (no
+machine-learning models), `arch` (no GARCH), and LangChain or any agent framework
+(two structured model calls need no chain or agent, and every extra abstraction is
+more to audit). LangGraph is the one framework accepted, for orchestration only:
+its interrupt and checkpointer give the human review and the change-request loop a
+tested mechanism, while the model calls stay in `planner.py` and `narrator.py`
+(see `docs/DECISIONS.md`). Fewer libraries means fewer versions to pin, record and
+explain.
 
 ## Guardrails
 
@@ -176,10 +205,11 @@ and what goes wrong without it. Every guardrail has:
 * for a BLOCK on a plan, whether it is **fixable by edit**: most are (editing a
   parameter value and re-validating can clear them), but V01 and V02 are terminal:
   the plan's steps are wrong in kind or structure, so the whole plan is rejected and
-  can be neither edited, re-validated, approved nor executed (the engine raises
-  `PlanRejectedError`). "n/a" for APPROVE and WARN, and for R01 and P01, which leave
-  no plan to edit. A blocked plan, fixable or not, never reaches the executor: the
-  engine's validator gate stops it;
+  can be neither edited, re-validated, approved nor executed (the graph sends the run
+  to the recorder, so there is no review to answer). "n/a" for APPROVE and WARN, and
+  for R01 and P01, which leave no plan to edit. A blocked plan, fixable or not, never
+  reaches the executor: the graph routes only a plan without BLOCKs to it, and the
+  executor validates the plan again before it starts;
 * an **enforcer**, the pipeline stage named by the first letter of its code, in
   pipeline order: **R** the request check, deterministic, before the planner is
   called; **P** the planner (LLM), which may refuse; **V** the validator,

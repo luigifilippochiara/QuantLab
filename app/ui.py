@@ -272,7 +272,7 @@ def unapplied_edits(plan: Plan, values: dict[str, dict[str, Any]]) -> dict[str, 
     """The plan editor's values that differ from the last validated plan: what Apply applies.
 
     Args:
-        plan: the last validated plan (the session's plan), the baseline.
+        plan: the last validated plan (the run's plan), the baseline.
         values: step id -> {param: the value in its field now}.
 
     Returns:

@@ -16,8 +16,10 @@ The LLM proposes, the system disposes.
 2. `guardrails.py` checks it with the validator's guardrails (V codes). Every
    guardrail issue has an action: BLOCK / APPROVE / WARN. Code prefixes name the
    stage: R request check, P planner, V validator, E executor, N narrator check.
-3. A human reviews, edits parameter VALUES only (structure locked in the engine,
-   re-validated by the same validator, approvals reset) and approves.
+3. A human reviews (the run pauses at the graph's approval interrupt), edits parameter
+   VALUES only (structure locked by `check_edits`, re-validated by the same validator,
+   approvals reset) or requests changes (live mode: the planner revises, the validator
+   checks the revision again), and approves.
 4. `executor.py` runs it by dict lookup in `REGISTRY`, with the runtime guardrails (E codes).
 5. The narrator LLM summarises using only the facts sheet; `check_grounding` verifies
    every number (N01: an ungrounded narrative is withheld and replaced by the template).
@@ -44,9 +46,10 @@ REGISTRY, LLM summary, version) -> `plan` (Pydantic Plan/Step) -> `guardrails`
 (static guardrails, dry run, GUARDRAILS table) -> `mock_scenarios` (example workflows) ->
 `executor` (dispatch, runtime guardrails, step records) -> `planner` /
 `narrator` (the only LLM code; OpenAI and Anthropic) -> `lineage` (manifest, replay, trace) ->
-`monitoring` (events.jsonl, the Monitoring page's metrics) -> `engine` (Session
-orchestrator used by app, CLI and notebooks) -> `evaluation`, `cli`. The Streamlit app is in `app/`
-(user interface only).
+`monitoring` (events.jsonl, the Monitoring page's metrics) -> `graph` (the orchestrator
+used by the app, CLI and notebooks: LangGraph nodes for the stages, the approval
+interrupt, an in-memory checkpointer, change requests) -> `evaluation`, `cli`. The
+Streamlit app is in `app/` (user interface only).
 
 ## Adding a capability
 
@@ -72,8 +75,9 @@ significance test (`hac_mean_difference`), and no forecasts or models (see
 - Python 3.12+, managed with uv. Direct dependencies pinned exactly in
   `pyproject.toml`; do not add libraries without a recorded decision
   (deliberately excluded: scikit-learn, arch, LangChain and other frameworks;
-  statsmodels is used only for the significance test, and scipy, which it
-  installs, is never imported directly).
+  LangGraph is the one accepted framework, for the orchestrator in `graph.py`, and
+  nothing else may use it; statsmodels is used only for the significance test, and
+  scipy, which it installs, is never imported directly).
 - Clear, explicit code: plain functions, Pydantic models (for untrusted input
   and records) and dataclasses (for specs). No metaprogramming, no
   registration decorators, no deep class hierarchies.

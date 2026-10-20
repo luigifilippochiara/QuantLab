@@ -1,6 +1,6 @@
 """Settings: every configurable value in one place, read from `.env` and the environment.
 
-Role in the architecture: the engine, UI, CLI, notebooks and tests all receive a
+Role in the architecture: the graph, UI, CLI, notebooks and tests all receive a
 `Settings` object instead of reading environment variables themselves. That keeps
 configuration explicit (you can see exactly what a run used) and lets tests point
 the whole system at temporary folders.

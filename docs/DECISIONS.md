@@ -170,8 +170,8 @@ place instead of inside planner.py. See "Example workflows" below for the curren
 
 **The executor is the final gate.** `execute_plan` re-runs `validate_plan` and
 refuses to start if any BLOCK exists or any APPROVAL issue id is not in the
-approved set. The engine checks the same things first (to drive the UI), but
-the executor does not trust its caller, so notebooks, tests and replay cannot
+approved set. The orchestrator checks the same things first (to route the run and
+drive the UI), but the executor does not trust its caller, so notebooks, tests and replay cannot
 skip the checks.
 
 **Output hashes use a canonical text with floats rounded to 12 significant
@@ -258,14 +258,15 @@ value, not that it is attached to the right concept.
 scientific notation** (27204.38 shows as "27,204", 0.000563124 as "0.0005631"),
 so the narrator can quote them verbatim.
 
-## Engine, CLI and evaluation
+## Orchestration, CLI and evaluation
 
-**The engine is a `Session` dataclass with one method per stage**
-(`create_plan`, `validate`, `apply_param_edits`, `approve`, `execute`,
-`narrate`, `save_record`), plus `run_request` that chains them for headless
-use. The app keeps the Session in `st.session_state`; the CLI and notebooks use
-`run_request`. Alternative: a stateless function pipeline, rejected because
-the UI genuinely needs to pause between stages for human review.
+**One orchestrator moves a run through the stages, and can pause it for review.**
+Today it is the graph (`graph.py`): one node per stage, `start_run` and `resume_run`
+for a person reviewing, and `run_graph`, which chains them for headless use. The app
+keeps the paused run in `st.session_state`; the CLI and notebooks use `run_graph`.
+Alternative: a stateless function pipeline, rejected because the UI genuinely needs
+to pause between stages for human review. (The LangGraph entries at the end record
+how the graph came to be the orchestrator.)
 
 **Blocked runs are recorded immediately.** A plan that is blocked (by the
 validator, the planner or missing approvals) is saved as a `blocked` run with
@@ -363,7 +364,7 @@ orange `#d95926` for flagged regimes. The pair was run through a colour-vision
 validator against both Streamlit backgrounds (white and `#0e1117`): lightness,
 chroma, colour-blind separation (CVD Delta E 26.8) and contrast all pass, so no
 runtime theme detection is needed. Streamlit's theme detection can be wrong on
-a session's first run, which made the per-theme alternative unreliable.
+the first run in a new browser tab, which made the per-theme alternative unreliable.
 
 **One run = one execution.** After a run completes, its plan is locked in the
 UI; changing anything means generating a new plan (a new run id), so a run
@@ -371,7 +372,7 @@ record always describes exactly one execution. A run stopped by a runtime
 BLOCK (e.g. R02) can still be edited and re-executed under the same id.
 
 **Approvals are ticked in the UI and recorded at execution time.** Editing any
-parameter clears the engine's approvals and unticks the boxes, so an approval
+parameter clears the run's approvals and unticks the boxes, so an approval
 always refers to the issue text of the plan that actually runs.
 
 **The app is regression-tested headlessly** with `streamlit.testing.AppTest`
@@ -553,10 +554,10 @@ returns across VIX regimes.
 **Example 3 is a planner refusal; the G02 check is tested separately.** The canned
 plan refuses (G13) and lists what the registry can do, as a well-behaved LLM
 should. A test feeds a misbehaving planner's plan with an `arima` step
-through the engine (live mode, fake client) and asserts the validator blocks it
+through the orchestrator (live mode, fake client) and asserts the validator blocks it
 with G02 and nothing runs.
 
-**Example 4's "no shell" test allows the run record's git queries.** The engine
+**Example 4's "no shell" test allows the run record's git queries.** The orchestrator
 saves even blocked runs, and the manifest records the git commit and dirty flag
 through two fixed, read-only `git` commands (`subprocess.run` with an argument
 list, never a shell). The test therefore asserts that `os.system` and `os.popen`
@@ -588,7 +589,7 @@ reason. Widget and approval-checkbox keys include the plan version, so after an
 edit or a reset every widget restarts from the plan's values and every approval
 box is unticked.
 
-**The structure is locked in the engine, with G03.** `check_edits` accepts only
+**The structure is locked by `check_edits`, with G03.** `check_edits` accepts only
 `{step_id: {param: value}}` for parameters of the step's registered capability.
 Anything else (a new step id, `capability`, `inputs`, `id`, an invented field, a
 non-mapping) is rejected as a G03 INVALID_PARAM BLOCK whose message starts with
@@ -600,7 +601,7 @@ edits, rejected as one more code for what is, in effect, an invalid parameter.
 
 **G14 WINDOW_UNITS_CHANGED (WARN) compares the edited plan with the planner's
 proposal.** `validate_plan` takes an optional `baseline` (the proposal with
-defaults filled); the engine passes it for every validation of a session. For
+defaults filled); the orchestrator passes it for every validation of a run. For
 each step whose input frequency differs between the two dry runs, every
 parameter flagged `counted_in_periods` (rolling_volatility.window,
 flag_regime.min_periods) that still has the proposal's value raises G14, with a
@@ -1176,7 +1177,7 @@ that defence in depth.
 
 **G05 and the request length: still "Validator (deterministic)".** The request-length
 check is the validator's own function (`check_request_length`), which `validate_plan`
-runs on every plan; the engine calls the same function once more before the planner,
+runs on every plan; the orchestrator calls the same function once more before the planner,
 so an oversized request costs no LLM call. G05's description says both. Alternative:
 a separate intake enforcer, rejected because it would describe the same code twice.
 A provider-level safety stop (Anthropic `stop_reason="refusal"`) returns no plan at
@@ -1291,7 +1292,7 @@ with the image would change the sidebar and header layout for no gain.
 **Dead-code check.** ruff (unused imports, variables and arguments) and vulture, each
 finding confirmed by hand, found nothing to remove in the tracked code: the names
 vulture reports are used by a framework (Pydantic `model_config` and record fields,
-Streamlit session-state keys, pytest fixtures requested for their side effects).
+Streamlit `st.session_state` keys, pytest fixtures requested for their side effects).
 `eval/run_eval.py` duplicates `cli eval` but is documented and kept.
 
 ## Guardrails page: shorter texts and filters
@@ -1336,7 +1337,8 @@ with a margin) stops a text without spaces, which counts as one word, slipping
 through. Both limits are constants in `guardrails.py` (`MAX_REQUEST_WORDS`,
 `MAX_REQUEST_CHARS`), not settings; `Settings.max_request_chars` (2,000 characters)
 is gone, so the limit is about four times looser than before, as intended. The check
-runs once, in `Session.create_plan` before the planner, so no tokens are spent on a
+runs once, in the orchestrator before the planner (today the graph's `request_check`
+node), so no tokens are spent on a
 refused request; the evaluation runs it too before calling the planner. It no longer
 runs in `validate_plan`: the request plays no part in execution, and a request R01
 refuses never gets a plan, so V05 BUDGET_EXCEEDED now covers the plan's steps only.
@@ -1417,13 +1419,13 @@ metric is a plain function in `monitoring.py` with unit tests. The filters (crea
 date, planner model and prompt version, all already in the record) select runs, and
 the events are restricted to those runs.
 
-**Every plan shown is on record.** The engine saves the run record each time a plan
+**Every plan shown is on record.** The orchestrator saves the run record each time a plan
 is validated, with status `ready` while it awaits a decision, so a plan nobody
 decided on (abandoned) exists as a record, not only as events.
 
 **Approving and rejecting are recorded decisions.** Executing a plan is its approval
 (`decision="approved"`, with `decided_at`); the new **Reject plan** button on the
-Analysis page (`Session.reject`) ends the run unexecuted with status `rejected` and a
+Analysis page ends the run unexecuted with status `rejected` and a
 `plan_rejected` event. Rejected is a status, not only a decision, so each run falls in
 exactly one Activity card. A rejected or still-undecided plan is not replayed (there
 is nothing to compare), and no replay event is logged, so it cannot lower the replay
@@ -1648,9 +1650,9 @@ keep the old eval ids, rejected because an "s2_" case would then be example 5.
 unapplied edits, and secondary (white) otherwise**; it stays clickable in both states.
 It had been red all the time since the one-click fix enabled it permanently (before
 that, it was disabled, so grey, until a change was seen). **The baseline is the
-session's plan** (`st.session_state.session.plan`), the last validated plan, which
-`apply_param_edits` and `reset_to_proposal` replace after re-validating; a second copy
-in session state could drift from the plan the engine validates. `ui.unapplied_edits`
+run's current plan**, the last validated plan, which every applied edit or reset
+replaces after re-validating; a second copy in `st.session_state` could drift from the
+plan the orchestrator validates. `ui.unapplied_edits`
 compares each field with it as canonical JSON (sorted keys, each value's own type: 12
 and 12.0 differ, as they do for the validator), so a value changed and set back is no
 change. The button is drawn after every field, so its style follows each change in the
@@ -1685,7 +1687,7 @@ week, not the stress week itself.
 per US dollar (its catalog units), so a negative return means the franc
 strengthened, and nothing in a run said so. An optional `quote_convention` field in
 the catalog (DEXSZUS only; `scripts/fetch_data.py` writes it too) reaches the
-narrator through the engine. The template states it right after naming the datasets
+narrator through the orchestrator. The template states it right after naming the datasets
 ("DEXSZUS is quoted as USD/CHF, in Swiss francs per US dollar: ..."). The LLM narrator
 gets it as DATASET NOTES, with a rule that every direction it states must follow them
 (`narrator-v5`). The app shows it under every USD/CHF result. It has no digits, so
@@ -1719,7 +1721,7 @@ still matches nothing. Example 1 matches on a franc word plus the NASDAQ.
 **Live edits on example 1.** Switching the first dataset to DGS10 is blocked by
 V07 on s5, and a quantile of 1.5 by V03 on s7. The app's quantile field does not
 accept values outside the registry's range (0.5 to 0.99), so in the app the V03
-block only appears for an edit made through the engine.
+block only appears for an edit sent to the orchestrator directly (a notebook or a test).
 
 ## `flag_regime` flags either tail; example 2 asks when the curve was most negative
 
@@ -1817,7 +1819,7 @@ returns and `rolling_volatility`, and the anchor of most guardrail tests (V01, V
 V04, V08, V09, V10, V11, the dry run). It is now `conftest.VOLATILITY_PLAN`, so those
 tests and the executor, lineage, narrator, planner and scoring tests keep their
 assertions. The tests that need a plan from the mock planner were ported to the new
-example 6: engine, editing, app editor and monitoring. The editor's number field is now
+example 6: orchestration, editing, app editor and monitoring. The editor's number field is now
 the flag's `min_periods`, also counted in periods. Every capability stays tested.
 
 **One eval case changes in mock mode.** `nasdaq_weekly_log_vol` matched the old example 6
@@ -2099,7 +2101,7 @@ ends with `hac_mean_difference` (s6) and no `compare_groups`, as example 1's doe
 ## Switching the LLM mode resets the Analysis page
 
 **A mode change starts a clean Analysis page**: the dataset selection, the request
-text box and everything that comes from the session (plan, validation, edits, pending
+text box and everything that comes from the run (plan, validation, edits, pending
 approvals, results, narrative, trace) are cleared, as are a replay report and a pending
 message. A plan made in one mode is not carried into another. Clicking the mode already
 selected does nothing: the selector's `on_change` fires only when its value changes.
@@ -2110,7 +2112,7 @@ selected does nothing: the selector's `on_change` fires only when its value chan
 - **No widget lags a run behind.** Streamlit runs a callback before the page redraws,
   so the text box and the dataset selection are already empty when drawn. The per-run
   widgets (step editors, approval boxes, the trace picker) are not drawn without a
-  session, so Streamlit drops their state; their keys hold the run id, so a new plan
+  run, so Streamlit drops their state; their keys hold the run id, so a new plan
   never reuses them.
 - **Nothing else changes.** A run waiting for a decision keeps the record it was saved
   with (status "ready") and stays undecided, as before; no record field was added.
@@ -2185,16 +2187,16 @@ which no value edit can change. Every other BLOCK keeps its behaviour (fixable, 
 V08 by setting a frequency); R01 and P01 are "n/a", since they leave no plan to edit,
 as are APPROVE and WARN.
 - **A rejected plan is final.** `ValidationReport.rejections` lists every terminal
-  block (V02 checks every step, so every unregistered step is listed). The engine
-  refuses to edit, reset (re-validate), approve or reject it (`PlanRejectedError`)
-  and to execute it. The app shows a "Plan rejected" banner naming the capability and
+  block (V02 checks every step, so every unregistered step is listed). The
+  orchestrator refuses to edit, reset (re-validate), approve, reject or execute it:
+  the run ends at the recorder, so there is no review to answer. The app shows a "Plan rejected" banner naming the capability and
   each rejected step, keeps the steps read only, and hides the editor fields, Apply,
   Reset, the approval boxes, Execute and Reject plan; only a new request goes on. The
   run is recorded as blocked (no record field changed), counted under Blocked.
 - **Reject is hidden** for a rejected plan: the validator already rejected it, and a
   human "Rejected by human" on top would double-count it.
 - **A blocked plan never reaches the executor.** The validator's verdict is the gate:
-  the engine does not call `execute_plan` for any blocked plan, fixable or terminal,
+  the orchestrator does not call `execute_plan` for any blocked plan, fixable or terminal,
   and tests prove it with the executor patched to fail if called. The executor's own
   re-run of `validate_plan` stays as a backstop that returns "blocked" without
   running a step; it was not changed to raise. Alternative: make the executor raise,
@@ -2227,7 +2229,7 @@ and Reject plan buttons (both were disabled anyway); the page ends with "Nothing
 executed. Write a new request to continue.", as for a plan rejected as a whole.
 - **Why:** the code prefix names the stage (CLAUDE.md), and neither request reached the
   validator; listing them under Validation said it had.
-- **Unchanged:** the engine still returns them in the run's `ValidationReport` and logs
+- **Unchanged:** the orchestrator still returns them in the run's `ValidationReport` and logs
   them as `validation_issue` events, so run records, monitoring and replay are as before.
   Only where the page draws them changed. A stepless P01 now reads "· request", like R01,
   rather than "· whole plan": a refusal has no plan.
@@ -2240,46 +2242,48 @@ executed. Write a new request to continue.", as for a plan rejected as a whole.
   "Blocked: it can be neither run nor edited (see Validation)."
 
 
-## LangGraph orchestration prototype (QuantLab_LangGraph branch)
+## LangGraph orchestration: the nodes, the review interrupt and the checkpoint
 
-**An experiment, kept off main.** `graph.py` re-expresses the orchestration of
-`engine.Session` as a LangGraph `StateGraph`, to judge what a graph framework buys
-over the plain dataclass. Every other module is imported and called unchanged
-(planner, guardrails, executor, narrator, lineage, monitoring); `engine.py` stays,
-since the app, `cli demo`, evaluation and notebooks use it. The nodes are
-`request_check`, `planner`, `validator`, `approval`, `executor`, `narrator` and
-`recorder`, each a thin wrapper that logs the engine's monitoring events and saves the
-engine's run record. `cli graph-demo` runs the examples through it, and
-`tests/test_graph.py` checks that every example gives the same record (step hashes,
-facts, narrative, error) and the same events as `run_request`.
+**What.** `graph.py` runs the pipeline as a LangGraph `StateGraph`. Every other module
+is imported and called unchanged (planner, guardrails, executor, narrator, lineage,
+monitoring). The nodes are `request_check`, `planner`, `validator`, `approval`,
+`executor`, `narrator` and `recorder`, each a thin wrapper that logs its stage's
+monitoring events and returns the fields of the state it changes; the recorder saves
+the run record, and every run ends there.
 - **Review is an `interrupt()`** in the `approval` node, with an in-memory checkpointer
-  (`InMemorySaver`, one thread per run id): a run pauses there and resumes with the same
-  state. The answer is a `ReviewDecision` (approve, edit or reject), validated by
-  `interrupt`'s `response_schema`. An edit goes back to the validator. A BLOCK ends the
-  run through the recorder; a plan awaiting review is saved as "ready", as in the engine.
-- **An approval of an issue that is not open asks again rather than raising**, unlike
-  `Session.approve`: once a node fails after its interrupt, LangGraph replays the same
-  answer on every resume, so the run could never go on.
-- **A blocked plan ends the run**, as in `run_request`; the Analysis page's "edit a
-  blocked plan until it passes" would need the BLOCK edge to lead to the interrupt.
-- **Mock mode only**: `start_run` refuses any other mode, so the prototype never calls
-  an LLM API.
-- **Checkpoint serialisation.** Settings and the catalog are passed as LangGraph's
-  runtime context, not stored in the state. The state's Pydantic models and
+  (`InMemorySaver`, one thread per run id): a run pauses there and resumes with the
+  same state. The answer is a `ReviewDecision` (approve, edit, reject or request
+  changes), validated by `interrupt`'s `response_schema`. An edit goes back to the
+  validator. A plan awaiting review is saved as soon as it is validated (status
+  "ready", or "blocked"), so every plan shown is on record.
+- **An answer that cannot be applied asks again rather than raising** (an issue that
+  is not open, an Execute while the plan is blocked or an approval is missing): once a
+  node fails after its interrupt, LangGraph replays the same answer on every resume, so
+  the run could never go on.
+- **Headless and reviewed runs route differently after the validator.** Headless (CLI,
+  notebooks, tests), a BLOCK ends the run, open APPROVE issues pause it for `run_graph`
+  to approve all or none, and a clean plan runs. With a person reviewing (the Analysis
+  page), every plan that is not rejected as a whole pauses, blocked or not, so a
+  fixable block can be edited or sent back (see the next entry).
+- **Every LLM mode.** `start_run` takes live, cached or mock; the nodes call the same
+  planner and narrator functions, which choose the provider.
+- **Checkpoint serialisation.** Settings, the catalog and the LLM client are passed as
+  LangGraph's runtime context, not stored in the state. The state's Pydantic models and
   dataclasses are stored as msgpack and rebuilt only if listed in
   `graph.CHECKPOINT_TYPES` (otherwise LangGraph returns a plain dict and logs it; a test
   checks the whole state round-trips). Artifacts hold pandas Series, which msgpack
   cannot encode, so that value falls back to pickle; checkpoints only ever live in this
   process's memory, so no pickle from outside is ever loaded.
-- **Dependencies:** `langgraph` pinned exactly, an exception to "no LangChain" for this
-  branch: it brings `langchain-core`, `langsmith` and `langgraph-sdk` with it, and the
-  lock moves `websockets` from 17.2 to 16.1.1 (capped by `langsmith` and
-  `langgraph-sdk`; Streamlit accepts it).
-- **Alternative:** keep `Session` alone (the main branch). The comparison is recorded
-  when the branch is reviewed.
+- **Dependencies:** `langgraph` pinned exactly, the one exception to "no LangChain": it
+  brings `langchain-core`, `langsmith` and `langgraph-sdk` with it, and the lock moves
+  `websockets` from 17.2 to 16.1.1 (capped by `langsmith` and `langgraph-sdk`;
+  Streamlit accepts it). QuantLab imports only `langgraph`, and only in `graph.py` (a
+  test checks it).
+- **Alternative:** see the last LangGraph entry, which records why the graph became
+  the only orchestrator.
 
 
-## Request changes: the reviewer sends the plan back to the planner (QuantLab_LangGraph)
+## Request changes: the reviewer sends the plan back to the planner
 
 **What.** At review, besides Execute and Reject, the reviewer can write a comment and
 click Request changes. The graph's approval interrupt takes it as a fourth answer
@@ -2313,19 +2317,15 @@ timestamps), under the one run id.
   planner failure at a revision) go to the recorder: no change request. A planner
   refusal (P01) is not terminal: the reviewer can ask again.
 - **The Analysis page runs on the graph.** It holds a `GraphRun` (and one graph with its
-  in-memory checkpointer per browser session) instead of an `engine.Session`; every
-  button resumes the paused run with one decision. For a person reviewing
-  (interactive), every plan that is not rejected as a whole now pauses for review,
-  blocked or not, so a fixable block can be edited or sent back and a clean plan waits
-  for Execute, as with Session. Headless runs route as before, so `cli graph-demo` and
-  the parity tests are unchanged. `engine.py` is unchanged and still serves the CLI
-  `demo`/`run`, evaluation and notebooks; it has no change requests. A paused run lives
-  in the browser session's memory: a server restart loses it (its record, saved as
-  ready or blocked, stays).
+  in-memory checkpointer per browser tab); every button resumes the paused run with one
+  decision. For a person reviewing (interactive), every plan that is not rejected as a
+  whole pauses for review, blocked or not, so a fixable block can be edited or sent
+  back and a clean plan waits for Execute. Headless runs have no change requests. A
+  paused run lives in the browser tab's memory: a server restart loses it (its record,
+  saved as ready or blocked, stays).
 - **Alternatives.** A patch format for revisions (rejected: merge rules to validate);
-  the loop in `engine.Session` as well (rejected: the same logic twice); revisions in
-  mock mode with canned plans (rejected: the app's examples stay the five, and a canned
-  revision would hide what a real planner does with a comment).
+  revisions in mock mode with canned plans (rejected: the app's examples stay the five,
+  and a canned revision would hide what a real planner does with a comment).
 - **Monitoring: one question is one run.** A run keeps its run id through every
   revision, so every metric counts run ids, never revisions, and every status metric
   (completed, failed, completed with warnings, blocked, plan refused, rejected by
@@ -2346,7 +2346,7 @@ timestamps), under the one run id.
   it changes the edit rate of existing runs, 12 of 37 approved runs on the current
   store becoming 17); or old records at 0 (rejected: their edits would stop counting).
 
-## One decision at a time on the Analysis page (QuantLab_LangGraph)
+## One decision at a time on the Analysis page
 
 **What.** Streamlit's fast reruns are off (`.streamlit/config.toml`,
 `runner.fastReruns = false`); the Request changes button and its comment box are keyed
@@ -2361,6 +2361,38 @@ fast reruns off, a click waits until the running decision has finished; keyed by
 revision, a click queued on the old button does not count on the revised plan, so the
 comment is not sent twice. Execute plan and Reject plan keep their keys: a click queued
 after the run ends resumes a finished graph run, which does nothing. **Alternatives.** A
-"busy" flag in the session state (rejected: the second run would draw the stale page,
+"busy" flag in `st.session_state` (rejected: the second run would draw the stale page,
 and the first, stopped by Streamlit, could not redraw it); disabling the button while
 the planner runs (rejected: Streamlit cannot change a widget during a blocking call).
+
+
+## LangGraph replaces Session
+
+**What.** The graph in `graph.py` is now the only orchestrator: the Analysis page, the
+CLI (`demo` and `run`), the notebooks and the tests all run through it, and engine.py,
+with its `Session` dataclass and `run_request`, was removed. `run_graph` takes the
+place of `run_request`, with the same arguments; `cli demo` runs the examples through
+the graph, pausing at the approval interrupt and resuming from the checkpoint, so the
+separate `graph-demo` command is gone. No guardrail, capability, prompt or registry
+changed. The golden record shows that behaviour was preserved: the five examples and
+the mock eval set, run through `run_graph`, match `tests/fixtures/golden_scenarios.json`
+(recorded before the switch) with no migration added, so every status, issue code,
+approval, step hash, facts sheet and narrative is identical. The tests that exercised
+`Session` moved onto the graph with the same assertions; the few that approved a plan
+and then edited it put the approvals into the paused run's checkpoint (`update_state`),
+since through the interrupt an approval comes only with Execute.
+- **Why.** Human review is an `interrupt()` with a checkpointer, a tested mechanism,
+  instead of state kept by hand between page reruns. A change request (the planner
+  revising a plan, then every check again) is a loop in the graph: one edge back to the
+  request check, no new orchestration code. And one orchestrator instead of two means
+  one routing to read, test and keep in step with monitoring and the run record.
+- **Given up.** A larger dependency tree: sixteen more packages in the lock (langgraph
+  and what it brings, among them langchain-core and langsmith), of which QuantLab
+  imports only langgraph, in `graph.py`. More lines: about 1,180 in `graph.py` against
+  711 in the module it replaced, partly because it also holds change requests, partly
+  the graph's own wiring (the state type, the checkpoint allowlist, the edges). The
+  routing is spread over small edge functions instead of one method per stage.
+- **Alternative.** The main branch's design: a plain dataclass with one method per
+  stage and no framework. It is smaller and adds no dependency, but the pause for
+  review and the change-request loop are then written by hand, and the two would have
+  stayed side by side while the graph was kept.

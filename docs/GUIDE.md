@@ -94,7 +94,7 @@ it, its category and what it prevents.
 After a plan is generated, each step's parameters appear as fields generated
 from the registry (select boxes for choices, bounded number inputs, checkboxes),
 prefilled with the planner's values. Only values can change: steps, capabilities
-and input references are locked, and the engine rejects any other edit with a
+and input references are locked, and any other edit is rejected with a
 BLOCK. **Apply changes & re-validate** is highlighted only while a field differs
 from the last validated plan (a value changed back counts as no change); it runs
 the same validator again, so issues appear and clear as the plan changes: in

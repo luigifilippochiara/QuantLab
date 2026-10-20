@@ -115,7 +115,7 @@ def fetch_series(item: dict[str, str], snapshots_dir: Path) -> dict[str, object]
     print(f"Downloading {series_id} ...", flush=True)
     download(url, path)
 
-    # Parse with the same reader the engine uses, so the catalog's counts and
+    # Parse with the same reader every load uses (data.py), so the catalog's counts and
     # date range describe exactly what a load will see.
     series, n_rows_raw, n_missing = read_fred_csv(path)
     entry: dict[str, object] = {

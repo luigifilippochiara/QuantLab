@@ -31,7 +31,7 @@ VOLATILITY = volatility_plan()
 
 
 def run_and_save(raw: dict, settings: Settings, catalog: Catalog) -> RunRecord:
-    """Execute a plan dict and save a run record, as the engine does."""
+    """Execute a plan dict and save a run record, as the graph does."""
     plan = as_plan(raw)
     result = execute_plan(plan, catalog, APPROVALS)
     record = RunRecord(

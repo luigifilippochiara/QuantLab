@@ -1,11 +1,11 @@
-"""Graph: a LangGraph prototype of the orchestrator, alongside engine.py (an experiment).
+"""Graph: the orchestrator used by the Streamlit app, the CLI and the notebooks.
 
-Role in the architecture: the same pipeline as `engine.Session`, written as a
-LangGraph `StateGraph` instead of a dataclass with methods. Each node is a thin
-wrapper around the function the engine calls: the planner, guardrails, executor,
-narrator and lineage are imported unchanged, and this module never imports
-engine.py. The nodes log the same monitoring events as the engine and save the
-same run record, so a graph run can be replayed and traced like any other.
+Role in the architecture: a LangGraph `StateGraph` moves one run through the
+pipeline, from request to saved record. Each node is a thin wrapper around one
+stage's function: the planner, guardrails, executor, narrator and lineage hold all
+the logic, and the nodes only log monitoring events, keep the state and decide
+where the run goes next. Every run is saved (lineage.save_run), so it can be
+replayed and traced.
 
     START -> request_check -> planner -> validator -> approval -> executor -> narrator
           -> recorder -> END
@@ -28,7 +28,11 @@ pause it and a clean plan runs. An edit goes back to the validator; a change req
 check and the planner, then the validator: nothing skips validation. Every revision
 stays under the one run id. The state is checkpointed after every node by an
 in-memory checkpointer, so a paused run resumes with exactly the same state.
-`run_graph` chains it all for headless use, like `engine.run_request`.
+
+The module reads top to bottom: the state and the reviewer's answer, helpers that
+compute from the state, the nodes, the edges, build_graph, then the run API:
+`start_run` and `resume_run` (the Analysis page answers the interrupt) and
+`run_graph`, which chains them for headless use (CLI, notebooks, tests).
 """
 
 import time
@@ -180,7 +184,8 @@ class ReviewDecision(BaseModel):
             "request_changes" (send the plan back to the planner with a comment).
         issue_ids: for approve, the APPROVE issues being approved.
         edits: for edit, step id -> {parameter name: new value}. Typed Any on
-            purpose: check_edits judges its shape, as for an edit in the engine.
+            purpose: check_edits judges its shape, and refuses any that is not a
+            mapping of registered parameters.
         comment: for request_changes, what the reviewer wants changed (untrusted:
             the request check judges it before the planner sees it).
         approved_by: who decided ("user" in a UI, "cli" for the demo).
@@ -222,7 +227,7 @@ CHECKPOINT_TYPES = [
 
 
 # ---------------------------------------------------------------------------
-# Helpers: the engine's bookkeeping, as functions of the state
+# Helpers: the run's bookkeeping, as functions of the state
 # ---------------------------------------------------------------------------
 
 
@@ -300,7 +305,7 @@ def change_request_refusal(state: GraphState) -> str:
 def reset_edits(state: GraphState) -> dict[str, dict[str, Any]]:
     """The edit that sets every parameter back to the planner's latest proposal.
 
-    Sent as an ordinary edit, so it is validated like any other (Session.reset_to_proposal).
+    Sent as an ordinary edit, so it is validated like any other.
     Values are compared with their types: 12 -> 12.0 is a change for the strict validator.
     """
     proposed = {step.id: step.params for step in proposal(state).steps}
@@ -355,7 +360,7 @@ def unresolved_approvals(state: GraphState) -> list[Issue]:
 
 
 def refusal_reason(state: GraphState) -> str:
-    """Why the plan may not be executed now ("" if it may), worded as the engine words it."""
+    """Why the plan may not be executed now ("" if it may): the reason the reviewer sees."""
     plan, report = state.get("plan"), state.get("report")
     if plan is None or report is None:
         return "There is no valid plan."
@@ -412,7 +417,7 @@ def _error_message(state: GraphState) -> str | None:
 
 
 def build_record(state: GraphState, catalog: Catalog) -> RunRecord:
-    """Assemble the run record from the state (without saving it), as the engine does."""
+    """Assemble the run record from the state (without saving it)."""
     result = state.get("plan_result")
     llm = None
     if result is not None:
@@ -645,7 +650,7 @@ def validator_node(state: GraphState, runtime: Runtime[GraphContext]) -> GraphSt
     refused = state.get("edit_issues", [])
     if refused:
         # A refused edit changed nothing, but the plan stays blocked until a valid
-        # edit: its BLOCKs lead the report, as in Session.apply_param_edits.
+        # edit: its BLOCKs lead the report.
         report = ValidationReport(issues=refused + report.issues, dry_run=report.dry_run)
         for issue in refused:
             _log(runtime, state, "validation_issue", details=_issue_details(issue))
@@ -662,9 +667,9 @@ def validator_node(state: GraphState, runtime: Runtime[GraphContext]) -> GraphSt
         latest = revisions[-1].model_copy(update={"validation": report, "status": status})
         update["revisions"] = [*revisions[:-1], latest]
     if status == "ready" or after_validation({**state, **update}) == "approval":
-        # Save a plan awaiting a decision straight away, as Session.validate does, so a
-        # run paused for review is on record too (a blocked one with its terminal
-        # event). A run that ends here blocked is saved by the recorder, once.
+        # Save a plan awaiting a decision straight away, so a run paused for review is
+        # on record too (a blocked one with its terminal event). A run that ends here
+        # blocked is saved by the recorder, once.
         _, path = _save(runtime, {**state, **update})
         update["manifest_path"] = str(path)
     return update
@@ -707,7 +712,7 @@ def approval_node(state: GraphState, runtime: Runtime[GraphContext]) -> GraphSta
     if decision.action == "request_changes":
         return _request_changes(state, decision.comment)
     if decision.action == "reject" and state["plan"].cannot_fulfill:
-        # As Session.reject: a refusal (P01) is not a plan to decide on.
+        # A refusal (P01) is not a plan to decide on.
         return {"review": "refused", "review_error": "There is no plan to reject."}
     if decision.action == "reject":
         decided_at = utc_now()
@@ -730,8 +735,8 @@ def approval_node(state: GraphState, runtime: Runtime[GraphContext]) -> GraphSta
         error = f"{', '.join(map(repr, unknown))}: not an open approval issue"
         return {"review": "refused", "review_error": error}
     if state.get("interactive"):
-        # A person's Execute: refused, as Session.execute is, while the plan is blocked
-        # or an approval is missing; nothing is recorded, the reviewer is asked again.
+        # A person's Execute: refused while the plan is blocked or an approval is
+        # missing; nothing is recorded, and the reviewer is asked again.
         missing = [i.issue_id for i in open_issues.values() if i.issue_id not in issue_ids]
         reason = refusal_reason(state) if state["report"].is_blocked else ""
         if missing and not reason:

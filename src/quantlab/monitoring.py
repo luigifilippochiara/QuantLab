@@ -394,7 +394,7 @@ def mode_counts(records: list["RunRecord"]) -> dict[str, int]:
     Returns:
         live, cached and mock -> count, every mode listed (0 without runs), adding up
         to len(records); plus "unknown" only if some record names no mode (never one
-        the page counts: every run saved by the engine records its LLM mode).
+        the page counts: every run the graph saves records its LLM mode).
     """
     counts = Counter(r.llm.mode if r.llm else None for r in records)
     by_mode = {mode: counts[mode] for mode in LLM_MODES}

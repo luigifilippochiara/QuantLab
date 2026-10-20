@@ -156,7 +156,7 @@ def test_an_oversized_request_is_scored_as_blocked_without_the_planner(
     case = GoldenCase(id="too_long", request=text, datasets=["VIXCLS"], expect="refuse_or_block")
     score = score_case(case, settings, catalog, "live", client)
     assert score.correct and score.refused_or_blocked and score.issue_codes == ["R01"]
-    assert client.calls == []  # R01 runs before the planner, as in the engine
+    assert client.calls == []  # R01 runs before the planner, as in the graph
 
 
 def test_a_live_mismatch_shows_what_the_planner_chose_differently(
