@@ -336,7 +336,9 @@ Two separate questions, measured separately. The planner's two sets share one sc
 scorer and one report: accuracy per category with development and held-out cases apart,
 false plans and false refusals, each wrong answer with the note on why its expectation
 holds, and the tokens and cost of the run. `--case <id>` runs single cases, and
-`--holdout exclude` or `--holdout only` leave out or score alone the held-out cases.
+`--holdout exclude` or `--holdout only` leave out or score alone the held-out cases (in
+the golden set every third case of each category but the examples, in the adversarial
+set about a third of each category).
 
 * **Does the planner choose the right plan?** Measured by `quantlab.cli eval` (or
   `planner_eval/run_eval.py`) on `planner_eval/golden_requests.yaml`: 50 cases, each

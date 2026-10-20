@@ -200,6 +200,16 @@ def test_every_golden_category_has_cases() -> None:
     assert counts["example"] == len(SCENARIOS)
 
 
+def test_the_golden_set_holds_out_cases_in_every_category_but_the_examples() -> None:
+    # The examples are the reference the prompt was written against; every other
+    # category keeps development and held-out cases, about a quarter to a third held out.
+    cases = load_cases(GOLDEN)
+    for name in GOLDEN_CATEGORIES:
+        held = {case.holdout for case in cases if case.category == name}
+        assert held == ({False} if name == "example" else {False, True}), name
+    assert 0.2 <= sum(case.holdout for case in cases) / len(cases) <= 0.4
+
+
 def test_an_unknown_expectation_is_refused(tmp_path: Path) -> None:
     path = tmp_path / "cases.yaml"
     path.write_text('- {id: c, category: trap, request: r, datasets: [], expect: maybe, '

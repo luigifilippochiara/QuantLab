@@ -2529,3 +2529,20 @@ not by need: the adversarial set added categories and a holdout when the prompt 
 tuned on it, and the golden set had neither, nor notes a report could show.
 **Alternatives.** One file for both sets (rejected: it mixes the two questions' metrics
 in one report); keeping two schemas (two loaders, scorers and reports to keep in step).
+
+
+## Held-out golden cases
+
+**What.** 13 of the 50 golden cases are held out (`holdout: true`): every third case of
+each category in file order, never the five examples (1 variation, 2 paraphrases, 3
+capability, 2 parameter, 2 trap, 1 dataset and 2 refusal cases). As in the adversarial
+set, the planner prompt is changed using the development cases only, and
+`--holdout only` scores the held-out ones apart. **Why.** The set was grown to measure
+whether the planner generalises; tuning the prompt on every case would fit it to them.
+The rule was fixed and applied before the first live run of the 50 cases, so no
+result influenced the choice. The examples stay in development: the prompt was
+written against them. **Alternatives.** Choosing by hand (open to picking easy or hard
+cases); a random draw (as unbiased, but harder to read and to extend); no holdout. A
+test checks the properties, not the rule (no example held out, every other category
+with both kinds, a quarter to a third held out), so adding a case does not reassign
+the others.
