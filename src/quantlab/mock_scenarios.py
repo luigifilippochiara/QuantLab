@@ -319,8 +319,9 @@ SCENARIOS: list[Scenario] = [
         number=2,
         label="2 · Frequency-alignment protection",
         request=(
-            "Compute the spread between the weekly 10-year Treasury yield and the daily 2-year "
-            "Treasury yield, and flag the most negative weeks across the entire history."
+            "Compute the spread between the weekly 10-year US Treasury yield and the daily "
+            "2-year US Treasury yield, and flag the most negative weeks across the entire "
+            "history."
         ),
         dataset_ids=("DGS10", "DGS2"),
         expected_status="blocked",

@@ -2411,3 +2411,13 @@ would lose the one place where the whole orchestration can be read in order. The
 API is about 120 lines, too little to deserve a module of its own. **Alternatives.** A
 `nodes` module apart from the run API, or the state helpers in a module of their own
 (both rejected for the reasons above).
+
+
+## Example 2's request names the US Treasury
+
+**Example 2's request** is now "Compute the spread between the weekly 10-year US Treasury
+yield and the daily 2-year US Treasury yield, and flag the most negative weeks across the
+entire history.": both yields are named as US Treasury yields, as their datasets are
+(DGS10, DGS2). The plan and outcome are unchanged (V08 BLOCK, V09 to approve), and so
+are the golden records, which hold no request text. The canned plans are
+`canned-scenarios-v24`.
