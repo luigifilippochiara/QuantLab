@@ -57,7 +57,7 @@ quantlab/
   data/catalog.json            # dataset catalog + versions (hashes)
   data/snapshots/*.csv         # local FRED snapshot, COMMITTED for reproducibility (small files)
   data/README.md               # sources, series ids, licence notes, retrieval date
-  scripts/fetch_data.py        # downloads snapshot from FRED and writes catalog.json
+  data/fetch_data.py           # downloads snapshot from FRED and writes catalog.json
   src/quantlab/
     __init__.py
     config.py        # settings from .env (API key, model name, LLM mode, paths, budgets)
@@ -94,7 +94,7 @@ Series (verify each downloads with long history; if one is restricted or truncat
 - DGS2: 2-year Treasury yield, daily, kind=rate_level
 - DEXSZUS: CHF per USD, daily, kind=price_level
 
-scripts/fetch_data.py writes each series to data/snapshots/<ID>.csv and writes data/catalog.json with: dataset_id, fred_id, title, units, frequency ("D"), kind, source_url, retrieved_at (UTC), sha256 of the CSV file, n_rows, n_missing, start_date, end_date. Run it once and commit the snapshot.
+data/fetch_data.py writes each series to data/snapshots/<ID>.csv and writes data/catalog.json with: dataset_id, fred_id, title, units, frequency ("D"), kind, source_url, retrieved_at (UTC), sha256 of the CSV file, n_rows, n_missing, start_date, end_date. Run it once and commit the snapshot.
 
 data.py loads a series as a float pd.Series with a DatetimeIndex, verifies the file hash against the catalog (mismatch = hard error), drops missing values, and reports how many were dropped. Tests must not need network access; they use synthetic data.
 

@@ -514,7 +514,7 @@ example workflows below.
 often ask about. FRED distributes only its last 10 years and marks it "Copyrighted:
 Pre-Approval Required", like NASDAQCOM (documented in `data/README.md`).
 NASDAQCOM stays for its 55-year history, which gives the high-volatility
-analysis many episodes. `scripts/fetch_data.py SP500` fetched only the new
+analysis many episodes. `data/fetch_data.py SP500` fetched only the new
 series, so the existing snapshot files and hashes did not change.
 
 **Narrator and prompt versions.** The narrator's rule on reading p-values became
@@ -1686,7 +1686,7 @@ week, not the stress week itself.
 **The narrator states which way USD/CHF reads.** DEXSZUS is quoted in Swiss francs
 per US dollar (its catalog units), so a negative return means the franc
 strengthened, and nothing in a run said so. An optional `quote_convention` field in
-the catalog (DEXSZUS only; `scripts/fetch_data.py` writes it too) reaches the
+the catalog (DEXSZUS only; `data/fetch_data.py` writes it too) reaches the
 narrator through the orchestrator. The template states it right after naming the datasets
 ("DEXSZUS is quoted as USD/CHF, in Swiss francs per US dollar: ..."). The LLM narrator
 gets it as DATASET NOTES, with a rule that every direction it states must follow them
@@ -2546,3 +2546,20 @@ cases); a random draw (as unbiased, but harder to read and to extend); no holdou
 test checks the properties, not the rule (no example held out, every other category
 with both kinds, a quarter to a third held out), so adding a case does not reassign
 the others.
+
+
+## fetch_data.py lives in data/
+
+**What.** The FRED download script moved from `scripts/fetch_data.py` to
+`data/fetch_data.py` (`git mv`, contents unchanged but its usage lines), and `scripts/`
+is gone. The executor's E01 message, the data README, the guide, the spec and older
+entries here name the new path; `tests/test_docs.py` scans `data/` for Python files
+instead of `scripts/`. **Why.** The snapshots, the catalog, the README that explains them
+and the script that makes them now sit in one folder, and the repository has one
+top-level folder fewer. The script stays outside the package: it is the only code that
+touches the network, so `src/quantlab/` stays offline. **Alternatives.** Keep
+`scripts/` (a conventional place, but a folder for one file); a `cli fetch-data`
+command (it would put network access inside the package). `planner_evaluation.py`
+stays in the package rather than moving to `planner_eval/`: the CLI and the tests
+import it, and code outside the package could only be imported by path tricks or
+dynamic imports, which the safety rules forbid.

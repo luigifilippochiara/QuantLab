@@ -76,10 +76,10 @@ CODE_RANGE = re.compile(r"\b[CEGLNPRV]\d{2}\s*(?:-|–|—|to|through)\s*[CEGLNP
 
 
 def written_text() -> dict[str, str]:
-    """Docs, source, app, tests and notebook cells (not their outputs), by file path."""
+    """Docs, source, app, tests, the data script and notebook cells (not their outputs), by path."""
     paths = [PROJECT_ROOT / "README.md", PROJECT_ROOT / "CLAUDE.md"]
     paths += sorted((PROJECT_ROOT / "docs").glob("*.md"))
-    for folder in ["src", "app", "tests", "scripts"]:
+    for folder in ["src", "app", "tests", "data"]:
         paths += sorted((PROJECT_ROOT / folder).rglob("*.py"))
     texts = {str(p.relative_to(PROJECT_ROOT)): p.read_text(encoding="utf-8") for p in paths}
     for notebook in sorted((PROJECT_ROOT / "notebooks").glob("*.ipynb")):

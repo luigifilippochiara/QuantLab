@@ -40,12 +40,12 @@ run if it no longer matches the catalog (guardrail E01).
 ## Refreshing
 
 ```bash
-uv run python scripts/fetch_data.py
+uv run python data/fetch_data.py
 ```
 
 This overwrites the snapshot and catalog with today's data, which is a new data
 version: older run records will report a dataset hash mismatch on replay, as
-intended. Naming series (`uv run python scripts/fetch_data.py SP500`) fetches only
+intended. Naming series (`uv run python data/fetch_data.py SP500`) fetches only
 those and leaves the other files and catalog entries unchanged; that is how
 SP500 was added.
 

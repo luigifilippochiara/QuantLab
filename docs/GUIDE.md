@@ -37,7 +37,7 @@ uv run jupyter nbconvert --to notebook --execute --inplace notebooks/*.ipynb
 ```
 
 Refreshing the data (needs network; creates a new data version):
-`uv run python scripts/fetch_data.py` (or name series to fetch only those, e.g. `SP500`).
+`uv run python data/fetch_data.py` (or name series to fetch only those, e.g. `SP500`).
 
 ## Using the app
 
@@ -403,8 +403,8 @@ docs/GUIDE.md               this guide
 docs/ARCHITECTURE.md        design, module map, capability and guardrail tables
 docs/SPEC.md                the v1 product specification
 docs/DECISIONS.md           design decisions and their rationale
-data/                       catalog.json, snapshots/*.csv (committed), README (sources, licences)
-scripts/fetch_data.py       refreshes the FRED snapshot and catalog
+data/                       catalog.json, snapshots/*.csv (committed), README (sources,
+                            licences), fetch_data.py (refreshes the snapshot and catalog)
 src/quantlab/               the package (module map: ARCHITECTURE.md)
 app/                        Streamlit: streamlit_app.py (router), ui.py, pages/
 notebooks/01..08            one notebook per layer, executed in mock mode

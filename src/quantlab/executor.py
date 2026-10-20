@@ -166,7 +166,7 @@ def check_dataset_hash(step: Step, catalog: Catalog) -> list[Issue]:
             step.id,
             f"{dataset_id}: snapshot hash {actual[:12]}... differs from the catalog's "
             f"{expected[:12]}...; the file was changed.",
-            "Restore the committed snapshot, or re-run scripts/fetch_data.py to create "
+            "Restore the committed snapshot, or re-run data/fetch_data.py to create "
             "a new, recorded data version.",
         )
     ]

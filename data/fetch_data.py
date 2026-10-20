@@ -2,8 +2,8 @@
 
 Run once (needs network access):
 
-    uv run python scripts/fetch_data.py          # every series
-    uv run python scripts/fetch_data.py SP500    # only the listed series
+    uv run python data/fetch_data.py          # every series
+    uv run python data/fetch_data.py SP500    # only the listed series
 
 
 Each series is saved byte-for-byte as served by FRED's keyless CSV endpoint to
