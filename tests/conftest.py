@@ -15,9 +15,11 @@ from typing import Any
 import numpy as np
 import pandas as pd
 import pytest
+from langgraph.graph.state import CompiledStateGraph
 
 from quantlab.config import Settings
 from quantlab.data import Catalog, file_sha256, load_catalog, read_fred_csv
+from quantlab.graph import GraphRun, build_graph, resume_run, start_run
 from quantlab.guardrails import fill_defaults
 from quantlab.mock_scenarios import SCENARIOS_BY_ID
 from quantlab.plan import Plan
@@ -339,5 +341,37 @@ def spread_weekly_plan() -> dict[str, Any]:
 
 
 def as_plan(raw: dict[str, Any], request: str = "test request") -> Plan:
-    """Turn a plan dict into a Plan with defaults filled in, as the engine does."""
+    """Turn a plan dict into a Plan with defaults filled in, as the planner node does."""
     return fill_defaults(Plan(plan_id="p-test", request=request, **copy.deepcopy(raw)))
+
+
+# ---------------------------------------------------------------------------
+# Graph runs reviewed by a person, as on the Analysis page
+# ---------------------------------------------------------------------------
+
+
+def start_review(scenario_id: str, settings: Settings) -> tuple[CompiledStateGraph, GraphRun]:
+    """An example started in mock mode with a person reviewing (interactive): the run
+    pauses at the approval interrupt, blocked or not, unless the validator rejected its
+    plan as a whole (V01, V02), which ends the run."""
+    scenario = SCENARIOS_BY_ID[scenario_id]
+    graph = build_graph()
+    run = start_run(graph, scenario.request, list(scenario.dataset_ids), settings, "mock", True)
+    return graph, run
+
+
+def edit(graph: CompiledStateGraph, run: GraphRun, edits: Any) -> GraphRun:
+    """Answer a paused run with a parameter edit; the validator judges the edited plan."""
+    return resume_run(graph, run, {"action": "edit", "edits": edits})
+
+
+def execute(graph: CompiledStateGraph, run: GraphRun, issue_ids: list[str]) -> GraphRun:
+    """Answer a paused run with Execute, approving these issues. The run executes and is
+    narrated, or Execute is refused (a block, a missing approval) and the run asks
+    again, with the reason in paused_for["error"]."""
+    return resume_run(graph, run, {"action": "approve", "issue_ids": issue_ids})
+
+
+def paused_ids(run: GraphRun) -> list[str]:
+    """The issue ids a paused run asks the reviewer to approve."""
+    return [issue["issue_id"] for issue in run.paused_for["open_approvals"]]

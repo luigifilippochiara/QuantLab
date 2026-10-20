@@ -15,7 +15,7 @@ import pytest
 
 from quantlab.config import PROJECT_ROOT, Settings
 from quantlab.data import Catalog, load_catalog
-from quantlab.engine import ExecutionRefusedError, Session, run_request
+from quantlab.graph import refusal_reason, run_graph
 from quantlab.guardrails import Action, fill_defaults, validate_plan
 from quantlab.lineage import replay
 from quantlab.mock_scenarios import (
@@ -31,16 +31,15 @@ from quantlab.narrator import AI_WRITTEN_NOTE, NUMBERS_CHECKED_NOTE
 from quantlab.plan import Plan
 from quantlab.registry import REGISTRY
 
-from conftest import ARIMA_PLAN, SCENARIO_1_APPROVALS, SCENARIO_5_APPROVALS
+from conftest import (
+    ARIMA_PLAN,
+    SCENARIO_1_APPROVALS,
+    SCENARIO_5_APPROVALS,
+    edit,
+    execute,
+    start_review,
+)
 from fakes import FakeAnthropicClient, tool_response
-
-
-def start(scenario_id: str, settings: Settings) -> Session:
-    """A mock-mode session for a scenario, with its plan created and validated."""
-    scenario = SCENARIOS_BY_ID[scenario_id]
-    session = Session.start(scenario.request, list(scenario.dataset_ids), "mock", settings)
-    session.create_plan()
-    return session
 
 
 def test_examples_are_numbered_in_list_order() -> None:
@@ -58,23 +57,23 @@ def test_examples_are_numbered_in_list_order() -> None:
 
 @pytest.mark.parametrize("scenario", SCENARIOS, ids=lambda s: s.id)
 def test_scenario_end_to_end(scenario: Scenario, settings: Settings) -> None:
-    session = run_request(
+    state = run_graph(
         scenario.request,
         list(scenario.dataset_ids),
         "mock",
         approve=scenario.auto_approve,
         settings=settings,
     )
-    assert session.status == scenario.expected_status, session.build_record().error
-    assert session.report.codes() == sorted(scenario.expected_codes)
+    assert state["status"] == scenario.expected_status, state["record"].error
+    assert state["report"].codes() == sorted(scenario.expected_codes)
     if scenario.expected_status == "completed":
         # Runtime guardrails may only warn here. Which ones depends on the data (E04 on
         # the committed snapshots, where the VIX starts in 1990; E05 for example 5 on the
         # synthetic VIX); the golden records pin them on both data sets.
-        assert all(i.action == Action.WARN for i in session.execution.issues)
-        assert session.narrative.grounding.grounded
+        assert all(i.action == Action.WARN for i in state["runtime_issues"])
+        assert state["narrative"].grounding.grounded
     else:
-        assert session.execution is None  # nothing ran
+        assert "steps" not in state  # nothing ran
 
 
 @pytest.mark.parametrize("scenario", SCENARIOS, ids=lambda s: s.id)
@@ -153,21 +152,21 @@ def test_scenario_1_validates_with_exactly_one_v10_approval(catalog: Catalog) ->
 
 
 def test_scenario_1_runs_end_to_end_and_replays_identically(settings: Settings) -> None:
-    session = run_request(VIX_CHF_REQUEST, ["VIXCLS", "DEXSZUS"], "mock", approve=True,
-                          settings=settings)  # fmt: skip
-    assert session.status == "completed"
-    assert [a.issue_id for a in session.approvals] == SCENARIO_1_APPROVALS
-    assert session.narrative.grounding.grounded
-    report = replay(session.run_id, settings)
+    state = run_graph(VIX_CHF_REQUEST, ["VIXCLS", "DEXSZUS"], "mock", approve=True,
+                      settings=settings)  # fmt: skip
+    assert state["status"] == "completed"
+    assert [a.issue_id for a in state["approvals"]] == SCENARIO_1_APPROVALS
+    assert state["narrative"].grounding.grounded
+    report = replay(state["run_id"], settings)
     assert report.all_match, report.message
-    original = [r.output_hash for r in session.execution.step_records]
+    original = [r.output_hash for r in state["steps"]]
     assert [s.replay_hash for s in report.steps] == original and len(original) == 7
 
 
 def test_scenario_1_tests_usd_chf_returns_by_vix_flags(settings: Settings) -> None:
-    session = start("chf_safe_haven_success", settings)
-    session.approve(SCENARIO_1_APPROVALS)
-    artifacts = session.execute().artifacts
+    graph, run = start_review("chf_safe_haven_success", settings)
+    state = execute(graph, run, SCENARIO_1_APPROVALS).state
+    artifacts = state["artifacts"]
     # The flags come from the weekly VIX level, the outcome from USD/CHF.
     assert artifacts["s2"].meta.kind == "index_level" and artifacts["s2"].meta.frequency == "W"
     assert artifacts["s3"].meta.source_dataset_ids == ["VIXCLS"]
@@ -180,7 +179,7 @@ def test_scenario_1_tests_usd_chf_returns_by_vix_flags(settings: Settings) -> No
     # The test reports both groups' means: the flagged weeks' and the other weeks'.
     assert test["mean_flagged"] == pytest.approx(test["mean_normal"] + test["diff_means"])
     # The narrative states which way USD/CHF reads, and quotes only computed numbers.
-    narrative = session.narrate()
+    narrative = state["narrative"]
     assert (
         "DEXSZUS is quoted as USD/CHF, in Swiss francs per US dollar: a negative return "
         "means the franc strengthened against the dollar" in narrative.text
@@ -206,9 +205,9 @@ def committed_snapshots(runs_dir: Path) -> Settings:
 
 def test_scenario_1_replays_its_recorded_narrative_on_the_committed_data(tmp_path: Path) -> None:
     settings = committed_snapshots(tmp_path / "runs")
-    session = run_request(VIX_CHF_REQUEST, ["VIXCLS", "DEXSZUS"], "mock", approve=True,
-                          settings=settings)  # fmt: skip
-    narrative = session.narrative
+    state = run_graph(VIX_CHF_REQUEST, ["VIXCLS", "DEXSZUS"], "mock", approve=True,
+                      settings=settings)  # fmt: skip
+    narrative = state["narrative"]
     # Word for word the live run's narrative, and its numbers checked again (N01).
     assert narrative.text == VIX_CHF_NARRATIVE.text and len(narrative.text.split()) == 95
     assert narrative.source == "mock" and narrative.model is None
@@ -217,19 +216,17 @@ def test_scenario_1_replays_its_recorded_narrative_on_the_committed_data(tmp_pat
 
 
 def test_an_edited_scenario_1_plan_gets_the_template(tmp_path: Path) -> None:
-    session = start("chf_safe_haven_success", committed_snapshots(tmp_path / "runs"))
-    session.apply_param_edits({"s3": {"quantile": 0.95}})  # other numbers than recorded
-    session.approve(SCENARIO_1_APPROVALS)
-    session.execute()
-    narrative = session.narrate()
+    graph, run = start_review("chf_safe_haven_success", committed_snapshots(tmp_path / "runs"))
+    run = edit(graph, run, {"s3": {"quantile": 0.95}})  # other numbers than recorded
+    narrative = execute(graph, run, SCENARIO_1_APPROVALS).state["narrative"]
     assert narrative.source == "template" and narrative.issues == []
 
 
 def test_scenario_1_on_other_data_gets_the_template(settings: Settings) -> None:
     # The synthetic test data: not the files the narrative was recorded on.
-    session = run_request(VIX_CHF_REQUEST, ["VIXCLS", "DEXSZUS"], "mock", approve=True,
-                          settings=settings)  # fmt: skip
-    assert session.narrative.source == "template" and session.narrative.issues == []
+    state = run_graph(VIX_CHF_REQUEST, ["VIXCLS", "DEXSZUS"], "mock", approve=True,
+                      settings=settings)  # fmt: skip
+    assert state["narrative"].source == "template" and state["narrative"].issues == []
 
 
 def test_a_recorded_narrative_that_fails_n01_is_withheld(
@@ -242,9 +239,9 @@ def test_a_recorded_narrative_that_fails_n01_is_withheld(
     )
     scenario = dataclasses.replace(SCENARIOS_BY_ID["chf_safe_haven_success"], narrative=wrong)
     monkeypatch.setattr("quantlab.narrator.match_scenario", lambda request: scenario)
-    session = run_request(VIX_CHF_REQUEST, ["VIXCLS", "DEXSZUS"], "mock", approve=True,
-                          settings=committed_snapshots(tmp_path / "runs"))  # fmt: skip
-    narrative = session.narrative
+    state = run_graph(VIX_CHF_REQUEST, ["VIXCLS", "DEXSZUS"], "mock", approve=True,
+                      settings=committed_snapshots(tmp_path / "runs"))  # fmt: skip
+    narrative = state["narrative"]
     assert narrative.source == "template" and narrative.withheld.source == "mock"
     assert narrative.withheld.grounding.ungrounded == ["0.4069"]
     assert [i.code for i in narrative.issues] == ["N01"]
@@ -254,8 +251,9 @@ def test_a_recorded_narrative_that_fails_n01_is_withheld(
 def test_scenario_1_demo_edit_full_history_threshold_needs_the_look_ahead_approval(
     settings: Settings,
 ) -> None:
-    session = start("chf_safe_haven_success", settings)
-    report = session.apply_param_edits({"s3": {"method": "full_sample"}})
+    graph, run = start_review("chf_safe_haven_success", settings)
+    run = edit(graph, run, {"s3": {"method": "full_sample"}})
+    report = run.state["report"]
     # The VIX threshold from its entire history: V09, an approval (not a block), which
     # also says the significance test is invalidated; the return-method approval stays.
     assert [(i.issue_id, i.action) for i in report.issues] == [
@@ -265,32 +263,33 @@ def test_scenario_1_demo_edit_full_history_threshold_needs_the_look_ahead_approv
     v09 = report.issues[0]
     assert v09.name == "LOOK_AHEAD"
     assert "It also invalidates the significance test in s7" in v09.message
-    with pytest.raises(ExecutionRefusedError, match="V09:s3"):
-        session.execute()  # not without the analyst's decision
-    session.approve(["V09:s3", "V10:s6:return_method"])
-    assert session.execute().status == "completed"
+    refused = execute(graph, run, ["V10:s6:return_method"])  # not without the analyst's decision
+    assert refused.paused_for["error"] == "Approval required for: V09:s3"
+    run = execute(graph, refused, ["V09:s3", "V10:s6:return_method"])
+    assert run.state["status"] == "completed"
 
 
 def test_scenario_1_demo_edit_dataset_to_a_yield_is_blocked(settings: Settings) -> None:
-    session = start("chf_safe_haven_success", settings)
-    report = session.apply_param_edits({"s4": {"dataset_id": "DGS10"}})
+    graph, run = start_review("chf_safe_haven_success", settings)
+    run = edit(graph, run, {"s4": {"dataset_id": "DGS10"}})
+    report = run.state["report"]
     # A legal edit (a parameter value), which the re-validation blocks: a forward
     # "return" needs a price level, and a yield is a rate. (V07 RETURNS_ON_RATES needs
     # a compute_returns step: the same edit on example 5 shows it.)
-    assert session.plan.steps[3].params["dataset_id"] == "DGS10"
+    assert run.state["plan"].steps[3].params["dataset_id"] == "DGS10"
     assert [(i.issue_id, i.name) for i in report.blocks] == [("V04:s6:series", "TYPE_MISMATCH")]
-    with pytest.raises(ExecutionRefusedError):
-        session.execute()
+    refused = execute(graph, run, SCENARIO_1_APPROVALS)
+    assert refused.paused_for["error"].startswith("The plan has blocking issues")
 
 
 def test_scenario_1_demo_edit_quantile_out_of_range_is_blocked(settings: Settings) -> None:
-    session = start("chf_safe_haven_success", settings)
-    report = session.apply_param_edits({"s3": {"quantile": 1.5}})
-    (v03,) = report.blocks
+    graph, run = start_review("chf_safe_haven_success", settings)
+    run = edit(graph, run, {"s3": {"quantile": 1.5}})
+    (v03,) = run.state["report"].blocks
     assert (v03.code, v03.name, v03.step_id) == ("V03", "INVALID_PARAM", "s3")
     assert "'quantile'=1.5 is outside [0.01, 0.99]" in v03.message
-    with pytest.raises(ExecutionRefusedError):
-        session.execute()
+    refused = execute(graph, run, SCENARIO_1_APPROVALS)
+    assert refused.paused_for["error"].startswith("The plan has blocking issues")
 
 
 # --- example 5, buy the dip: the bottom tail of past weekly returns ---------------
@@ -335,20 +334,20 @@ def test_scenario_5_validates_with_exactly_two_v10_approvals(catalog: Catalog) -
 
 
 def test_scenario_5_runs_end_to_end_and_replays_identically(settings: Settings) -> None:
-    session = run_request(DIP_REQUEST, ["NASDAQCOM"], "mock", approve=True, settings=settings)
-    assert session.status == "completed" and not session.execution.issues
-    assert [a.issue_id for a in session.approvals] == SCENARIO_5_APPROVALS
-    assert session.narrative.grounding.grounded
-    report = replay(session.run_id, settings)
+    state = run_graph(DIP_REQUEST, ["NASDAQCOM"], "mock", approve=True, settings=settings)
+    assert state["status"] == "completed" and not state["runtime_issues"]
+    assert [a.issue_id for a in state["approvals"]] == SCENARIO_5_APPROVALS
+    assert state["narrative"].grounding.grounded
+    report = replay(state["run_id"], settings)
     assert report.all_match, report.message
-    original = [r.output_hash for r in session.execution.step_records]
+    original = [r.output_hash for r in state["steps"]]
     assert [s.replay_hash for s in report.steps] == original and len(original) == 6
 
 
 def test_scenario_5_flags_the_biggest_drops_from_past_data_only(settings: Settings) -> None:
-    session = start("buy_the_dip_tech", settings)
-    session.approve(SCENARIO_5_APPROVALS)
-    artifacts = session.execute().artifacts
+    graph, run = start_review("buy_the_dip_tech", settings)
+    state = execute(graph, run, SCENARIO_5_APPROVALS).state
+    artifacts = state["artifacts"]
     returns, flags = artifacts["s3"].value, artifacts["s4"].value
     # Each dip is below the 10% quantile of the returns BEFORE it (no look-ahead).
     threshold = returns.shift(1).expanding(min_periods=52).quantile(0.10)
@@ -356,7 +355,7 @@ def test_scenario_5_flags_the_biggest_drops_from_past_data_only(settings: Settin
     assert (returns[flags.index][flags] < 0).all()  # every dip is a drop
     # The narrative answers the two-sided question ("differ"), then says which mean was
     # higher with both means, in grounded numbers.
-    narrative = session.narrate()
+    narrative = state["narrative"]
     test = artifacts["s6"].value
     assert "The test asks whether next-week returns after flagged weeks differ" in narrative.text
     higher = "flagged weeks" if test["diff_means"] > 0 else "the other weeks"
@@ -370,32 +369,32 @@ def test_scenario_5_flags_the_biggest_drops_from_past_data_only(settings: Settin
 def test_scenario_5_demo_edit_dataset_to_a_yield_blocks_returns_on_rates(
     settings: Settings,
 ) -> None:
-    session = start("buy_the_dip_tech", settings)
-    report = session.apply_param_edits({"s1": {"dataset_id": "DGS10"}})
+    graph, run = start_review("buy_the_dip_tech", settings)
+    run = edit(graph, run, {"s1": {"dataset_id": "DGS10"}})
     # A legal edit, which the re-validation blocks: "returns" of a yield are
     # meaningless (V07), and a forward return needs a price level (V04).
-    assert session.plan.steps[0].params["dataset_id"] == "DGS10"
-    assert [i.issue_id for i in report.blocks] == ["V07:s3", "V04:s5:series"]
-    with pytest.raises(ExecutionRefusedError):
-        session.execute()
+    assert run.state["plan"].steps[0].params["dataset_id"] == "DGS10"
+    assert [i.issue_id for i in run.state["report"].blocks] == ["V07:s3", "V04:s5:series"]
+    refused = execute(graph, run, SCENARIO_5_APPROVALS)
+    assert refused.paused_for["error"].startswith("The plan has blocking issues")
 
 
 def test_scenario_3_refusal_lists_what_the_registry_can_do(settings: Settings) -> None:
-    session = start("arima_forecast_block", settings)
-    reason = session.plan.refusal_reason
+    graph, run = start_review("arima_forecast_block", settings)
+    reason = run.state["plan"].refusal_reason
     assert reason.startswith("No registered capability fits a model or makes a forecast")
     assert "ARIMA forecast of the S&P 500" in reason
     assert all(name in reason for name in REGISTRY)  # the list comes from the registry
-    assert session.status == "blocked" and session.execution is None
+    assert run.state["status"] == "blocked" and "steps" not in run.state
 
 
 def test_scenario_3_wall_holds_even_if_the_planner_misbehaves(settings: Settings) -> None:
     """A planner that emits an 'arima' step instead of refusing is still blocked."""
     request = SCENARIOS_BY_ID["arima_forecast_block"].request
     client = FakeAnthropicClient(tool_response(ARIMA_PLAN))
-    session = run_request(request, ["NASDAQCOM"], "live", settings=settings, client=client)
-    assert session.report.codes() == ["V02"]
-    assert session.status == "blocked" and session.execution is None
+    state = run_graph(request, ["NASDAQCOM"], "live", settings=settings, client=client)
+    assert state["report"].codes() == ["V02"]
+    assert state["status"] == "blocked" and "steps" not in state
 
 
 def test_scenario_4_injected_plan_is_blocked_and_never_runs(
@@ -416,16 +415,16 @@ def test_scenario_4_injected_plan_is_blocked_and_never_runs(
     monkeypatch.setattr(subprocess, "Popen", SpyPopen)  # subprocess.run goes through Popen
 
     scenario = SCENARIOS_BY_ID["prompt_injection_unknown_capability"]
-    session = run_request(scenario.request, list(scenario.dataset_ids), "mock", settings=settings)
+    state = run_graph(scenario.request, list(scenario.dataset_ids), "mock", settings=settings)
 
     # A well-formed plan (no V01) of one step that follows the injection, rejected
     # whole by V02.
-    assert [s.capability for s in session.plan.steps] == ["run_python"]
-    assert session.plan.steps[0].params == {"code": "import os; os.system('ls')"}
-    assert [(i.issue_id, i.action) for i in session.report.issues] == [("V02:s1", "BLOCK")]
-    assert session.report.is_rejected
+    assert [s.capability for s in state["plan"].steps] == ["run_python"]
+    assert state["plan"].steps[0].params == {"code": "import os; os.system('ls')"}
+    assert [(i.issue_id, i.action) for i in state["report"].issues] == [("V02:s1", "BLOCK")]
+    assert state["report"].is_rejected
     # Blocked before approval: the executor is never reached, no step ever runs.
-    assert session.status == "blocked" and session.execution is None and not session.approvals
+    assert state["status"] == "blocked" and "steps" not in state and not state.get("approvals")
     assert "run_python" not in REGISTRY
     assert shell_commands == []  # os.system / os.popen never called
     # The only processes are the run record's fixed, read-only git queries (commit
@@ -435,18 +434,19 @@ def test_scenario_4_injected_plan_is_blocked_and_never_runs(
 
 
 def test_scenario_2_frequency_mismatch_blocks_before_anything_runs(settings: Settings) -> None:
-    session = start("spread_frequency_mismatch_block", settings)
+    graph, run = start_review("spread_frequency_mismatch_block", settings)
+    report = run.state["report"]
     # The frequency mismatch, and the look-ahead approval of the full-history threshold.
-    assert [(i.issue_id, i.action) for i in session.report.issues] == [
+    assert [(i.issue_id, i.action) for i in report.issues] == [
         ("V08:s4", "BLOCK"),
         ("V09:s5", "APPROVE"),
     ]
-    v08 = session.report.blocks[0]
+    v08 = report.blocks[0]
     assert "'a' is weekly, 'b' is daily" in v08.message
     assert "Resample DGS2 to weekly" in v08.suggestion
-    assert session.status == "blocked" and not session.can_execute()[0]
-    with pytest.raises(ExecutionRefusedError):
-        session.execute()
+    assert run.state["status"] == "blocked" and refusal_reason(run.state)
+    refused = execute(graph, run, ["V09:s5"])
+    assert refused.paused_for["error"] == "The plan has blocking issues: V08:s4"
 
 
 def test_scenario_2_asks_for_the_bottom_tail_of_the_spread() -> None:
@@ -458,14 +458,13 @@ def test_scenario_2_asks_for_the_bottom_tail_of_the_spread() -> None:
 
 def test_scenario_2_runs_once_both_yields_are_daily(settings: Settings) -> None:
     # The fix the app allows (steps are locked): the 10-year kept daily, like the 2-year.
-    session = start("spread_frequency_mismatch_block", settings)
-    report = session.apply_param_edits({"s2": {"freq": "D"}})
-    assert [i.issue_id for i in report.issues] == ["V09:s5"]  # no more V08
-    session.approve(["V09:s5"])
-    execution = session.execute()
-    assert execution.status == "completed"
-    spread = execution.artifacts["s4"].value
-    flags = execution.artifacts["s5"].value
+    graph, run = start_review("spread_frequency_mismatch_block", settings)
+    run = edit(graph, run, {"s2": {"freq": "D"}})
+    assert [i.issue_id for i in run.state["report"].issues] == ["V09:s5"]  # no more V08
+    state = execute(graph, run, ["V09:s5"]).state
+    assert state["status"] == "completed"
+    spread = state["artifacts"]["s4"].value
+    flags = state["artifacts"]["s5"].value
     # The bottom tail of the whole history: below the 10% quantile, about 10% of the days.
     assert flags.any() and (spread[flags] < spread.quantile(0.10)).all()
     assert 0.09 < flags.mean() < 0.11

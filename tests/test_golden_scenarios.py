@@ -73,6 +73,10 @@ example 1's plan in the live planner's order replaced it and its eval case, and
 example 4's single unregistered step replaced it and its eval case. No narrative
 raises N01, and no example or eval request raises R01.
 
+The examples run through the graph (graph.run_graph), the orchestrator. Every record
+was made before the graph replaced the earlier orchestrator, so matching them, with no
+migration added, shows that the graph preserved the behaviour exactly.
+
 The fixture is a frozen reference: a record is never regenerated.
 """
 
@@ -85,8 +89,8 @@ import pytest
 
 from quantlab.config import PROJECT_ROOT, Settings
 from quantlab.data import load_catalog
-from quantlab.engine import Session, run_request
 from quantlab.evaluation import load_golden, score_case
+from quantlab.graph import GraphState, run_graph
 from quantlab.guardrails import GUARDRAILS, Issue, fill_defaults, validate_plan
 from quantlab.mock_scenarios import SCENARIOS
 from quantlab.planner import generate_plan
@@ -424,11 +428,11 @@ def describe_issue(issue: Issue) -> dict[str, Any]:
     }
 
 
-def describe_session(session: Session) -> dict[str, Any]:
+def describe_run(state: GraphState) -> dict[str, Any]:
     """Everything a workflow's result is judged on, as plain JSON-ready data.
 
     Args:
-        session: a finished session (see engine.run_request).
+        state: the final state of a run (see graph.run_graph).
 
     Returns:
         status, static and runtime issues, approvals, the plan that ran (defaults
@@ -437,16 +441,16 @@ def describe_session(session: Session) -> dict[str, Any]:
         significant digits), the facts sheet as displayed, and the narrative's
         grounding check and N01 issues.
     """
-    execution = session.execution
-    artifacts = execution.artifacts if execution else {}
+    artifacts = state.get("artifacts", {})
+    narrative = state.get("narrative")
     return {
-        "status": session.status,
-        "static_issues": [describe_issue(i) for i in session.report.issues],
-        "runtime_issues": [describe_issue(i) for i in execution.issues] if execution else [],
-        "approvals": [approval.issue_id for approval in session.approvals],
+        "status": state["status"],
+        "static_issues": [describe_issue(i) for i in state["report"].issues],
+        "runtime_issues": [describe_issue(i) for i in state.get("runtime_issues", [])],
+        "approvals": [approval.issue_id for approval in state.get("approvals", [])],
         "plan": [
             {"id": s.id, "capability": s.capability, "inputs": s.inputs, "params": s.params}
-            for s in session.plan.steps
+            for s in state["plan"].steps
         ],
         "steps": [
             {
@@ -460,48 +464,43 @@ def describe_session(session: Session) -> dict[str, Any]:
                 "end": record.end,
                 "meta": {name: (record.meta or {}).get(name) for name in META_FIELDS},
             }
-            for record in (execution.step_records if execution else [])
+            for record in state.get("steps", [])
         ],
         "tables": {
             step_id: json.loads(canonical_text(artifact))
             for step_id, artifact in artifacts.items()
             if artifact.data_type == DataType.TABLE
         },
-        "facts": (
-            [[fact.fact_id, fact.display] for fact in session.narrative.facts]
-            if session.narrative
-            else []
-        ),
+        "facts": [[fact.fact_id, fact.display] for fact in narrative.facts] if narrative else [],
         "grounding": (
             {"grounded": narrative.grounding.grounded, "ungrounded": narrative.grounding.ungrounded}
-            if (narrative := session.narrative)
+            if narrative
             else None
         ),
-        "narrative_issues": (
-            [describe_issue(i) for i in session.narrative.issues] if session.narrative else []
-        ),
+        "narrative_issues": [describe_issue(i) for i in narrative.issues] if narrative else [],
     }
 
 
 def run_scenarios(settings: Settings) -> dict[str, dict[str, Any]]:
-    """Run the five example workflows in mock mode, auto-approving as `cli demo` does.
+    """Run the five example workflows through the graph in mock mode, auto-approving as
+    `cli demo` does.
 
     Args:
         settings: settings naming the data folder and an isolated runs folder.
 
     Returns:
-        Scenario id -> describe_session of its run.
+        Scenario id -> describe_run of its run.
     """
     results = {}
     for scenario in SCENARIOS:
-        session = run_request(
+        state = run_graph(
             scenario.request,
             list(scenario.dataset_ids),
             "mock",
             approve=scenario.auto_approve,
             settings=settings,
         )
-        results[scenario.id] = describe_session(session)
+        results[scenario.id] = describe_run(state)
     return results
 
 

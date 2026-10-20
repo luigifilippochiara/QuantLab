@@ -18,8 +18,7 @@ from streamlit.testing.v1 import AppTest
 
 from quantlab.config import PROJECT_ROOT, Settings
 from quantlab.data import load_catalog
-from quantlab.engine import Session, run_request
-from quantlab.graph import build_graph, resume_run, start_run
+from quantlab.graph import build_graph, resume_run, run_graph, start_run
 from quantlab.guardrails import (
     CATEGORY_DEFINITIONS,
     ENFORCERS,
@@ -46,7 +45,10 @@ from conftest import (
     CHANGE_REQUEST_COMMENT,
     SCENARIO_5_APPROVALS,
     as_plan,
+    execute,
+    paused_ids,
     spread_weekly_plan,
+    start_review,
     volatility_plan,
 )
 from fakes import FakeAnthropicClient, text_response, tool_response
@@ -1052,37 +1054,27 @@ def test_monitoring_page_with_no_runs_shows_a_note(app_env: Settings) -> None:
     assert not app.get("plotly_chart") and not app.metric and not app.subheader
 
 
-def app_session(scenario_id: str, settings: Settings) -> Session:
-    """A session started on the Analysis page (interactive), with its plan created."""
-    scenario = SCENARIOS_BY_ID[scenario_id]
-    session = Session.start(scenario.request, list(scenario.dataset_ids), "mock", settings,
-                            interactive=True)  # fmt: skip
-    session.create_plan()
-    return session
-
-
 def headless_replayed_run(settings: Settings) -> str:
     """A headless run (as the CLI makes), replayed once; returns its run id."""
     scenario = SCENARIOS_BY_ID["buy_the_dip_tech"]
-    session = run_request(scenario.request, list(scenario.dataset_ids), "mock", approve=True,
-                          settings=settings)  # fmt: skip
-    assert replay(session.run_id, settings).all_match
-    return session.run_id
+    state = run_graph(scenario.request, list(scenario.dataset_ids), "mock", approve=True,
+                      settings=settings)  # fmt: skip
+    assert replay(state["run_id"], settings).all_match
+    return state["run_id"]
 
 
 def test_monitoring_page_sections_cards_and_charts(app_env: Settings) -> None:
     # Counted: approved and executed, rejected, blocked (V08, with a V09 to approve), refused
     # by the planner (P01), failed, and a live run that completed with a warning (E04).
-    approved = app_session("buy_the_dip_tech", app_env)
-    approved.approve([i.issue_id for i in approved.unresolved_approvals()])
-    approved.execute()
-    approved.narrate()
-    approved.save_record()
-    app_session("buy_the_dip_tech", app_env).reject()
-    app_session("spread_frequency_mismatch_block", app_env)
-    app_session("arima_forecast_block", app_env)
+    # Runs started on the Analysis page (a person reviews): each pauses for review.
+    graph, run = start_review("buy_the_dip_tech", app_env)
+    execute(graph, run, paused_ids(run))
+    graph, run = start_review("buy_the_dip_tech", app_env)
+    resume_run(graph, run, {"action": "reject"})
+    start_review("spread_frequency_mismatch_block", app_env)
+    start_review("arima_forecast_block", app_env)
     # Left out: a plan still awaiting a decision, and a headless run (whose replay counts).
-    app_session("buy_the_dip_tech", app_env)
+    start_review("buy_the_dip_tech", app_env)
     headless_replayed_run(app_env)
     now = utc_now()
     save_run(RunRecord(run_id=new_run_id(), created_at=now, status="failed", request="x",
@@ -1174,7 +1166,7 @@ def test_monitoring_page_sections_cards_and_charts(app_env: Settings) -> None:
 
 def test_monitoring_page_with_no_counted_run_still_shows_replays(app_env: Settings) -> None:
     headless_replayed_run(app_env)
-    app_session("buy_the_dip_tech", app_env)  # awaiting a decision
+    start_review("buy_the_dip_tech", app_env)  # awaiting a decision
     app = open_page("monitoring.py")
     assert app.info[0].value.startswith("No decided runs from the Analysis page yet")
     cards = {m.proto.label: m.proto for m in app.metric}
