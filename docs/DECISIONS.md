@@ -2563,3 +2563,19 @@ command (it would put network access inside the package). `planner_evaluation.py
 stays in the package rather than moving to `planner_eval/`: the CLI and the tests
 import it, and code outside the package could only be imported by path tricks or
 dynamic imports, which the safety rules forbid.
+
+
+## Request changes in the guide; the logo removed
+
+**What.** The README's "Request changes" section moved, unchanged, to the guide as
+"Requesting changes from the planner", right after "Editing a plan before it runs";
+the README's table now says the guide covers plan review (edits and change requests).
+`assets/logo.svg` is deleted (the README stopped showing it earlier) and the guide's
+project layout no longer lists it; the architecture diagram is now
+`assets/architecture.jpg`. **Why.** The README stays a two-minute overview: how a
+reviewer sends a plan back is usage detail, and the guide already holds the other
+review actions (editing, approving, rejecting). An unused image is one more file to
+explain. **Alternatives.** Keep the section in the README (it was the only review action
+described there in full); keep the logo for later use (it can be restored from the
+history). The entry "Narrative note, a shorter README, the logo" above records why the
+logo was added.

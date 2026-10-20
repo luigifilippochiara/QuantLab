@@ -252,7 +252,7 @@ class MockPlanner:
 
 
 # ---------------------------------------------------------------------------
-# Shared helpers by both LLM planners
+# Helpers shared by both LLM planners
 # ---------------------------------------------------------------------------
 
 

@@ -26,20 +26,6 @@ One LangGraph graph ([src/quantlab/graph.py](src/quantlab/graph.py), its nodes i
 CLI and the notebooks: each stage is a node, and the review is an interrupt where the
 run pauses, its state checkpointed, until the reviewer answers.
 
-## Request changes
-
-When a plan needs more than new parameter values (another resampling, a different
-step), the reviewer can write a comment and click **Request changes**. The planner
-gets the original request, the plan, the guardrail findings (codes and messages,
-never data) and the comment, and returns a complete revised plan. The comment gets
-the same request check as a request, and the revision goes through every validator
-guardrail before the reviewer sees it. Up to 3 change requests per run; after that,
-only Execute or Reject. It needs live mode: in mock and cached mode the button is
-disabled; otherwise it turns grey once a comment is written and can be sent. A plan
-rejected as a whole (V01, V02) ends the run instead. Every revision stays in the one
-run record, under its run id: the Analysis page shows the revision number and what
-changed, and the trace lists the revision history.
-
 ## What's inside
 
 - **Capabilities:** descriptive building blocks plus one significance test, each
@@ -113,7 +99,7 @@ the snapshots. The full roadmap is in
 
 | Where | What |
 |---|---|
-| [docs/GUIDE.md](docs/GUIDE.md) | Using the app and the CLI, the example workflows, LLM modes, monitoring, evaluation |
+| [docs/GUIDE.md](docs/GUIDE.md) | Using the app and the CLI, plan review (edits and change requests), the example workflows, LLM modes, monitoring, evaluation |
 | [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | Safety model, modules, capability and guardrail tables, limitations and roadmap |
 | [docs/DECISIONS.md](docs/DECISIONS.md) | Every design decision, with its reason and the alternatives |
 | [docs/SPEC.md](docs/SPEC.md) | The original v1 specification |

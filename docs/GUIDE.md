@@ -117,6 +117,20 @@ a BLOCK remains or an approval is unticked. Edited values are marked ("edited
 the parameter-level diff that the trace and Run history display. Replay re-runs
 the edited plan with identical hashes.
 
+### Requesting changes from the planner
+
+When a plan needs more than new parameter values (another resampling, a different
+step), the reviewer can write a comment and click **Request changes**. The planner
+gets the original request, the plan, the guardrail findings (codes and messages,
+never data) and the comment, and returns a complete revised plan. The comment gets
+the same request check as a request, and the revision goes through every validator
+guardrail before the reviewer sees it. Up to 3 change requests per run; after that,
+only Execute or Reject. It needs live mode: in mock and cached mode the button is
+disabled; otherwise it turns grey once a comment is written and can be sent. A plan
+rejected as a whole (V01, V02) ends the run instead. Every revision stays in the one
+run record, under its run id: the Analysis page shows the revision number and what
+changed, and the trace lists the revision history.
+
 ## Example workflows
 
 In mock mode the sidebar offers five ready-made requests; in live and cached
@@ -398,7 +412,6 @@ set about a third of each category).
 pyproject.toml, uv.lock     dependencies (direct ones pinned exactly)
 CLAUDE.md                   engineering conventions for AI-assisted development
 assets/architecture.jpg     the architecture diagram (README, ARCHITECTURE.md)
-assets/logo.svg             the QuantLab logo (the app's query_stats icon)
 docs/GUIDE.md               this guide
 docs/ARCHITECTURE.md        design, module map, capability and guardrail tables
 docs/SPEC.md                the v1 product specification
