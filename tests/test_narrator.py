@@ -18,10 +18,10 @@ from quantlab.narrator import (
     build_user_prompt,
     check_grounding,
     check_narrative_grounding,
+    deterministic_narrative,
     format_number,
     narrate,
     narrative_note,
-    template_narrative,
 )
 from quantlab.plan import Plan
 from quantlab.types import Artifact, ArtifactMeta, DataType, Frequency, TokenUsage
@@ -168,7 +168,7 @@ def test_extra_texts_allow_numbers_from_warnings() -> None:
 
 
 @pytest.mark.parametrize("scenario_id", list(PLANS))
-def test_template_narrative_is_fully_grounded(
+def test_deterministic_narrative_is_fully_grounded(
     scenario_id: str, settings: Settings, catalog: Catalog
 ) -> None:
     plan, result, issues = run_scenario(scenario_id, catalog)
@@ -216,7 +216,7 @@ def test_llm_narrative_with_invented_number_fires_n01_and_is_withheld(
     assert narrative.withheld.model == "claude-sonnet-5-5"
     assert narrative.withheld.grounding.ungrounded == ["7.77"]
     assert narrative.source == "template" and narrative.grounding.grounded
-    assert narrative.text == template_narrative(plan, result.artifacts, facts, issues)
+    assert narrative.text == deterministic_narrative(plan, result.artifacts, facts, issues)
     [n01] = narrative.issues
     assert (n01.code, n01.name, n01.action, n01.issue_id) == (
         "N01", "UNGROUNDED_NARRATIVE", "WARN", "N01:plan:llm")  # fmt: skip
@@ -312,7 +312,7 @@ def hac_artifacts(p_value: float) -> tuple[Plan, dict[str, Artifact]]:
 def test_template_reads_the_test_without_overclaiming(p_value: float, verdict: str) -> None:
     plan, artifacts = hac_artifacts(p_value)
     facts = build_facts_sheet(plan, artifacts)
-    text = template_narrative(plan, artifacts, facts, [])
+    text = deterministic_narrative(plan, artifacts, facts, [])
     assert verdict in text
     assert f"p-value of {format_number(p_value)}" in text and "-0.001200" in text
     assert "23 distinct episodes" in text  # always the number of episodes
@@ -331,7 +331,7 @@ def test_template_says_the_means_differ_then_which_is_higher(
     plan, artifacts = hac_artifacts(0.4321)
     artifacts["s8"].value.update(diff_means=difference, mean_flagged=mean_flagged)
     facts = build_facts_sheet(plan, artifacts)
-    text = template_narrative(plan, artifacts, facts, [])
+    text = deterministic_narrative(plan, artifacts, facts, [])
     # The test is two-sided: the answer says whether the means differ and whether that
     # is significant; only then which mean was higher, as a description with both means.
     assert text.startswith(

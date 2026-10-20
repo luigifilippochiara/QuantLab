@@ -386,7 +386,7 @@ def check_grounding(
 # ---------------------------------------------------------------------------
 
 
-def template_narrative(
+def deterministic_narrative(
     plan: Plan,
     artifacts: dict[str, Artifact],
     facts: list[Fact],
@@ -598,7 +598,7 @@ def narrate(
     facts = build_facts_sheet(plan, artifacts)
     trusted_texts = [request, *(i.message for i in issues), *(extra_texts or [])]
     template = NarrativeResult(
-        text=template_narrative(plan, artifacts, facts, issues, dataset_notes),
+        text=deterministic_narrative(plan, artifacts, facts, issues, dataset_notes),
         source="template",
         prompt_version="template-v1",
         facts=facts,
