@@ -2396,3 +2396,18 @@ since through the interrupt an approval comes only with Execute.
   stage and no framework. It is smaller and adds no dependency, but the pause for
   review and the change-request loop are then written by hand, and the two would have
   stayed side by side while the graph was kept.
+
+
+## graph.py stays one module, in named sections
+
+**What.** `graph.py` (about 1,200 lines, some 740 of them code; the rest docstrings and
+comments) is not split. It reads top to bottom in named sections: the run's state and
+the reviewer's answer, reading the state (what the app and the CLI ask of a run),
+recording (events and the run record), the nodes, the edges, building the graph (the
+checkpoint allowlist, the checkpointer and the wiring), and the run API. The
+reordering moved code only. **Why.** Every node calls the reading and recording
+helpers, so separate modules would mainly add imports between them, and a reviewer
+would lose the one place where the whole orchestration can be read in order. The run
+API is about 120 lines, too little to deserve a module of its own. **Alternatives.** A
+`nodes` module apart from the run API, or the state helpers in a module of their own
+(both rejected for the reasons above).

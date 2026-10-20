@@ -29,10 +29,12 @@ check and the planner, then the validator: nothing skips validation. Every revis
 stays under the one run id. The state is checkpointed after every node by an
 in-memory checkpointer, so a paused run resumes with exactly the same state.
 
-The module reads top to bottom: the state and the reviewer's answer, helpers that
-compute from the state, the nodes, the edges, build_graph, then the run API:
-`start_run` and `resume_run` (the Analysis page answers the interrupt) and
-`run_graph`, which chains them for headless use (CLI, notebooks, tests).
+The module reads top to bottom: the run's state and the reviewer's answer; reading the
+state (what the Analysis page and the CLI ask of a run); recording (monitoring events
+and the run record); the nodes; the edges; building the graph (the checkpointer and
+the wiring); then the run API: `start_run` and `resume_run` (the Analysis page answers
+the interrupt) and `run_graph`, which chains them for headless use (CLI, notebooks,
+tests).
 """
 
 import time
@@ -86,6 +88,11 @@ from quantlab.planner import (
 )
 from quantlab.registry import registry_version
 from quantlab.types import Artifact, DataType, Frequency, SeriesKind, TokenUsage
+
+# ---------------------------------------------------------------------------
+# The run's state, its context and the reviewer's answer
+# ---------------------------------------------------------------------------
+
 
 # Change requests one run may make: each is a planner call, and a person asks for it.
 MAX_CHANGE_REQUESTS = 3
@@ -200,65 +207,9 @@ class ReviewDecision(BaseModel):
     approved_by: str = "user"
 
 
-# The classes the checkpointer may rebuild from a checkpoint: the types held in
-# GraphState and the enums inside their dumps (an Issue's dump includes its
-# computed type and category). A class missing here would come back as a plain
-# dict or string, so tests/test_graph.py checks the whole state round-trips.
-CHECKPOINT_TYPES = [
-    PlanResult,
-    Plan,
-    Issue,
-    Action,
-    GuardrailType,
-    Category,
-    ValidationReport,
-    ParamEdit,
-    Approval,
-    StepRecord,
-    NarrativeResult,
-    RunRecord,
-    PlanRevision,
-    RevisionRequest,
-    DataType,
-    Frequency,
-    SeriesKind,
-    TokenUsage,
-]
-
-
 # ---------------------------------------------------------------------------
-# Helpers: the run's bookkeeping, as functions of the state
+# Reading the state (also used by the Analysis page and the CLI)
 # ---------------------------------------------------------------------------
-
-
-def _log(
-    runtime: Runtime[GraphContext],
-    state: GraphState,
-    event_type: str,
-    stage: str | None = None,
-    latency_ms: float | None = None,
-    details: dict[str, Any] | None = None,
-) -> None:
-    """Append a monitoring event for this run."""
-    log_event(
-        runtime.context.settings.events_path,
-        state["run_id"],
-        event_type,
-        stage=stage,
-        latency_ms=latency_ms,
-        details=details,
-    )
-
-
-def _issue_details(issue: Issue) -> dict[str, Any]:
-    """The fields of an issue that go into a monitoring event."""
-    return {
-        "code": issue.code,
-        "name": issue.name,
-        "action": issue.action.value,
-        "step_id": issue.step_id,
-        "issue_id": issue.issue_id,
-    }
 
 
 def current_plan_hash(state: GraphState) -> str:
@@ -277,6 +228,35 @@ def proposal(state: GraphState) -> Plan | None:
 def revision_number(state: GraphState) -> int:
     """The current revision: 0 for the planner's first proposal, n after n change requests."""
     return max(len(state.get("revisions", [])) - 1, 0)
+
+
+def unresolved_approvals(state: GraphState) -> list[Issue]:
+    """APPROVE issues of the current report that have not been approved yet."""
+    report = state.get("report")
+    if report is None:
+        return []
+    # Only approvals given for THIS plan version count (edits also clear them).
+    current = current_plan_hash(state)
+    approved = {a.issue_id for a in state.get("approvals", []) if a.plan_hash == current}
+    return [i for i in report.approvals_required if i.issue_id not in approved]
+
+
+def refusal_reason(state: GraphState) -> str:
+    """Why the plan may not be executed now ("" if it may): the reason the reviewer sees."""
+    plan, report = state.get("plan"), state.get("report")
+    if plan is None or report is None:
+        return "There is no valid plan."
+    if state.get("decision") == "rejected":
+        return "The plan was rejected."
+    if report.is_rejected:
+        codes = ", ".join(sorted({issue.code for issue in report.rejections}))
+        return f"The plan was rejected ({codes}): write a new request."
+    if report.is_blocked:
+        return "The plan has blocking issues: " + ", ".join(i.issue_id for i in report.blocks)
+    unresolved = unresolved_approvals(state)
+    if unresolved:
+        return "Approval required for: " + ", ".join(i.issue_id for i in unresolved)
+    return ""
 
 
 def change_request_refusal(state: GraphState) -> str:
@@ -321,6 +301,59 @@ def reset_edits(state: GraphState) -> dict[str, dict[str, Any]]:
     return {step_id: params for step_id, params in edits.items() if params}
 
 
+def warnings(state: GraphState) -> list[Issue]:
+    """All WARN issues: from validation, from execution and from the narrative check."""
+    report, narrative = state.get("report"), state.get("narrative")
+    static = report.warnings if report else []
+    runtime = [i for i in state.get("runtime_issues", []) if i.action == Action.WARN]
+    return static + runtime + (narrative.issues if narrative else [])
+
+
+def issue_codes(state: GraphState) -> list[str]:
+    """Sorted codes of every issue raised in a run: request check, planner refusal,
+    validator, executor and narrator check."""
+    report, narrative = state.get("report"), state.get("narrative")
+    codes = set(report.codes()) if report else set()
+    codes |= {issue.code for issue in state.get("runtime_issues", [])}
+    codes |= {issue.code for issue in narrative.issues} if narrative else set()
+    return sorted(codes)
+
+
+# ---------------------------------------------------------------------------
+# Recording: monitoring events and the run record
+# ---------------------------------------------------------------------------
+
+
+def _log(
+    runtime: Runtime[GraphContext],
+    state: GraphState,
+    event_type: str,
+    stage: str | None = None,
+    latency_ms: float | None = None,
+    details: dict[str, Any] | None = None,
+) -> None:
+    """Append a monitoring event for this run."""
+    log_event(
+        runtime.context.settings.events_path,
+        state["run_id"],
+        event_type,
+        stage=stage,
+        latency_ms=latency_ms,
+        details=details,
+    )
+
+
+def _issue_details(issue: Issue) -> dict[str, Any]:
+    """The fields of an issue that go into a monitoring event."""
+    return {
+        "code": issue.code,
+        "name": issue.name,
+        "action": issue.action.value,
+        "step_id": issue.step_id,
+        "issue_id": issue.issue_id,
+    }
+
+
 def _revision_edits(state: GraphState) -> list[ParamEdit]:
     """The parameter edits made to the current revision."""
     current = revision_number(state)
@@ -346,53 +379,6 @@ def _sum_usage(usages: list[TokenUsage]) -> TokenUsage:
         saved_input_tokens=sum(u.saved_input_tokens for u in usages),
         saved_output_tokens=sum(u.saved_output_tokens for u in usages),
     )
-
-
-def unresolved_approvals(state: GraphState) -> list[Issue]:
-    """APPROVE issues of the current report that have not been approved yet."""
-    report = state.get("report")
-    if report is None:
-        return []
-    # Only approvals given for THIS plan version count (edits also clear them).
-    current = current_plan_hash(state)
-    approved = {a.issue_id for a in state.get("approvals", []) if a.plan_hash == current}
-    return [i for i in report.approvals_required if i.issue_id not in approved]
-
-
-def refusal_reason(state: GraphState) -> str:
-    """Why the plan may not be executed now ("" if it may): the reason the reviewer sees."""
-    plan, report = state.get("plan"), state.get("report")
-    if plan is None or report is None:
-        return "There is no valid plan."
-    if state.get("decision") == "rejected":
-        return "The plan was rejected."
-    if report.is_rejected:
-        codes = ", ".join(sorted({issue.code for issue in report.rejections}))
-        return f"The plan was rejected ({codes}): write a new request."
-    if report.is_blocked:
-        return "The plan has blocking issues: " + ", ".join(i.issue_id for i in report.blocks)
-    unresolved = unresolved_approvals(state)
-    if unresolved:
-        return "Approval required for: " + ", ".join(i.issue_id for i in unresolved)
-    return ""
-
-
-def warnings(state: GraphState) -> list[Issue]:
-    """All WARN issues: from validation, from execution and from the narrative check."""
-    report, narrative = state.get("report"), state.get("narrative")
-    static = report.warnings if report else []
-    runtime = [i for i in state.get("runtime_issues", []) if i.action == Action.WARN]
-    return static + runtime + (narrative.issues if narrative else [])
-
-
-def issue_codes(state: GraphState) -> list[str]:
-    """Sorted codes of every issue raised in a run: request check, planner refusal,
-    validator, executor and narrator check."""
-    report, narrative = state.get("report"), state.get("narrative")
-    codes = set(report.codes()) if report else set()
-    codes |= {issue.code for issue in state.get("runtime_issues", [])}
-    codes |= {issue.code for issue in narrative.issues} if narrative else set()
-    return sorted(codes)
 
 
 def _datasets_used(state: GraphState, catalog: Catalog) -> list[str]:
@@ -1002,6 +988,37 @@ def after_review(state: GraphState) -> str:
 def after_execution(state: GraphState) -> str:
     """A completed run is narrated; a runtime BLOCK or a failure ends the run."""
     return "narrator" if state["status"] == "completed" else "recorder"
+
+
+# ---------------------------------------------------------------------------
+# Building the graph: the checkpointer and the wiring
+# ---------------------------------------------------------------------------
+
+
+# The classes the checkpointer may rebuild from a checkpoint: the types held in
+# GraphState and the enums inside their dumps (an Issue's dump includes its
+# computed type and category). A class missing here would come back as a plain
+# dict or string, so tests/test_graph.py checks the whole state round-trips.
+CHECKPOINT_TYPES = [
+    PlanResult,
+    Plan,
+    Issue,
+    Action,
+    GuardrailType,
+    Category,
+    ValidationReport,
+    ParamEdit,
+    Approval,
+    StepRecord,
+    NarrativeResult,
+    RunRecord,
+    PlanRevision,
+    RevisionRequest,
+    DataType,
+    Frequency,
+    SeriesKind,
+    TokenUsage,
+]
 
 
 def new_checkpointer() -> InMemorySaver:
