@@ -6,7 +6,7 @@ chooses among approved, unit-tested capabilities, and every number comes from
 deterministic code. It is built for market-risk and quantitative analysts who need
 answers they can audit.
 
-![QuantLab architecture: a request goes to the planner (LLM), the validator, human approval, the executor and the results; the narrator (LLM) summarises them, and the run record keeps everything for replay and trace.](assets/architecture.png)
+![QuantLab architecture: a request goes to the planner (LLM), the validator, human approval, the executor and the results; the narrator (LLM) summarises them, and the run record keeps everything for replay and trace.](assets/architecture.jpg)
 
 
 ## How it works

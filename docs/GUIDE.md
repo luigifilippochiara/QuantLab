@@ -397,7 +397,7 @@ set about a third of each category).
 ```
 pyproject.toml, uv.lock     dependencies (direct ones pinned exactly)
 CLAUDE.md                   engineering conventions for AI-assisted development
-assets/architecture.png     the architecture diagram (README, ARCHITECTURE.md)
+assets/architecture.jpg     the architecture diagram (README, ARCHITECTURE.md)
 assets/logo.svg             the QuantLab logo (the app's query_stats icon)
 docs/GUIDE.md               this guide
 docs/ARCHITECTURE.md        design, module map, capability and guardrail tables

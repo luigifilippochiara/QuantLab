@@ -49,8 +49,8 @@ def test_readme_links_and_architecture_image_resolve() -> None:
     # The architecture is shown by the committed image, right under the title and the
     # description, by a relative path so it renders on GitHub.
     assert "\n![QuantLab architecture" in README.split("\n## ")[0]
-    assert "](assets/architecture.png)" in README
-    assert (PROJECT_ROOT / "assets" / "architecture.png").read_bytes().startswith(b"\x89PNG")
+    assert "](assets/architecture.jpg)" in README
+    assert (PROJECT_ROOT / "assets" / "architecture.jpg").read_bytes().startswith(b"\xff\xd8\xff")
     links = re.findall(r"\]\(([^)#\s]+)(?:#([\w-]+))?\)", README)
     assert links, "the README links to the docs"
     for target, anchor in links:

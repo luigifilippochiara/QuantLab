@@ -57,7 +57,7 @@ QuantLab also runs fully offline in **mock mode**, which needs no API key.
 
 ## Pipeline and modules
 
-![QuantLab architecture: a request goes to the planner (LLM), the validator, human approval, the executor and the results; the narrator (LLM) summarises them, and the run record keeps everything for replay and trace.](../assets/architecture.png)
+![QuantLab architecture: a request goes to the planner (LLM), the validator, human approval, the executor and the results; the narrator (LLM) summarises them, and the run record keeps everything for replay and trace.](../assets/architecture.jpg)
 
 | Module (`src/quantlab/`) | Role |
 |---|---|
