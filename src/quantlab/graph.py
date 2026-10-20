@@ -10,18 +10,24 @@ same run record, so a graph run can be replayed and traced like any other.
     START -> request_check -> planner -> validator -> approval -> executor -> narrator
           -> recorder -> END
 
-    request_check  R01 refuses an oversized request before any LLM call
-    planner        the planner proposes a plan (or refuses, P01); mock mode only here
-    validator      the validator's guardrails; run again after every edit
-    approval       interrupt(): the run pauses until a reviewer approves, edits or rejects
+    request_check  R01 refuses an oversized request (or change request) before any LLM call
+    planner        the planner proposes a plan (or refuses, P01), or revises it
+    validator      the validator's guardrails; run again after every edit and revision
+    approval       interrupt(): the run pauses until a reviewer approves, edits, rejects
+                   or requests changes
     executor       deterministic execution with the runtime guardrails
     narrator       narrative and grounding check (an ungrounded one is withheld, N01)
     recorder       saves the run record; every run ends here, blocked or not
 
-Conditional edges: a BLOCK goes to the recorder and ends; open APPROVE issues go
-to the approval interrupt; an edit goes back to the validator; a clean plan goes
-to the executor. The state is checkpointed after every node by an in-memory
-checkpointer, so a run paused at approval resumes with exactly the same state.
+Conditional edges: a terminal block (V01, V02) goes to the recorder and ends. For a
+person reviewing (interactive, the Analysis page) every other plan pauses at the
+approval interrupt, blocked or not, so it can be edited, executed, rejected or sent
+back with a change request; headless, a BLOCK ends the run, open APPROVE issues
+pause it and a clean plan runs. An edit goes back to the validator; a change request
+(live mode only, at most MAX_CHANGE_REQUESTS per run) goes back through the request
+check and the planner, then the validator: nothing skips validation. Every revision
+stays under the one run id. The state is checkpointed after every node by an
+in-memory checkpointer, so a paused run resumes with exactly the same state.
 `run_graph` chains it all for headless use, like `engine.run_request`.
 """
 
@@ -38,7 +44,7 @@ from langgraph.runtime import Runtime
 from langgraph.types import Command, interrupt
 from pydantic import BaseModel, ConfigDict, Field
 
-from quantlab.config import Settings, load_settings
+from quantlab.config import LLM_MODES, Settings, load_settings
 from quantlab.data import Catalog, load_catalog
 from quantlab.executor import StepRecord, execute_plan
 from quantlab.guardrails import (
@@ -56,6 +62,7 @@ from quantlab.lineage import (
     Approval,
     LLMInfo,
     ParamEdit,
+    PlanRevision,
     RunRecord,
     dataset_versions,
     environment_info,
@@ -66,9 +73,18 @@ from quantlab.lineage import (
 from quantlab.monitoring import log_event, utc_now
 from quantlab.narrator import NarrativeResult, narrate
 from quantlab.plan import Plan, describe_plan, plan_hash
-from quantlab.planner import PlanResult, generate_plan, planning_usage, unplanned_result
+from quantlab.planner import (
+    PlanResult,
+    RevisionRequest,
+    generate_plan,
+    planning_usage,
+    unplanned_result,
+)
 from quantlab.registry import registry_version
 from quantlab.types import Artifact, DataType, Frequency, SeriesKind, TokenUsage
+
+# Change requests one run may make: each is a planner call, and a person asks for it.
+MAX_CHANGE_REQUESTS = 3
 
 
 class GraphState(TypedDict, total=False):
@@ -77,7 +93,7 @@ class GraphState(TypedDict, total=False):
     Fields:
         request: the user's request.
         dataset_ids: datasets the user selected.
-        mode: LLM mode (always "mock" in this prototype).
+        mode: LLM mode: "mock", "live" or "cached" (change requests need "live").
         run_id: unique run id, also the checkpointer's thread id.
         created_at: UTC timestamp.
         interactive: True when a person reviews the plan; False for headless runs.
@@ -89,8 +105,11 @@ class GraphState(TypedDict, total=False):
         edits: parameter edits made by the reviewer.
         approvals: approvals granted for the current plan.
         review: the reviewer's last answer: approved, edited, rejected, not_approved,
-            or refused (it named an issue that is not open; the reviewer is asked again).
+            changes_requested, or refused (it could not be applied, e.g. it named an
+            issue that is not open; the reviewer is asked again).
         review_error: why the last answer was refused, shown when asking again.
+        revisions: every round of planning so far (revision 0, then one per change request).
+        revision_request: an accepted change request, until the planner has answered it.
         plan_shown_at: when the plan was first shown for review (None without one).
         decision: "approved" (executed) or "rejected", once decided.
         decided_at: when the decision was made.
@@ -120,6 +139,8 @@ class GraphState(TypedDict, total=False):
     approvals: list[Approval]
     review: str | None
     review_error: str | None
+    revisions: list[PlanRevision]
+    revision_request: RevisionRequest | None
     plan_shown_at: str | None
     decision: str | None
     decided_at: str | None
@@ -141,10 +162,13 @@ class GraphContext:
     Fields:
         settings: settings in force.
         catalog: dataset catalog.
+        client: optional OpenAI or Anthropic client for the planner and the narrator
+            (tests inject a fake one; None: the SDK client of the configured provider).
     """
 
     settings: Settings
     catalog: Catalog
+    client: Any = None
 
 
 class ReviewDecision(BaseModel):
@@ -152,18 +176,22 @@ class ReviewDecision(BaseModel):
 
     Fields:
         action: "approve" (run the plan with these approvals), "edit" (change
-            parameter values, then validate again) or "reject" (do not run it).
+            parameter values, then validate again), "reject" (do not run it) or
+            "request_changes" (send the plan back to the planner with a comment).
         issue_ids: for approve, the APPROVE issues being approved.
         edits: for edit, step id -> {parameter name: new value}. Typed Any on
             purpose: check_edits judges its shape, as for an edit in the engine.
+        comment: for request_changes, what the reviewer wants changed (untrusted:
+            the request check judges it before the planner sees it).
         approved_by: who decided ("user" in a UI, "cli" for the demo).
     """
 
     model_config = ConfigDict(extra="forbid")
 
-    action: Literal["approve", "edit", "reject"]
+    action: Literal["approve", "edit", "reject", "request_changes"]
     issue_ids: list[str] = Field(default_factory=list)
     edits: Any = None
+    comment: str = ""
     approved_by: str = "user"
 
 
@@ -184,6 +212,8 @@ CHECKPOINT_TYPES = [
     StepRecord,
     NarrativeResult,
     RunRecord,
+    PlanRevision,
+    RevisionRequest,
     DataType,
     Frequency,
     SeriesKind,
@@ -230,6 +260,87 @@ def current_plan_hash(state: GraphState) -> str:
     """Version hash of the current plan; approvals are tied to it."""
     plan = state.get("plan")
     return plan_hash(plan) if plan else ""
+
+
+def proposal(state: GraphState) -> Plan | None:
+    """The planner's latest proposal with defaults filled in: what edits are compared and
+    reset to."""
+    original = state.get("plan_original")
+    return fill_defaults(original) if original else None
+
+
+def revision_number(state: GraphState) -> int:
+    """The current revision: 0 for the planner's first proposal, n after n change requests."""
+    return max(len(state.get("revisions", [])) - 1, 0)
+
+
+def change_request_refusal(state: GraphState) -> str:
+    """Why the reviewer cannot request changes now ("" if they can).
+
+    Live mode only: mock mode has no canned revisions, and in cached mode a change
+    request would silently become a live call. A plan rejected as a whole (V01, V02)
+    ends the run, so it is never reviewed; a decided run is final; and a run may ask
+    at most MAX_CHANGE_REQUESTS times.
+    """
+    report = state.get("report")
+    if state.get("mode") != "live":
+        return "Available in live mode."
+    if state.get("decision") is not None:
+        return f"The plan was already {state['decision']}."
+    if report is None or report.is_rejected or not state.get("revisions"):
+        return "There is no plan to revise: write a new request."
+    if revision_number(state) >= MAX_CHANGE_REQUESTS:
+        return (
+            f"All {MAX_CHANGE_REQUESTS} change requests of this run are used: execute or reject "
+            "the plan."
+        )
+    return ""
+
+
+def reset_edits(state: GraphState) -> dict[str, dict[str, Any]]:
+    """The edit that sets every parameter back to the planner's latest proposal.
+
+    Sent as an ordinary edit, so it is validated like any other (Session.reset_to_proposal).
+    Values are compared with their types: 12 -> 12.0 is a change for the strict validator.
+    """
+    proposed = {step.id: step.params for step in proposal(state).steps}
+    edits = {
+        step.id: {
+            name: proposed[step.id].get(name)
+            for name, value in step.params.items()
+            if value != proposed[step.id].get(name)
+            or type(value) is not type(proposed[step.id].get(name))
+        }
+        for step in state["plan"].steps
+    }
+    return {step_id: params for step_id, params in edits.items() if params}
+
+
+def _revision_edits(state: GraphState) -> list[ParamEdit]:
+    """The parameter edits made to the current revision."""
+    current = revision_number(state)
+    return [edit for edit in state.get("edits", []) if edit.revision == current]
+
+
+def _manual_changes(state: GraphState) -> int:
+    """Parameters the reviewer has changed from the current proposal (its param_diff)."""
+    plan, original = state.get("plan"), proposal(state)
+    if plan is None or original is None:
+        return 0
+    return len(param_changes(original, plan, _revision_edits(state)))
+
+
+def _sum_usage(usages: list[TokenUsage]) -> TokenUsage:
+    """The tokens of several planner calls added up (unknown if any call's count is)."""
+    inputs = [u.input_tokens for u in usages]
+    outputs = [u.output_tokens for u in usages]
+    return TokenUsage(
+        model=usages[-1].model,  # the model of the last call, whose price applies
+        input_tokens=None if None in inputs else sum(inputs),
+        output_tokens=None if None in outputs else sum(outputs),
+        saved_input_tokens=sum(u.saved_input_tokens for u in usages),
+        saved_output_tokens=sum(u.saved_output_tokens for u in usages),
+    )
 
 
 def unresolved_approvals(state: GraphState) -> list[Issue]:
@@ -321,14 +432,21 @@ def build_record(state: GraphState, catalog: Catalog) -> RunRecord:
     plan, original = state.get("plan"), state.get("plan_original")
     narrative = state.get("narrative")
     steps = state.get("steps", [])
+    revisions = state.get("revisions", [])
     stage_tokens: dict[str, TokenUsage] = {}
-    if "planning" in timings:  # the planner ran (R01 stops before it)
-        stage_tokens["planning"] = planning_usage(result)
+    if revisions:  # the planner ran (R01 stops before it): every call of the run counts
+        stage_tokens["planning"] = _sum_usage([revision.usage for revision in revisions])
     if narrative is not None and narrative.usage is not None:
         stage_tokens["narration"] = narrative.usage
     edits = state.get("edits", [])
-    # Edits are compared with the planner's proposal with defaults filled in.
-    proposal = fill_defaults(original) if original else None
+    # Edits are compared with the planner's latest proposal with defaults filled in.
+    diff = param_changes(proposal(state), plan, _revision_edits(state)) if original else []
+    if revisions:
+        # The last revision is left by the run's end: what it changed is the param_diff.
+        revisions = [
+            *revisions[:-1],
+            revisions[-1].model_copy(update={"manual_changes": len(diff)}),
+        ]
     return RunRecord(
         run_id=state["run_id"],
         created_at=state["created_at"],
@@ -340,7 +458,7 @@ def build_record(state: GraphState, catalog: Catalog) -> RunRecord:
         plan_final=plan.model_dump() if plan else None,
         plan_hash=current_plan_hash(state),
         edits=edits,
-        param_diff=param_changes(proposal, plan, edits) if plan else [],
+        param_diff=diff,
         validation=state.get("report"),
         approvals=state.get("approvals", []),
         datasets=dataset_versions(steps, catalog),
@@ -357,6 +475,9 @@ def build_record(state: GraphState, catalog: Catalog) -> RunRecord:
         plan_shown_at=state.get("plan_shown_at"),
         decision=state.get("decision"),
         decided_at=state.get("decided_at"),
+        revisions=revisions,
+        manual_edits=sum(revision.manual_changes for revision in revisions),
+        change_requests=max(len(revisions) - 1, 0),
     )
 
 
@@ -390,7 +511,23 @@ def _planning_failed(
 
 
 def request_check_node(state: GraphState, runtime: Runtime[GraphContext]) -> GraphState:
-    """Log the request and refuse it if it is too long (R01), before any LLM call."""
+    """Log the request and refuse it if it is too long (R01), before any LLM call.
+
+    A change request comes back through here: the request and the reviewer's comment
+    get the same check, so an oversized comment never reaches the planner either; it
+    is refused and the reviewer is asked again, the plan unchanged.
+    """
+    pending = state.get("revision_request")
+    if pending is not None:
+        too_long = check_request_length(state["request"]) + check_request_length(pending.comment)
+        if not too_long:
+            return {}
+        for issue in too_long:
+            _log(runtime, state, "validation_issue", details=_issue_details(issue))
+        error = "The change request was not sent to the planner: " + " ".join(
+            issue.message for issue in too_long
+        )
+        return {"revision_request": None, "review": "refused", "review_error": error}
     _log(
         runtime,
         state,
@@ -409,12 +546,45 @@ def request_check_node(state: GraphState, runtime: Runtime[GraphContext]) -> Gra
 
 
 def planner_node(state: GraphState, runtime: Runtime[GraphContext]) -> GraphState:
-    """Ask the planner for a plan and fill in the registry's defaults."""
+    """Ask the planner for a plan (or a revision of it) and fill in the registry's defaults.
+
+    Every call is recorded as a revision of the run: revision 0, then one per change
+    request. A revised plan replaces the previous one whole, so its approvals and any
+    refused edit are cleared: they belong to the previous plan.
+    """
     settings, catalog = runtime.context.settings, runtime.context.catalog
-    result = generate_plan(state["request"], state["dataset_ids"], state["mode"], settings, catalog)
+    revision = state.get("revision_request")
+    requested_at = utc_now() if revision is not None else None
+    result = generate_plan(
+        state["request"],
+        state["dataset_ids"],
+        state["mode"],
+        settings,
+        catalog,
+        runtime.context.client,
+        revision,
+    )
+    timings = state.get("timings_ms", {})
+    entry = PlanRevision(
+        revision=len(state.get("revisions", [])),
+        comment=revision.comment if revision is not None else None,
+        requested_at=requested_at,
+        planned_at=utc_now(),
+        plan=result.plan.model_dump() if result.plan else None,
+        plan_hash=plan_hash(fill_defaults(result.plan)) if result.plan else "",
+        planner_error=result.error,
+        from_cache=result.from_cache,
+        latency_ms=result.latency_ms,
+        usage=planning_usage(result),
+    )
     update: GraphState = {
         "plan_result": result,
-        "timings_ms": {**state.get("timings_ms", {}), "planning": result.latency_ms},
+        # The planning stage of the run: every planner call of it, added up.
+        "timings_ms": {**timings, "planning": timings.get("planning", 0.0) + result.latency_ms},
+        "revisions": [*state.get("revisions", []), entry],
+        "revision_request": None,
+        "approvals": [],
+        "edit_issues": [],
     }
     details = {
         "mode": result.mode,
@@ -432,7 +602,12 @@ def planner_node(state: GraphState, runtime: Runtime[GraphContext]) -> GraphStat
             latency_ms=result.latency_ms,
             details={**details, "error": result.error},
         )
-        return {**update, **_planning_failed(runtime, state, result.issues)}
+        failed = _planning_failed(runtime, state, result.issues)
+        # No plan to show or revise: a planner failure (V01) ends the run.
+        update["revisions"][-1] = entry.model_copy(
+            update={"validation": failed["report"], "status": "blocked"}
+        )
+        return {**update, **failed, "plan": None, "plan_original": None}
 
     _log(
         runtime,
@@ -444,7 +619,9 @@ def planner_node(state: GraphState, runtime: Runtime[GraphContext]) -> GraphStat
     )
     update["plan_original"] = result.plan
     update["plan"] = fill_defaults(result.plan)
-    if not result.plan.cannot_fulfill:  # a refusal (P01) is not a plan to review
+    # The first plan shown starts the approval time; a refusal (P01) is not a plan to
+    # review, and a revision does not restart the clock.
+    if not result.plan.cannot_fulfill and not state.get("plan_shown_at"):
         update["plan_shown_at"] = utc_now()
     return update
 
@@ -472,16 +649,22 @@ def validator_node(state: GraphState, runtime: Runtime[GraphContext]) -> GraphSt
         report = ValidationReport(issues=refused + report.issues, dry_run=report.dry_run)
         for issue in refused:
             _log(runtime, state, "validation_issue", details=_issue_details(issue))
+    status = "blocked" if report.is_blocked else "ready"
     update: GraphState = {
         "report": report,
         "edit_issues": [],
-        "status": "blocked" if report.is_blocked else "ready",
+        "status": status,
         "timings_ms": {**state.get("timings_ms", {}), "validation": latency},
     }
-    if update["status"] == "ready":
-        # Save the plan awaiting a decision straight away, as Session.validate does,
-        # so a run paused at the approval interrupt is on record too. A blocked run
-        # is saved by the recorder, which logs its terminal event once.
+    revisions = state.get("revisions", [])
+    if revisions and revisions[-1].validation is None:
+        # A new proposal's first validation is its outcome in the revision history.
+        latest = revisions[-1].model_copy(update={"validation": report, "status": status})
+        update["revisions"] = [*revisions[:-1], latest]
+    if status == "ready" or after_validation({**state, **update}) == "approval":
+        # Save a plan awaiting a decision straight away, as Session.validate does, so a
+        # run paused for review is on record too (a blocked one with its terminal
+        # event). A run that ends here blocked is saved by the recorder, once.
         _, path = _save(runtime, {**state, **update})
         update["manifest_path"] = str(path)
     return update
@@ -491,9 +674,12 @@ def review_request(state: GraphState) -> dict[str, Any]:
     """The approval interrupt's payload: what the reviewer is asked to decide on."""
     return {
         "run_id": state["run_id"],
+        "status": state["status"],
+        "revision": revision_number(state),
         "plan_hash": current_plan_hash(state),
         "plan": describe_plan(state["plan"]),
         "error": state.get("review_error"),
+        "change_request": change_request_refusal(state) or "available",
         "open_approvals": [
             {"issue_id": i.issue_id, "code": i.code, "step_id": i.step_id, "message": i.message}
             for i in unresolved_approvals(state)
@@ -502,7 +688,8 @@ def review_request(state: GraphState) -> dict[str, Any]:
 
 
 def approval_node(state: GraphState, runtime: Runtime[GraphContext]) -> GraphState:
-    """Pause for the reviewer, then apply their decision: approve, edit or reject.
+    """Pause for the reviewer, then apply their decision: approve, edit, reject or
+    request changes.
 
     LangGraph runs this node again from the top when the run resumes, so the
     interrupt comes before any side effect (an event logged earlier would be
@@ -510,11 +697,18 @@ def approval_node(state: GraphState, runtime: Runtime[GraphContext]) -> GraphSta
     an answer that does not fit it raises pydantic's ValidationError, and the
     same interrupt can be answered again.
 
-    An approval of an issue that is not open is refused without raising: once
-    a node fails after its interrupt, LangGraph replays the same answer on every
-    resume, so the run could never go on. The node asks again instead.
+    An answer that cannot be applied (an issue that is not open, an execution while
+    the plan is blocked, a change request outside live mode or past the cap...) is
+    refused without raising: once a node fails after its interrupt, LangGraph replays
+    the same answer on every resume, so the run could never go on. The node asks
+    again instead, with the reason.
     """
     decision = interrupt(review_request(state), response_schema=ReviewDecision)
+    if decision.action == "request_changes":
+        return _request_changes(state, decision.comment)
+    if decision.action == "reject" and state["plan"].cannot_fulfill:
+        # As Session.reject: a refusal (P01) is not a plan to decide on.
+        return {"review": "refused", "review_error": "There is no plan to reject."}
     if decision.action == "reject":
         decided_at = utc_now()
         _log(runtime, state, "plan_rejected", details={"plan_hash": current_plan_hash(state)})
@@ -535,6 +729,15 @@ def approval_node(state: GraphState, runtime: Runtime[GraphContext]) -> GraphSta
     if unknown:
         error = f"{', '.join(map(repr, unknown))}: not an open approval issue"
         return {"review": "refused", "review_error": error}
+    if state.get("interactive"):
+        # A person's Execute: refused, as Session.execute is, while the plan is blocked
+        # or an approval is missing; nothing is recorded, the reviewer is asked again.
+        missing = [i.issue_id for i in open_issues.values() if i.issue_id not in issue_ids]
+        reason = refusal_reason(state) if state["report"].is_blocked else ""
+        if missing and not reason:
+            reason = "Approval required for: " + ", ".join(missing)
+        if reason:
+            return {"review": "refused", "review_error": reason}
     approvals = list(state.get("approvals", []))
     for issue_id in issue_ids:
         issue = open_issues[issue_id]
@@ -562,6 +765,34 @@ def approval_node(state: GraphState, runtime: Runtime[GraphContext]) -> GraphSta
     return update
 
 
+def _request_changes(state: GraphState, comment: str) -> GraphState:
+    """Accept a change request (the request check and the planner come next), or refuse it.
+
+    The revision being left keeps how many parameters the reviewer had changed in it.
+    The planner gets the plan as the reviewer saw it (edits applied), its hash, the
+    findings on it (codes and messages, never data) and the comment.
+    """
+    reason = change_request_refusal(state)
+    if not reason and not comment.strip():
+        reason = "Write what should change first."
+    if reason:
+        return {"review": "refused", "review_error": reason}
+    revisions = list(state["revisions"])
+    revisions[-1] = revisions[-1].model_copy(update={"manual_changes": _manual_changes(state)})
+    pending = RevisionRequest(
+        previous_plan=state["plan"],
+        previous_plan_hash=current_plan_hash(state),
+        issues=state["report"].issues,
+        comment=comment,
+    )
+    return {
+        "review": "changes_requested",
+        "review_error": None,
+        "revisions": revisions,
+        "revision_request": pending,
+    }
+
+
 def _apply_edits(state: GraphState, edits: Any) -> GraphState:
     """Change parameter VALUES on a copy of the plan; the validator judges the result.
 
@@ -584,7 +815,14 @@ def _apply_edits(state: GraphState, edits: Any) -> GraphState:
                 continue
             steps[step_id].params[name] = value
             changes.append(
-                ParamEdit(step_id=step_id, param=name, old=old, new=value, edited_at=utc_now())
+                ParamEdit(
+                    step_id=step_id,
+                    param=name,
+                    old=old,
+                    new=value,
+                    edited_at=utc_now(),
+                    revision=revision_number(state),
+                )
             )
     if not changes:
         return {"review": "edited"}
@@ -670,6 +908,7 @@ def narrator_node(state: GraphState, runtime: Runtime[GraphContext]) -> GraphSta
         runtime.context.settings,
         extra_texts=[entry.title for entry in used],
         dataset_notes=quotes,
+        client=runtime.context.client,
         data_sha256={entry.dataset_id: entry.sha256 for entry in used},
     )
     withheld = narrative.withheld
@@ -709,18 +948,31 @@ def recorder_node(state: GraphState, runtime: Runtime[GraphContext]) -> GraphSta
 
 
 def after_request_check(state: GraphState) -> str:
-    """R01 ends the run; any other request goes to the planner."""
+    """An accepted change request goes to the planner, a refused one back to the
+    reviewer; R01 on the request ends the run; any other request goes to the planner."""
+    if state.get("revision_request") is not None:
+        return "planner"
+    if state.get("review") == "refused":
+        return "approval"
     return "recorder" if state.get("status") == "blocked" else "planner"
 
 
 def after_planner(state: GraphState) -> str:
-    """No plan at all (V01) ends the run; a plan or a refusal (P01) is validated."""
+    """No plan at all (V01, at any revision) ends the run; a plan or a refusal (P01) is
+    validated."""
     return "validator" if state.get("plan") is not None else "recorder"
 
 
 def after_validation(state: GraphState) -> str:
-    """A BLOCK ends the run; open APPROVE issues pause it; a clean plan runs."""
-    if state["report"].is_blocked:
+    """A plan rejected as a whole (V01, V02) ends the run. A person reviews every other
+    plan, blocked or not; headless, a BLOCK ends the run, open APPROVE issues pause it
+    and a clean plan runs."""
+    report = state["report"]
+    if report.is_rejected:
+        return "recorder"
+    if state.get("interactive"):
+        return "approval"
+    if report.is_blocked:
         return "recorder"
     if unresolved_approvals(state):
         return "approval"
@@ -728,10 +980,13 @@ def after_validation(state: GraphState) -> str:
 
 
 def after_review(state: GraphState) -> str:
-    """An edit is validated again; full approval runs the plan; a refused answer asks
-    again; a rejection, or approval not given for every issue, ends the run."""
+    """An edit is validated again; a change request goes through the request check to
+    the planner; full approval runs the plan; a refused answer asks again; a rejection,
+    or (headless) approval not given for every issue, ends the run."""
     if state["review"] == "edited":
         return "validator"
+    if state["review"] == "changes_requested":
+        return "request_check"
     if state["review"] == "approved":
         return "executor"
     if state["review"] == "refused":
@@ -777,13 +1032,17 @@ def build_graph(checkpointer: InMemorySaver | None = None) -> CompiledStateGraph
     builder.add_node("recorder", recorder_node)
 
     builder.add_edge(START, "request_check")
-    builder.add_conditional_edges("request_check", after_request_check, ["planner", "recorder"])
     builder.add_conditional_edges("planner", after_planner, ["validator", "recorder"])
     builder.add_conditional_edges(
         "validator", after_validation, ["approval", "executor", "recorder"]
     )
     builder.add_conditional_edges(
-        "approval", after_review, ["validator", "executor", "approval", "recorder"]
+        "approval",
+        after_review,
+        ["validator", "request_check", "executor", "approval", "recorder"],
+    )
+    builder.add_conditional_edges(
+        "request_check", after_request_check, ["planner", "approval", "recorder"]
     )
     builder.add_conditional_edges("executor", after_execution, ["narrator", "recorder"])
     builder.add_edge("narrator", "recorder")
@@ -802,7 +1061,7 @@ class GraphRun:
 
     Fields:
         config: the checkpointer config of the run (its thread id is the run id).
-        context: settings and catalog, passed to the graph again on resume.
+        context: settings, catalog and LLM client, passed to the graph again on resume.
         state: the run's state so far.
         paused_for: the approval interrupt's payload while paused, else None.
     """
@@ -827,6 +1086,7 @@ def start_run(
     settings: Settings,
     mode: str = "mock",
     interactive: bool = False,
+    client: Any = None,
 ) -> GraphRun:
     """Start a run: it goes as far as it can, then ends or pauses at the approval interrupt.
 
@@ -835,18 +1095,19 @@ def start_run(
         request: the user's request.
         dataset_ids: datasets selected by the user.
         settings: settings in force.
-        mode: LLM mode; the prototype accepts only "mock".
-        interactive: True when a person reviews the plan.
+        mode: LLM mode: "mock" (the default), "live" or "cached"; change requests
+            need "live".
+        interactive: True when a person reviews the plan (the Analysis page).
+        client: optional OpenAI or Anthropic client (tests inject a fake one).
 
     Returns:
         The GraphRun; `paused_for` is set while the run waits for a review.
 
     Raises:
-        ValueError: for any mode other than mock.
+        ValueError: for an unknown mode.
     """
-    if mode != "mock":
-        # The prototype runs offline: it never calls an LLM API.
-        raise ValueError(f"the LangGraph prototype runs in mock mode only, not {mode!r}")
+    if mode not in LLM_MODES:
+        raise ValueError(f"unknown LLM mode {mode!r}; expected one of {LLM_MODES}")
     run_id = new_run_id()
     state: GraphState = {
         "request": request,
@@ -857,7 +1118,8 @@ def start_run(
         "interactive": interactive,
         "status": "planned",
     }
-    context = GraphContext(settings=settings, catalog=load_catalog(settings.catalog_path))
+    catalog = load_catalog(settings.catalog_path)
+    context = GraphContext(settings=settings, catalog=catalog, client=client)
     run = GraphRun(config={"configurable": {"thread_id": run_id}}, context=context)
     return _invoke(graph, run, state)
 
@@ -872,7 +1134,8 @@ def resume_run(graph: CompiledStateGraph, run: GraphRun, decision: dict[str, Any
             {"action": "approve", "issue_ids": ["V10:s3:return_method"]}.
 
     Returns:
-        The GraphRun after the decision: finished, or paused again (after an edit).
+        The GraphRun after the decision: finished, or paused again (after an edit, a
+        change request or a refused answer).
     """
     return _invoke(graph, run, Command(resume=decision))
 

@@ -308,6 +308,36 @@ def volatility_plan() -> dict[str, Any]:
     return copy.deepcopy(VOLATILITY_PLAN)
 
 
+# The example change request, kept as a test fixture (the app and mock mode know only
+# the five examples): example 2's reviewer asks the planner to "resample both series to
+# weekly". The revised plan is example 2's with the 2-year yield resampled to weekly as
+# well (s4), so the spread (s5) has two weekly inputs: no V08. The full-sample threshold
+# the request asks for stays, so the look-ahead approval (V09, on s6) remains.
+CHANGE_REQUEST_COMMENT = "resample both series to weekly"
+
+
+def spread_weekly_plan() -> dict[str, Any]:
+    """The revised plan a (fake) planner returns for example 2 after the change request."""
+    steps = raw_plan("spread_frequency_mismatch_block")["steps"]
+    weekly_2y = {
+        "id": "s4",
+        "capability": "resample",
+        "inputs": {"series": "s3"},
+        "params": {"freq": "W", "how": "last"},
+        "rationale": "Weekly (Friday) 2-year yield, as the reviewer asked.",
+    }
+    spread, flags = steps[3], steps[4]
+    spread.update(id="s5", inputs={"a": "s2", "b": "s4"})
+    flags.update(id="s6", inputs={"series": "s5"})
+    return {
+        "dataset_ids": ["DGS10", "DGS2"],
+        "steps": [*steps[:3], weekly_2y, spread, flags],
+        "cannot_fulfill": False,
+        "refusal_reason": None,
+        "planner_notes": "Both yields are resampled to weekly, as the reviewer asked.",
+    }
+
+
 def as_plan(raw: dict[str, Any], request: str = "test request") -> Plan:
     """Turn a plan dict into a Plan with defaults filled in, as the engine does."""
     return fill_defaults(Plan(plan_id="p-test", request=request, **copy.deepcopy(raw)))

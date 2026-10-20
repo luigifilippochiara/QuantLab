@@ -248,6 +248,13 @@ def print_trace(result: TraceResult) -> None:
         print(f"  {source.dataset_id} (FRED {source.fred_id}) sha256 {source.sha256}")
         print(f"    retrieved {source.retrieved_at}, used {source.start}..{source.end}, "
               f"{source.rows_used} rows")  # fmt: skip
+    if len(result.revisions) > 1:
+        # How the final plan came about; only the final plan ran, and is traced above.
+        print("\nRevision history:")
+        for r in result.revisions:
+            codes = ",".join(r.validation.codes()) if r.validation else ""
+            print(f"  {r.revision} {r.plan_hash[:12] or '-'} {r.status}: {codes or 'no issues'}"
+                  f"  comment: {r.comment or '(first proposal)'}")  # fmt: skip
 
 
 def cmd_trace(args: argparse.Namespace, settings: Settings) -> int:

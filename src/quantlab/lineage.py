@@ -3,9 +3,10 @@
 Role in the architecture: every run is saved as runs/<run_id>/manifest.json
 plus one output file per step (CSV for series and flags, JSON for tables).
 The manifest records everything needed to explain and reproduce the result:
-the request, what the LLM proposed, what the user changed and approved, the
-exact data versions (file hashes), the library versions, the registry version,
-and a hash of every step's output.
+the request, what the LLM proposed (every revision the reviewer asked for, under
+the one run id), what the user changed and approved, the exact data versions
+(file hashes), the library versions, the registry version, and a hash of every
+step's output.
 
 - `replay(run_id)` re-runs the final plan WITHOUT any LLM, using the recorded
   approvals, after checking the data files still have the recorded hashes, and
@@ -127,6 +128,7 @@ class ParamEdit(BaseModel):
         old: value before the edit.
         new: value after the edit.
         edited_at: UTC timestamp.
+        revision: the plan revision edited (0: the planner's first proposal).
     """
 
     step_id: str
@@ -134,6 +136,7 @@ class ParamEdit(BaseModel):
     old: Any
     new: Any
     edited_at: str
+    revision: int = 0
 
 
 class ParamChange(BaseModel):
@@ -154,6 +157,42 @@ class ParamChange(BaseModel):
     edited_at: str
 
 
+class PlanRevision(BaseModel):
+    """One round of planning in a run: the first proposal, or a revision the reviewer asked for.
+
+    Fields:
+        revision: 0 for the planner's first proposal, then 1, 2, ... for each change request.
+        comment: the reviewer's change request (None for revision 0).
+        requested_at: when the change was requested (None for revision 0).
+        planned_at: when the planner returned this revision (every revision has one).
+        plan: the plan as the planner returned it (None if the planner failed).
+        plan_hash: version hash of that plan with defaults filled in: the plan validated.
+        validation: the first validation of that plan, before any parameter edit (None
+            only until the validator has run).
+        status: "ready" (awaiting a decision) or "blocked", after that validation.
+        planner_error: the planner's error, if it produced no usable plan.
+        from_cache: True if the plan came from the plan cache.
+        latency_ms: planner latency.
+        usage: the tokens of this planner call (see planner.planning_usage).
+        manual_changes: parameters the reviewer had changed from this proposal when the
+            revision was left (by a change request, or by the end of the run for the last).
+    """
+
+    revision: int
+    comment: str | None = None
+    requested_at: str | None = None
+    planned_at: str
+    plan: dict[str, Any] | None = None
+    plan_hash: str = ""
+    validation: ValidationReport | None = None
+    status: str = "planned"
+    planner_error: str | None = None
+    from_cache: bool = False
+    latency_ms: float = 0.0
+    usage: TokenUsage = Field(default_factory=TokenUsage)
+    manual_changes: int = 0
+
+
 class RunRecord(BaseModel):
     """The manifest of one run (saved as runs/<run_id>/manifest.json).
 
@@ -164,12 +203,14 @@ class RunRecord(BaseModel):
             completed | failed.
         request: the user's request.
         dataset_ids: datasets selected by the user.
-        llm: how the plan was produced.
-        plan_original: the plan exactly as the planner returned it.
+        llm: how the plan was produced (the last planner call of the run).
+        plan_original: the plan exactly as the planner returned it (the last revision).
         plan_final: the plan that was validated / executed (defaults filled, user edits applied).
         plan_hash: version hash of plan_final (approvals store the hash they were given for).
-        edits: every parameter edit, in order (including edits later undone).
-        param_diff: planner-proposed vs final value of each user-edited parameter.
+        edits: every parameter edit, in order (including edits later undone), in every
+            revision.
+        param_diff: planner-proposed vs final value of each user-edited parameter (of the
+            last revision).
         validation: the final static validation report.
         approvals: approvals granted, with timestamps.
         datasets: exact dataset versions used.
@@ -192,10 +233,17 @@ class RunRecord(BaseModel):
         decision: "approved" (the plan was executed) or "rejected"; None while no
             decision has been made (a plan left undecided is abandoned).
         decided_at: when the decision was made.
+        revisions: every round of planning, in order: revision 0, then one per change
+            request (empty in records made before change requests existed, and in
+            records saved by engine.Session, which has no change requests).
+        manual_edits: parameters the reviewer changed by hand, summed over revisions
+            (each revision's manual_changes); None where revisions is empty (the
+            Monitoring page then reads param_diff).
+        change_requests: how many times the reviewer asked the planner for changes.
 
-    The last five fields were added for the Monitoring page; records made before
-    them load with their defaults, and the metrics that need them leave those
-    records out.
+    The fields from interactive on were added for the Monitoring page; records made
+    before them load with their defaults, and the metrics that need them leave those
+    records out (or, for the last three, read the older fields).
     """
 
     run_id: str
@@ -225,6 +273,9 @@ class RunRecord(BaseModel):
     plan_shown_at: str | None = None
     decision: str | None = None
     decided_at: str | None = None
+    revisions: list[PlanRevision] = Field(default_factory=list)
+    manual_edits: int | None = None
+    change_requests: int = 0
 
 
 # ---------------------------------------------------------------------------
@@ -631,12 +682,16 @@ class TraceResult(BaseModel):
         step_id: the step traced.
         chain: the step and all its ancestors, from the step back to the loads.
         sources: the dataset versions at the root of the chain.
+        revisions: the run's rounds of planning (the record's revisions), for the
+            history of how the final plan came about; the chain always traces the
+            final executed plan.
     """
 
     run_id: str
     step_id: str
     chain: list[TraceStep]
     sources: list[DatasetVersion]
+    revisions: list[PlanRevision] = Field(default_factory=list)
 
 
 def trace(record: RunRecord, step_id: str) -> TraceResult:
@@ -690,4 +745,10 @@ def trace(record: RunRecord, step_id: str) -> TraceResult:
     ]
     loaded = {step.params["dataset_id"] for step in ordered if step.capability == "load_series"}
     sources = [version for version in record.datasets if version.dataset_id in loaded]
-    return TraceResult(run_id=record.run_id, step_id=step_id, chain=chain, sources=sources)
+    return TraceResult(
+        run_id=record.run_id,
+        step_id=step_id,
+        chain=chain,
+        sources=sources,
+        revisions=record.revisions,
+    )

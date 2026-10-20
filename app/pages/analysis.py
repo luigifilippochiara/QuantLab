@@ -1,17 +1,34 @@
 """Analysis page: request -> plan -> validate -> edit/approve -> execute -> narrate -> trace.
 
-All state lives in st.session_state.session (a quantlab.engine.Session). Each
-button calls one engine method; the page then redraws from the session's state.
+All state lives in st.session_state.run (a quantlab.graph.GraphRun), whose run
+waits at the graph's approval interrupt while the reviewer decides. Each button
+resumes it with one decision (edit, execute, reject or request changes); the page
+then redraws from the run's state. The graph and its in-memory checkpointer, one
+per browser session, are st.session_state.graph.
 """
+
+from pathlib import Path
+from typing import Any
 
 import labels
 import pandas as pd
 import streamlit as st
 
 from quantlab.config import LLM_MODES
-from quantlab.engine import Session
+from quantlab.graph import (
+    MAX_CHANGE_REQUESTS,
+    GraphRun,
+    build_graph,
+    change_request_refusal,
+    current_plan_hash,
+    reset_edits,
+    resume_run,
+    revision_number,
+    start_run,
+)
+from quantlab.graph import proposal as current_proposal
 from quantlab.guardrails import ENFORCERS, Action
-from quantlab.lineage import replay
+from quantlab.lineage import replay, trace
 from quantlab.mock_scenarios import SCENARIOS, match_scenario
 from quantlab.registry import REGISTRY
 
@@ -42,6 +59,10 @@ catalog = ui.get_catalog(settings)
 
 for key, default in {**ui.analysis_defaults(), "llm_mode": settings.llm_mode}.items():
     st.session_state.setdefault(key, default)
+# One graph per browser session: its checkpointer holds the runs waiting for a decision.
+if st.session_state.get("graph") is None:
+    st.session_state.graph = build_graph()
+graph = st.session_state.graph
 
 # ---------------------------------------------------------------- sidebar
 
@@ -120,35 +141,51 @@ with st.container(horizontal=True, horizontal_alignment="distribute"):
     )
 if generate:
     with st.spinner("Planning..."):
-        session = Session.start(request, datasets, mode, settings, interactive=True)
-        session.create_plan()
-    st.session_state.session = session
+        st.session_state.run = start_run(graph, request, datasets, settings, mode, True)
     st.session_state.replay_report = None
 
-session: Session | None = st.session_state.session
-if session is None:
+run: GraphRun | None = st.session_state.run
+if run is None:
     hint = "Type a request, then generate a plan."
     if mode == "mock":
         hint = "Type a request or pick an example workflow in the sidebar, then generate a plan."
     st.info(hint, icon=":material/lightbulb:")
     st.stop()
+state = run.state
+
+
+def decide(decision: dict[str, Any], done: str | None = None) -> None:
+    """Resume the waiting run with the reviewer's decision, then redraw the page.
+
+    The graph refuses an answer it cannot apply (e.g. an execution while an approval is
+    missing) and waits again: its reason is shown, otherwise `done`.
+    """
+    resumed = resume_run(graph, run, decision)
+    st.session_state.run = resumed
+    refused = resumed.paused_for["error"] if resumed.paused_for else None
+    st.session_state.flash = refused or done
+    st.rerun()
+
 
 # ---------------------------------------------------------------- plan
 
 st.divider()
-st.markdown(f"Run `{session.run_id}` · {ui.STATUS_BADGE.get(session.status, session.status)}")
-plan = session.plan
-result = session.plan_result
+st.markdown(f"Run `{state['run_id']}` · {ui.STATUS_BADGE.get(state['status'], state['status'])}")
+plan = state.get("plan")
+result = state.get("plan_result")
+report = state.get("report")
+plan_hash = current_plan_hash(state)
+approvals = state.get("approvals", [])
 # A completed or rejected run is final: its plan can no longer change.
-finished = session.status in ("completed", "rejected")
+finished = state["status"] in ("completed", "rejected")
 # A plan rejected as a whole (a terminal block: V01, V02) is shown read only: no
-# editing, approving or executing, and no Reject button (the validator already
-# rejected it). Only a new request goes on.
-rejected = session.report is not None and session.report.is_rejected
+# editing, approving or executing, no Reject button (the validator already rejected
+# it) and no change request: the graph ended the run. Only a new request goes on.
+rejected = report is not None and report.is_rejected
 # The request check (R01) runs before the planner, and the planner's refusal (P01)
 # before the validator: neither is a validation finding, so each is shown where its
 # stage is (R01 above the plan, P01 in the Plan section), never under Validation.
-stage_issues = session.report.issues if session.report else []
+stage_issues = report.issues if report else []
 request_issues = [i for i in stage_issues if i.enforced_by == ENFORCERS["R"]]
 refusal_issues = [i for i in stage_issues if i.enforced_by == ENFORCERS["P"]]
 # step id -> {param: value} for widget values that differ from the plan: changes
@@ -169,9 +206,13 @@ if request_issues:
     st.stop()
 
 st.subheader("Plan")
+revisions = state.get("revisions", [])
+if revision_number(state) > 0:
+    # A revision the reviewer asked for: its number, the comment, and what changed.
+    ui.render_revision(revisions[-2], revisions[-1], MAX_CHANGE_REQUESTS)
 # A canned plan that simulates a planner behaviour (e.g. one that follows an
 # injection) says so, so it is never mistaken for what a real model produced.
-simulated = match_scenario(session.request) if session.mode == "mock" else None
+simulated = match_scenario(state["request"]) if state["mode"] == "mock" else None
 if simulated is not None and simulated.note:
     st.warning(simulated.note, icon=":material/smart_toy:")
 if plan is None:
@@ -183,7 +224,7 @@ elif plan.cannot_fulfill:
             ui.render_issue(issue)
 else:
     if rejected:
-        ui.render_rejection(session.report, plan)
+        ui.render_rejection(report, plan)
     else:
         st.info(
             "You can adjust parameters below. Every change is re-checked against the same "
@@ -191,13 +232,13 @@ else:
             icon=":material/tune:",
         )
     if finished:
-        st.caption(f"This run is {session.status}; generate a new plan to change it.")
-    proposal = {step.id: step.params for step in session.proposal.steps}
-    dry_run = session.report.dry_run if session.report else {}
+        st.caption(f"This run is {state['status']}; generate a new plan to change it.")
+    proposal = {step.id: step.params for step in current_proposal(state).steps}
+    dry_run = report.dry_run if report else {}
     # Widget keys include the plan version, so after an edit is applied (or reset)
     # every widget starts again from the plan's current values.
-    version = session.plan_hash[:12]
-    issues = session.report.issues if session.report else []
+    version = plan_hash[:12]
+    issues = report.issues if report else []
     for position, step in enumerate(plan.steps, start=1):
         spec = REGISTRY.get(step.capability)
         # BLOCK and WARN findings badge and open a step; approval findings do not
@@ -220,7 +261,7 @@ else:
         with st.expander(
             ui.step_header(position, step, summary, actions, step_edited),
             expanded=bool(actions),
-            key=f"step-{session.run_id}-{version}-{step.id}",
+            key=f"step-{state['run_id']}-{version}-{step.id}",
         ):
             inputs = ", ".join(f"{name} ← {ref}" for name, ref in step.inputs.items())
             predicted = dry_run.get(step.id)
@@ -250,7 +291,7 @@ else:
                     value = ui.param_widget(
                         spec_param,
                         current,
-                        f"param-{session.run_id}-{version}-{step.id}-{spec_param.name}",
+                        f"param-{state['run_id']}-{version}-{step.id}-{spec_param.name}",
                         catalog,
                         disabled=finished,
                         capability=step.capability,
@@ -291,10 +332,10 @@ else:
             width="stretch",
         ):
             if pending:
-                session.apply_param_edits(pending)
-                st.session_state.flash = (
+                decide(
+                    {"action": "edit", "edits": pending},
                     "Changes applied and re-validated. Approvals were reset: they belong to the "
-                    "previous plan version, so approve this one again."
+                    "previous plan version, so approve this one again.",
                 )
             else:
                 st.session_state.flash = "No changes to apply: edit a parameter above first."
@@ -305,9 +346,10 @@ else:
             disabled=finished or not edited,
             width="stretch",
         ):
-            session.reset_to_proposal()
-            st.session_state.flash = "Back to the planner's proposal; approvals were reset."
-            st.rerun()
+            decide(
+                {"action": "edit", "edits": reset_edits(state)},
+                "Back to the planner's proposal; approvals were reset.",
+            )
 
 if plan is not None and plan.planner_notes:
     st.caption(
@@ -315,8 +357,19 @@ if plan is not None and plan.planner_notes:
     )
 
 if plan is not None and plan.cannot_fulfill:
-    # A refusal never reaches the validator: no Validation section, nothing to decide.
-    st.caption("Nothing was executed. Write a new request to continue.")
+    # A refusal never reaches the validator: no Validation section and nothing to
+    # execute or reject, but the reviewer may ask the planner to change its answer.
+    if st.session_state.get("flash"):  # e.g. a change request the graph refused
+        st.info(st.session_state.flash, icon=":material/info:")
+        st.session_state.flash = None
+    area = st.container()
+    comment = ui.render_change_request(state, area, area, bool(pending))
+    if comment is not None:
+        decide({"action": "request_changes", "comment": comment})
+    if change_request_refusal(state):
+        st.caption("Nothing was executed. Write a new request to continue.")
+    else:
+        st.caption("Nothing was executed. Request changes above, or write a new request.")
     st.stop()
 
 # ---------------------------------------------------------------- validation
@@ -325,7 +378,6 @@ st.subheader("Validation")
 if st.session_state.get("flash"):
     st.info(st.session_state.flash, icon=":material/info:")
     st.session_state.flash = None
-report = session.report
 ticked: list[str] = []
 if report is not None:
     if not report.issues:
@@ -340,13 +392,13 @@ if report is not None:
                     # Keyed by plan version: an edited plan starts with every box unticked.
                     is_ticked = st.checkbox(
                         "I approve this",
-                        key=f"approve-{session.run_id}-{session.plan_hash[:12]}-{issue.issue_id}",
-                        value=any(a.issue_id == issue.issue_id for a in session.approvals),
+                        key=f"approve-{state['run_id']}-{plan_hash[:12]}-{issue.issue_id}",
+                        value=any(a.issue_id == issue.issue_id for a in approvals),
                         disabled=finished,
                     )
                     if is_ticked:
                         ticked.append(issue.issue_id)
-    for approval in session.approvals:
+    for approval in approvals:
         st.caption(
             f"Approved {approval.issue_id} at {approval.approved_at} by {approval.approved_by} "
             f"for plan version {approval.plan_hash[:12]}"
@@ -371,10 +423,19 @@ elif blocking:
     reason = f"Resolve {len(blocking)} blocking issue{'' if len(blocking) == 1 else 's'} first."
 elif unticked:
     reason = f"Resolve {len(unticked)} approval{'' if len(unticked) == 1 else 's'} to continue."
-already_approved = {a.issue_id for a in session.approvals}
 # Rejecting is the reviewer's other decision; a missing plan has nothing to reject.
 can_reject = not finished and plan is not None
-execute_col, reject_col = st.columns(2)
+# Request changes sits between them while the run has change requests left: after the
+# last one, only Execute (when allowed) and Reject remain.
+offer_changes = not finished and revision_number(state) < MAX_CHANGE_REQUESTS
+if offer_changes:
+    comment_box = st.container()  # the comment above the row, its button in the middle
+    execute_col, change_col, reject_col = st.columns(3)
+    comment = ui.render_change_request(state, comment_box, change_col, bool(pending))
+    if comment is not None:
+        decide({"action": "request_changes", "comment": comment})
+else:
+    execute_col, reject_col = st.columns(2)
 if execute_col.button(
     "Execute",
     key="execute",
@@ -383,13 +444,8 @@ if execute_col.button(
     disabled=finished or bool(reason),
     width="stretch",
 ):
-    session.approve([issue_id for issue_id in ticked if issue_id not in already_approved])
     with st.spinner("Executing and writing the narrative..."):
-        session.execute()
-        if session.status == "completed":
-            session.narrate()
-            session.save_record()
-    st.rerun()
+        decide({"action": "approve", "issue_ids": ticked})
 if reject_col.button(
     "Reject plan",
     key="reject-plan",
@@ -397,31 +453,30 @@ if reject_col.button(
     disabled=not can_reject,
     width="stretch",
 ):
-    session.reject()
-    st.rerun()
+    decide({"action": "reject"})
 if reason:
     st.caption(reason)
-if session.status == "rejected":
+if state["status"] == "rejected":
     st.info("You rejected this plan: nothing was run. Generate a new plan to start again.",
             icon=":material/block:")  # fmt: skip
 
 # ---------------------------------------------------------------- results
 
-execution = session.execution
-if execution is None:
+step_records = state.get("steps")
+if step_records is None:  # not executed
     st.stop()
 
 st.subheader("Results")
-if execution.error:
-    st.error(ui.escape_md(execution.error), title=f"Execution {execution.status}")
-artifacts = execution.artifacts
+if state.get("execution_error"):
+    st.error(ui.escape_md(state["execution_error"]), title=f"Execution {state['status']}")
+artifacts = state.get("artifacts", {})
 # flag_regime step id -> the series its flags were computed from: the regime chart is
 # drawn in the flag_regime step's section, which opens; the series' own step does not.
 regimes = ui.regime_charts(plan.steps, artifacts)
 flagged_series = set(regimes.values())
 # Step id -> capability: to title the regime chart and label each fact by its step.
 capabilities = {step.id: step.capability for step in plan.steps}
-records = {record.step_id: record for record in execution.step_records}
+records = {record.step_id: record for record in step_records}
 for step in plan.steps:
     record = records.get(step.id)
     if record is None:
@@ -455,7 +510,7 @@ for step in plan.steps:
 
 # ---------------------------------------------------------------- narrative
 
-narrative = session.narrative
+narrative = state.get("narrative")
 if narrative is not None:
     st.subheader("Narrative")
     # N01 UNGROUNDED_NARRATIVE: an LLM narrative quoting a number the run did not
@@ -521,22 +576,25 @@ if executed:
             f"{s} · {ui.capability_label(records[s].capability, records[s].capability_code)}"
         ),
     )
-    ui.render_trace(session.trace(chosen_step), catalog)
+    # The recorder saved the record when the run ended: the trace reads it, and its
+    # revision history, while the lineage always walks the final executed plan.
+    ui.render_trace(trace(state["record"], chosen_step), catalog)
 
 # ---------------------------------------------------------------- run record
 
-if session.manifest_path is not None:
+if state.get("manifest_path"):
+    manifest_path = Path(state["manifest_path"])
     st.subheader("Run record")
-    st.markdown(f"Manifest: `{session.manifest_path}`")
+    st.markdown(f"Manifest: `{manifest_path}`")
     left, right = st.columns(2)
     left.download_button(
         "Download manifest",
-        session.manifest_path.read_bytes(),
-        file_name=f"{session.run_id}-manifest.json",
+        manifest_path.read_bytes(),
+        file_name=f"{state['run_id']}-manifest.json",
         mime="application/json",
         icon=":material/download:",
     )
     if right.button("Replay this run (no LLM)", icon=":material/replay:"):
-        st.session_state.replay_report = replay(session.run_id, settings)
+        st.session_state.replay_report = replay(state["run_id"], settings)
     if st.session_state.replay_report is not None:
         ui.render_replay(st.session_state.replay_report, catalog)

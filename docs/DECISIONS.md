@@ -2277,3 +2277,52 @@ facts, narrative, error) and the same events as `run_request`.
   `langgraph-sdk`; Streamlit accepts it).
 - **Alternative:** keep `Session` alone (the main branch). The comparison is recorded
   when the branch is reviewed.
+
+
+## Request changes: the reviewer sends the plan back to the planner (QuantLab_LangGraph)
+
+**What.** At review, besides Execute and Reject, the reviewer can write a comment and
+click Request changes. The graph's approval interrupt takes it as a fourth answer
+(`request_changes`): the run goes back through the request check, the planner and the
+validator, then waits for the reviewer again. A run may ask `graph.MAX_CHANGE_REQUESTS`
+(3) times; after that, only Execute or Reject. Every revision stays in the one run
+record (`RunRecord.revisions`: comment, plan, plan hash, validation outcome,
+timestamps), under the one run id.
+- **Why through the planner.** Parameter edits cannot change a plan's structure (the
+  structure is locked, `check_edits`); a missing resample or a different step needs a
+  new plan, and only the planner writes plans. The planner gets the original request,
+  the plan the reviewer saw (edits applied), the guardrail findings as codes and
+  messages (never data values: a revision happens before anything runs), and the
+  comment, each in its own tag, all data (prompt rule 10). It returns a complete plan,
+  never a patch (rule 11), so there is no merge logic to get wrong. `planner-v8`; the
+  comment and the previous plan's hash are part of the cache key.
+- **Why every revision is re-validated.** A revised plan is a new LLM proposal, as
+  untrusted as the first. It goes through the full validator, the same function, and
+  approvals are cleared (they belong to the previous plan). The comment is untrusted
+  input too: it gets the request check (R01) before any planner call, and an
+  injection that fits the limits reaches the planner only as tagged data, where it is
+  refused (P01) or, if the planner complies, stopped by the validator (V02 ends the
+  run). No guardrail was added or changed.
+- **Why live mode only.** Mock mode has no canned revisions (the app shows exactly the
+  five examples; the change-request example is a test fixture with a fake planner),
+  and in cached mode a change request would silently become a live API call. The graph
+  refuses it in both (`change_request_refusal`), and `generate_plan` refuses a revision
+  outside live mode as a backstop; the button is disabled with "Available in live mode."
+  The first plan in cached mode is unchanged: cache hit, else one live call.
+- **Terminal blocks end the run.** V01 and V02 (a plan rejected as a whole, including a
+  planner failure at a revision) go to the recorder: no change request. A planner
+  refusal (P01) is not terminal: the reviewer can ask again.
+- **The Analysis page runs on the graph.** It holds a `GraphRun` (and one graph with its
+  in-memory checkpointer per browser session) instead of an `engine.Session`; every
+  button resumes the paused run with one decision. For a person reviewing
+  (interactive), every plan that is not rejected as a whole now pauses for review,
+  blocked or not, so a fixable block can be edited or sent back and a clean plan waits
+  for Execute, as with Session. Headless runs route as before, so `cli graph-demo` and
+  the parity tests are unchanged. `engine.py` is unchanged and still serves the CLI
+  `demo`/`run`, evaluation and notebooks; it has no change requests. A paused run lives
+  in the browser session's memory: a server restart loses it (its record, saved as
+  ready or blocked, stays).
+- **Alternatives.** A patch format for revisions (rejected: merge rules to validate);
+  the loop in `engine.Session` as well (rejected: the same logic twice); revisions in
+  mock mode with canned plans (rejected: the app's examples stay the five, and a canned
+  revision would hide what a real planner does with a comment).

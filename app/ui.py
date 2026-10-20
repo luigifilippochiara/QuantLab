@@ -10,6 +10,7 @@ white and dark (#0e1117): lightness, chroma, colour-blind separation and contras
 all pass, so the same two colours work in either theme without detecting it.
 """
 
+import difflib
 import html
 import json
 from typing import Any
@@ -32,8 +33,16 @@ from labels import (
 
 from quantlab.config import Settings, load_settings
 from quantlab.data import Catalog, load_catalog
-from quantlab.guardrails import ENFORCERS, GUARDRAILS, Action, Issue, ValidationReport
-from quantlab.lineage import ReplayReport, TraceResult
+from quantlab.graph import GraphState, change_request_refusal, revision_number
+from quantlab.guardrails import (
+    ENFORCERS,
+    GUARDRAILS,
+    Action,
+    Issue,
+    ValidationReport,
+    fill_defaults,
+)
+from quantlab.lineage import PlanRevision, ReplayReport, TraceResult
 from quantlab.mock_scenarios import SCENARIOS_BY_ID
 from quantlab.narrator import describe_quotes, format_number
 from quantlab.plan import Plan, Step
@@ -281,14 +290,14 @@ def unapplied_edits(plan: Plan, values: dict[str, dict[str, Any]]) -> dict[str, 
 def analysis_defaults() -> dict[str, Any]:
     """The Analysis page's state and its starting values (fresh objects on every call).
 
-    Everything the page shows comes from these keys: the session (plan, validation,
-    edits, approvals, results, narrative and trace), the request text box, the dataset
+    Everything the page shows comes from these keys: the run (plan, validation,
+    edits, approvals, revisions, results, narrative and trace), the request text box, the dataset
     selection, a replay report and a one-off message. The LLM mode is not among them:
     it is the selector that resets them. A new key added here is both initialised and
     reset (reset_analysis).
     """
     return {
-        "session": None,
+        "run": None,
         "request_text": "",
         "dataset_select": [],  # nothing preselected: the analyst picks the datasets
         "replay_report": None,
@@ -303,7 +312,7 @@ def reset_analysis() -> None:
     same mode (the mode is not among the reset keys). Streamlit runs a callback
     before the page redraws, so the text box and the dataset selection are already
     empty when they are drawn. The per-run widgets (step editors, approval boxes, the
-    trace picker) are not drawn without a session, so Streamlit drops their state, and
+    trace picker) are not drawn without a run, so Streamlit drops their state, and
     their keys hold the run id, so a new plan never reuses them. A run waiting for a
     decision keeps the record it has (status "ready"): it is left undecided.
     """
@@ -316,7 +325,7 @@ def load_scenario(scenario_id: str) -> None:
     scenario = SCENARIOS_BY_ID[scenario_id]
     st.session_state.request_text = scenario.request
     st.session_state.dataset_select = list(scenario.dataset_ids)
-    st.session_state.session = None
+    st.session_state.run = None
 
 
 # ---------------------------------------------------------------------------
@@ -701,6 +710,153 @@ def describe_params(
     )
 
 
+# ---------------------------------------------------------------------------
+# Change requests
+# ---------------------------------------------------------------------------
+
+
+def render_change_request(
+    state: GraphState, box: Any, button_area: Any, pending: bool
+) -> str | None:
+    """The comment box (drawn in `box`) and the Request changes button (in `button_area`).
+
+    The graph decides whether a change request is possible (change_request_refusal):
+    in mock and cached mode both are disabled, with "Available in live mode." as the
+    button's tooltip. While parameter edits are not applied it waits: they would be
+    lost. An empty comment does not disable the button: a text area sends its value
+    only when it loses focus, so a button disabled until then would swallow the first
+    click; the graph refuses an empty comment instead, with its reason.
+
+    Args:
+        state: the run's state.
+        box: where the comment box goes (a container above the decision row).
+        button_area: where the button goes (the middle of the decision row).
+        pending: True while parameter edits are not applied yet.
+
+    Returns:
+        The comment when the button was clicked, else None.
+    """
+    refusal = change_request_refusal(state)
+    comment = box.text_area(
+        "Change request",
+        key=f"comment-{state['run_id']}-{revision_number(state)}",
+        height=80,
+        placeholder="What should the planner change? e.g. resample both series to weekly",
+        disabled=bool(refusal),
+        help="Your comment goes back to the planner with this plan and its findings; the "
+        "revised plan is checked by every guardrail again before you decide.",
+    )
+    if refusal:
+        tooltip = refusal
+    elif pending:
+        tooltip = "Apply or reset your parameter changes first."
+    else:
+        tooltip = "Send the plan back to the planner with your comment."
+    clicked = button_area.button(
+        "Request changes",
+        key="request-changes",
+        icon=":material/edit_note:",
+        disabled=bool(refusal) or pending,
+        help=tooltip,
+        width="stretch",
+    )
+    return comment if clicked else None
+
+
+def revision_plan(revision: PlanRevision) -> Plan:
+    """A revision's plan as the planner proposed it, with the registry's defaults filled in."""
+    return fill_defaults(Plan(**revision.plan))
+
+
+def _step_text(step: Step) -> str:
+    """One step in a line, e.g. "Resample (series <- s3; freq=W, how=last)"."""
+    inputs = ", ".join(f"{name} <- {ref}" for name, ref in step.inputs.items())
+    params = ", ".join(f"{name}={value}" for name, value in step.params.items())
+    return f"{capability_title(step.capability)} ({'; '.join(p for p in (inputs, params) if p)})"
+
+
+def plan_diff(old: Plan, new: Plan) -> list[dict[str, str]]:
+    """What changed from one plan to the next: steps added, removed or changed.
+
+    Steps are matched by what they do (capability and parameters), not by their id: a
+    revision renumbers every step after an inserted one. difflib aligns the two lists;
+    within a replaced stretch, a step with the same capability at the same place is
+    the same step with new parameters. Inputs are compared through that alignment, so
+    an input that pointed at old s3, now s4, is unchanged if old s3 became s4.
+    Unchanged steps are left out.
+
+    Args:
+        old: the previous plan.
+        new: the revised plan.
+
+    Returns:
+        One row per change, {"step", "change", "details"}, in plan order.
+    """
+
+    def key(step: Step) -> tuple[str, str]:
+        return step.capability, json.dumps(step.params, sort_keys=True, default=str)
+
+    matcher = difflib.SequenceMatcher(
+        a=[key(s) for s in old.steps], b=[key(s) for s in new.steps], autojunk=False
+    )
+    aligned: list[tuple[Step | None, Step | None]] = []  # (old, new); None: removed/added
+    for _, i1, i2, j1, j2 in matcher.get_opcodes():
+        olds, news = old.steps[i1:i2], new.steps[j1:j2]
+        k = 0
+        while k < min(len(olds), len(news)) and olds[k].capability == news[k].capability:
+            aligned.append((olds[k], news[k]))
+            k += 1
+        aligned += [(step, None) for step in olds[k:]] + [(None, step) for step in news[k:]]
+    renamed = {o.id: n.id for o, n in aligned if o is not None and n is not None}
+    rows = []
+    for o, n in aligned:
+        if n is None:
+            rows.append({"step": o.id, "change": "removed", "details": _step_text(o)})
+        elif o is None:
+            rows.append({"step": n.id, "change": "added", "details": _step_text(n)})
+        else:
+            details = [
+                f"{name}: {o.params.get(name)} -> {n.params.get(name)}"
+                for name in dict.fromkeys([*o.params, *n.params])
+                if not same_value(o.params.get(name), n.params.get(name))
+            ]
+            details += [
+                f"input {name}: {o.inputs.get(name)} -> {n.inputs.get(name)}"
+                for name in dict.fromkeys([*o.inputs, *n.inputs])
+                if renamed.get(o.inputs.get(name, "")) != n.inputs.get(name)
+            ]
+            if details:
+                step = n.id if o.id == n.id else f"{o.id} -> {n.id}"
+                rows.append({"step": step, "change": "changed", "details": "; ".join(details)})
+    return rows
+
+
+def revision_outcome(revision: PlanRevision) -> str:
+    """A revision's validation outcome in a few words, e.g. "blocked: V08, V09"."""
+    codes = revision.validation.codes() if revision.validation else []
+    return f"{revision.status}: {', '.join(codes) or 'no issues'}"
+
+
+def render_revision(previous: PlanRevision, current: PlanRevision, maximum: int) -> None:
+    """The revision's badge and the reviewer's comment, then what changed from the plan before.
+
+    Args:
+        previous: the revision the reviewer asked to change.
+        current: the planner's revision of it (the plan shown).
+        maximum: how many change requests a run may make.
+    """
+    st.markdown(
+        f":violet-badge[:material/history: Revision {current.revision} of {maximum}] "
+        f"Requested change: {escape_md(current.comment or '')}"
+    )
+    rows = plan_diff(revision_plan(previous), revision_plan(current))
+    with st.expander(f"Changes from revision {previous.revision}", expanded=True):
+        if rows:
+            st.dataframe(pd.DataFrame(rows), hide_index=True, alt="Changes from the previous plan")
+        else:
+            st.caption("The planner proposed the same steps and parameters again.")
+
+
 def render_trace(result: TraceResult, catalog: Catalog) -> None:
     """Show the lineage chain of a step and its source files; user-edited params are marked."""
     chain = pd.DataFrame(
@@ -741,6 +897,24 @@ def render_trace(result: TraceResult, catalog: Catalog) -> None:
         alt="Source datasets",
         column_config={"dataset": st.column_config.TextColumn(width="large")},
     )
+
+    # How the final plan came about: every revision of the run, with the comment that
+    # asked for it and its validation. Only the final plan was executed and is traced.
+    if len(result.revisions) > 1:
+        st.markdown("**Revision history**")
+        history = pd.DataFrame(
+            [
+                {
+                    "revision": r.revision,
+                    "comment": r.comment or "(the planner's first proposal)",
+                    "plan hash": r.plan_hash[:12] or "-",
+                    "validation": revision_outcome(r),
+                }
+                for r in result.revisions
+            ]
+        )
+        st.dataframe(history, hide_index=True, alt="Revision history")
+        st.caption("The trace above follows the final executed plan; earlier revisions never ran.")
 
 
 def render_replay(report: ReplayReport, catalog: Catalog) -> None:

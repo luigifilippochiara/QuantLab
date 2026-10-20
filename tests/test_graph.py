@@ -31,6 +31,8 @@ SUCCESS = SCENARIOS_BY_ID["buy_the_dip_tech"]  # scenario 5
 # Fields that differ between two runs of the same request by nature: ids, clocks, latencies.
 VOLATILE = {"run_id", "created_at", "plan_shown_at", "decided_at", "approved_at", "edited_at",
             "plan_id", "duration_ms", "latency_ms", "stage_timings_ms", "timestamp"}  # fmt: skip
+# Record fields only the graph fills: engine.Session has no change requests.
+GRAPH_ONLY = {"revisions", "manual_edits"}
 
 
 def comparable(value: Any) -> Any:
@@ -69,8 +71,15 @@ def test_every_example_runs_exactly_as_in_the_engine(
     engine = load_run(session.run_id, settings.runs_dir)
     graph = load_run(state["run_id"], settings.runs_dir)
     # The whole run record: plan, issues, approvals, step hashes, narrative, error...
-    assert comparable(graph.model_dump(mode="json")) == comparable(engine.model_dump(mode="json"))
+    assert comparable(graph.model_dump(mode="json", exclude=GRAPH_ONLY)) == comparable(
+        engine.model_dump(mode="json", exclude=GRAPH_ONLY)
+    )
     assert graph.stage_timings_ms.keys() == engine.stage_timings_ms.keys()
+    # The graph's own fields: one revision (the planner was asked once), no change request.
+    assert (graph.change_requests, graph.manual_edits) == (0, len(graph.param_diff))
+    if graph.llm.error is None and graph.validation.codes() != ["R01"]:
+        [revision] = graph.revisions
+        assert revision.validation == engine.validation and revision.comment is None
     # ...and the same monitoring events, in the same order.
     assert run_events(settings, graph.run_id) == run_events(settings, engine.run_id)
 
@@ -194,10 +203,9 @@ def test_r01_ends_the_run_before_the_planner(
     assert "1,000 words" in record.error and record.stage_tokens == {}
 
 
-@pytest.mark.parametrize("mode", ["live", "cached"])
-def test_the_prototype_runs_in_mock_mode_only(mode: str, settings: Settings) -> None:
-    with pytest.raises(ValueError, match="mock mode only"):
-        start_run(build_graph(), SUCCESS.request, ["NASDAQCOM"], settings, mode=mode)
+def test_an_unknown_mode_is_refused(settings: Settings) -> None:
+    with pytest.raises(ValueError, match="unknown LLM mode"):
+        start_run(build_graph(), SUCCESS.request, ["NASDAQCOM"], settings, mode="offline")
 
 
 def test_graph_demo_behaves_as_expected(

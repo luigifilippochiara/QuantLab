@@ -18,6 +18,7 @@ from streamlit.testing.v1 import AppTest
 from quantlab.config import PROJECT_ROOT, Settings
 from quantlab.data import load_catalog
 from quantlab.engine import Session, run_request
+from quantlab.graph import build_graph, resume_run, start_run
 from quantlab.guardrails import (
     CATEGORY_DEFINITIONS,
     ENFORCERS,
@@ -40,8 +41,14 @@ from quantlab.plan import Step
 from quantlab.registry import REGISTRY
 from quantlab.types import TokenUsage
 
-from conftest import SCENARIO_5_APPROVALS, as_plan, volatility_plan
-from fakes import FakeAnthropicClient, text_response
+from conftest import (
+    CHANGE_REQUEST_COMMENT,
+    SCENARIO_5_APPROVALS,
+    as_plan,
+    spread_weekly_plan,
+    volatility_plan,
+)
+from fakes import FakeAnthropicClient, text_response, tool_response
 
 PAGES = PROJECT_ROOT / "app" / "pages"
 # labels.PERIODS_NOTE, as the analyst reads it (app/ is importable only inside a test).
@@ -150,7 +157,7 @@ def plan_scenario_1(app_env: Settings) -> AppTest:
     app = open_page("analysis.py", llm_mode="mock")
     app.sidebar.button(key="scenario-chf_safe_haven_success").click().run()
     button(app, "Generate plan").click().run()
-    assert app.session_state["session"].status == "ready"
+    assert app.session_state["run"].state["status"] == "ready"
     return app
 
 
@@ -186,8 +193,8 @@ def test_switching_the_llm_mode_resets_the_analysis_page(app_env: Settings) -> N
     import ui  # importable once app_env has put app/ on the path
 
     app = plan_scenario_1(app_env)
-    session = app.session_state["session"]
-    saved = load_run(session.run_id, app_env.runs_dir)
+    run_id = app.session_state["run"].state["run_id"]
+    saved = load_run(run_id, app_env.runs_dir)
     assert app.multiselect(key="dataset_select").value == ["VIXCLS", "DEXSZUS"]
     # A change typed but not applied yet.
     next(n for n in app.number_input if n.key.endswith("-s3-quantile")).set_value(0.95).run()
@@ -204,15 +211,15 @@ def test_switching_the_llm_mode_resets_the_analysis_page(app_env: Settings) -> N
     assert not app.subheader and not app.number_input and not app.checkbox
     assert app.info[0].value.startswith("Type a request")
     # The run that was waiting for a decision is left as it was saved: undecided.
-    assert load_run(session.run_id, app_env.runs_dir) == saved and saved.status == "ready"
+    assert load_run(run_id, app_env.runs_dir) == saved and saved.status == "ready"
 
 
 def test_refresh_resets_the_analysis_page_and_keeps_the_mode(app_env: Settings) -> None:
     import ui  # importable once app_env has put app/ on the path
 
     app = plan_scenario_1(app_env)
-    session = app.session_state["session"]
-    saved = load_run(session.run_id, app_env.runs_dir)
+    run_id = app.session_state["run"].state["run_id"]
+    saved = load_run(run_id, app_env.runs_dir)
 
     button(app, "Refresh").click().run()
     assert not app.exception, app.exception
@@ -224,14 +231,14 @@ def test_refresh_resets_the_analysis_page_and_keeps_the_mode(app_env: Settings) 
     assert not app.subheader and not app.number_input and not app.checkbox
     assert app.info[0].value.startswith("Type a request")
     # The run that was waiting for a decision is left as it was saved: undecided.
-    assert load_run(session.run_id, app_env.runs_dir) == saved and saved.status == "ready"
+    assert load_run(run_id, app_env.runs_dir) == saved and saved.status == "ready"
 
 
 def test_clicking_the_selected_llm_mode_keeps_the_page(app_env: Settings) -> None:
     app = plan_scenario_1(app_env)
-    run_id = app.session_state["session"].run_id
+    run_id = app.session_state["run"].state["run_id"]
     app.segmented_control(key="llm_mode").set_value("mock").run()  # already selected
-    assert app.session_state["session"].run_id == run_id
+    assert app.session_state["run"].state["run_id"] == run_id
     assert app.text_area(key="request_text").value == VIX_CHF_REQUEST
     assert app.multiselect(key="dataset_select").value == ["VIXCLS", "DEXSZUS"]
     assert "Plan" in [h.value for h in app.subheader]
@@ -447,7 +454,7 @@ def test_scenario_4_is_rejected_whole_with_a_banner_and_no_controls(app_env: Set
     assert "Nothing was executed. Write a new request to continue." in [
         c.value for c in app.caption]  # fmt: skip
     assert "Results" not in [h.value for h in app.subheader]
-    assert app.session_state["session"].execution is None
+    assert "steps" not in app.session_state["run"].state  # never executed
     # A canned plan without a note (scenario 3's refusal) shows no such notice.
     app.sidebar.button(key="scenario-arima_forecast_block").click().run()
     button(app, "Generate plan").click().run()
@@ -503,17 +510,17 @@ def test_ungrounded_llm_narrative_is_withheld_with_an_n01_issue(app_env: Setting
     # Planned and executed in mock mode; only the narrative comes from a (fake) LLM,
     # which invents a number.
     scenario = SCENARIOS_BY_ID["buy_the_dip_tech"]
-    session = Session.start(scenario.request, list(scenario.dataset_ids), "mock", app_env)
-    session.create_plan()
-    session.approve(SCENARIO_5_APPROVALS)
-    session.execute()
     invented = "Volatility peaked at 123.456 during the flagged weeks."
-    session.mode, session.client = "live", FakeAnthropicClient(text_response(invented))
-    session.narrate()
-    session.save_record()
+    # Live mode with a fake LLM: the canned plan, then the narrative that invents a number.
+    plan = tool_response(SCENARIOS_BY_ID["buy_the_dip_tech"].plan)
+    client = FakeAnthropicClient([plan, text_response(invented)])
+    graph = build_graph()
+    run = start_run(graph, scenario.request, list(scenario.dataset_ids), app_env, "live", True,
+                    client)  # fmt: skip
+    run = resume_run(graph, run, {"action": "approve", "issue_ids": SCENARIO_5_APPROVALS})
 
     app = AppTest.from_file(str(PAGES / "analysis.py"), default_timeout=60)
-    app.session_state["session"] = session
+    app.session_state["run"], app.session_state["graph"] = run, graph
     app.run()
     assert not app.exception, app.exception
     captions = [c.value for c in app.caption]
@@ -1011,13 +1018,12 @@ def test_the_editor_shows_labels_but_the_plan_keeps_its_codes(app_env: Settings)
     assert app.button(key="apply-edits").proto.type == "secondary"
     assert not any("not applied yet" in c.value for c in app.caption)
     assert step_headers(app)[1][0] == "Step 2 · C02 · Resample · Frequency: Weekly, How: Last"
-    assert app.session_state["session"].plan.steps[1].params["how"] == "last"
+    assert app.session_state["run"].state["plan"].steps[1].params["how"] == "last"
     # A real edit stores the code.
     next(s for s in app.selectbox if s.key.endswith("-s2-freq")).select("D").run()
     assert app.button(key="apply-edits").proto.type == "primary"
     app.button(key="apply-edits").click().run()
-    session = app.session_state["session"]
-    assert session.plan.steps[1].params["freq"] == "D"
+    assert app.session_state["run"].state["plan"].steps[1].params["freq"] == "D"
 
 
 def chart_bars(app: AppTest) -> list[int]:
@@ -1189,3 +1195,94 @@ def test_monitoring_page_before_any_guardrail_fired(app_env: Settings) -> None:
     # The expander lists every guardrail, none having fired.
     unused = next(e for e in app.expander if e.label == "Show unused guardrails")
     assert len(unused.dataframe[0].value) == len(GUARDRAILS)
+
+
+# ---------------------------------------------------------------- change requests
+
+SPREAD = SCENARIOS_BY_ID["spread_frequency_mismatch_block"]
+
+
+def live_page(
+    app_env: Settings, responses: list, scenario_id: str = SPREAD.id, mode: str = "live"
+) -> AppTest:
+    """The Analysis page on a run of an example in `mode` (live by default), its LLM a fake
+    serving the example's plan, then `responses`."""
+    scenario = SCENARIOS_BY_ID[scenario_id]
+    client = FakeAnthropicClient([tool_response(scenario.plan), *responses])
+    graph = build_graph()
+    run = start_run(graph, scenario.request, list(scenario.dataset_ids), app_env, mode, True,
+                    client)  # fmt: skip
+    app = AppTest.from_file(str(PAGES / "analysis.py"), default_timeout=60)
+    app.session_state["llm_mode"] = mode
+    app.session_state["run"], app.session_state["graph"] = run, graph
+    app.run()
+    assert not app.exception, app.exception
+    return app
+
+
+def request_changes(app: AppTest, comment: str) -> None:
+    """Type a change request into the comment box and click Request changes."""
+    state = app.session_state["run"].state
+    revision = len(state["revisions"]) - 1
+    app.text_area(key=f"comment-{state['run_id']}-{revision}").input(comment).run()
+    app.button(key="request-changes").click().run()
+    assert not app.exception, app.exception
+
+
+def test_a_change_request_revises_the_plan_on_the_page(app_env: Settings) -> None:
+    narrative = text_response("The flagged weeks are the most inverted of the whole history.")
+    app = live_page(app_env, [tool_response(spread_weekly_plan()), narrative])
+    # Blocked by V08: no Execute, but Execute | Request changes | Reject are offered.
+    assert button(app, "Execute").disabled and not app.button(key="request-changes").disabled
+    request_changes(app, CHANGE_REQUEST_COMMENT)
+    # The revision: its number, the comment, and the diff of steps and parameters.
+    badge = next(m.value for m in app.markdown if "Revision 1 of 3" in m.value)
+    assert CHANGE_REQUEST_COMMENT in badge
+    changes = next(e for e in app.expander if e.label == "Changes from revision 0")
+    rows = changes.dataframe[0].value.to_dict("records")
+    assert rows == [
+        {"step": "s4", "change": "added", "details": "Resample (series <- s3; freq=W, how=last)"},
+        {"step": "s4 -> s5", "change": "changed", "details": "input b: s3 -> s4"},
+    ]
+    # V08 is gone; the look-ahead approval (V09) remains, then Execute runs it.
+    assert not any("FREQUENCY_MISMATCH" in m.value for m in app.markdown)
+    approve_all(app)
+    button(app, "Execute").click().run()
+    assert app.session_state["run"].state["status"] == "completed"
+    # The trace shows how the plan came about, and still traces the executed plan.
+    assert any(m.value == "**Revision history**" for m in app.markdown)
+    history = next(d.value for d in app.dataframe if "comment" in d.value.columns)
+    assert history["comment"].tolist() == ["(the planner's first proposal)", CHANGE_REQUEST_COMMENT]
+    assert history["validation"].tolist() == ["blocked: V08, V09", "ready: V09"]
+
+
+@pytest.mark.parametrize("mode", ["mock", "cached"])
+def test_request_changes_is_live_only_on_the_page(mode: str, app_env: Settings) -> None:
+    if mode == "mock":
+        app = open_page("analysis.py", llm_mode="mock")
+        app.sidebar.button(key=f"scenario-{SPREAD.id}").click().run()
+        button(app, "Generate plan").click().run()
+    else:  # the cache is empty, so the fake LLM answers the first plan
+        app = live_page(app_env, [], mode="cached")
+    change = app.button(key="request-changes")
+    assert change.disabled and change.help == "Available in live mode."
+
+
+def test_after_the_last_change_request_only_execute_and_reject_remain(app_env: Settings) -> None:
+    revisions = [tool_response(SPREAD.plan) for _ in range(3)]  # still blocked each time
+    app = live_page(app_env, revisions)
+    for number in range(3):
+        request_changes(app, f"try again, attempt {number + 1}")
+    assert any("Revision 3 of 3" in m.value for m in app.markdown)
+    labels = [b.label for b in app.button]
+    assert "Request changes" not in labels and "Execute" in labels and "Reject plan" in labels
+    assert not [t for t in app.text_area if t.key.startswith("comment-")]
+
+
+def test_a_refusal_can_be_sent_back_with_a_change_request(app_env: Settings) -> None:
+    app = live_page(app_env, [], scenario_id="arima_forecast_block")
+    assert app.error[0].proto.title == "The planner declined this request"
+    assert not app.button(key="request-changes").disabled
+    assert app.main.caption[-1].value == (
+        "Nothing was executed. Request changes above, or write a new request."
+    )

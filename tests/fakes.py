@@ -13,7 +13,12 @@ from typing import Any
 
 
 class FakeEndpoint:
-    """Records calls to .create() and returns a fixed response (or raises a fixed error)."""
+    """Records calls to .create() and returns a fixed response (or raises a fixed error).
+
+    Given a list, it returns its responses in order, one per call (e.g. a plan, then a
+    revised plan, then a narrative), and fails on a call beyond the last: a test then
+    knows exactly how many LLM calls were made.
+    """
 
     def __init__(self, response: Any, error: Exception | None) -> None:
         self.response = response
@@ -24,6 +29,10 @@ class FakeEndpoint:
         self.calls.append(kwargs)
         if self.error is not None:
             raise self.error
+        if isinstance(self.response, list):
+            if len(self.calls) > len(self.response):
+                raise AssertionError(f"unexpected LLM call #{len(self.calls)}: none was canned")
+            return self.response[len(self.calls) - 1]
         return self.response
 
 
@@ -71,7 +80,11 @@ class FakeOpenAIResponse:
 class FakeOpenAIClient:
     """client.responses.create(...) -> canned response."""
 
-    def __init__(self, response: FakeOpenAIResponse | None = None, error: Exception | None = None):
+    def __init__(
+        self,
+        response: FakeOpenAIResponse | list[FakeOpenAIResponse] | None = None,
+        error: Exception | None = None,
+    ):
         self.responses = FakeEndpoint(response, error)
 
     @property
@@ -143,7 +156,11 @@ class FakeBeta:
 class FakeAnthropicClient:
     """client.beta.messages.create(...) -> canned response."""
 
-    def __init__(self, response: FakeResponse | None = None, error: Exception | None = None):
+    def __init__(
+        self,
+        response: FakeResponse | list[FakeResponse] | None = None,
+        error: Exception | None = None,
+    ):
         self.beta = FakeBeta(FakeEndpoint(response, error))
 
     @property

@@ -21,6 +21,19 @@ a deterministic check verifies every number it writes (N01). Every run is saved,
 be replayed without the LLM and traced to the source file. The LLM proposes, the
 system disposes.
 
+## Request changes
+
+When a plan needs more than new parameter values (another resampling, a different
+step), the reviewer can write a comment and click **Request changes**. The planner
+gets the original request, the plan, the guardrail findings (codes and messages,
+never data) and the comment, and returns a complete revised plan. The comment gets
+the same request check as a request, and the revision goes through every validator
+guardrail before the reviewer sees it. Up to 3 change requests per run; after that,
+only Execute or Reject. It needs live mode: in mock and cached mode the button is
+disabled. A plan rejected as a whole (V01, V02) ends the run instead. Every revision
+stays in the one run record, under its run id: the Analysis page shows the revision
+number and what changed, and the trace lists the revision history.
+
 ## What's inside
 
 - **Capabilities:** descriptive building blocks plus one significance test, each
