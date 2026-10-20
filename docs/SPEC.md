@@ -66,7 +66,8 @@ quantlab/
     capabilities.py  # the pure quant wrapper functions (the only code that calls pandas/scipy/statsmodels for analysis)
     registry.py      # CapabilitySpec models + REGISTRY dict + LLM-facing summary generator + registry version hash
     plan.py          # Pydantic Plan / Step models (+ JSON schema export)
-    guardrails.py    # static plan validation + guardrails -> ValidationReport
+    guardrails.py    # the guardrail table + Issue / ValidationReport + request check
+    validator.py     # static plan validation (dry run, edit lock) -> ValidationReport
     planner.py       # Planner interface, AnthropicPlanner, MockPlanner (canned reference plans), plan cache
     executor.py      # deterministic dispatch + runtime guardrails + step records
     narrator.py      # facts sheet builder, LLM narrator, template fallback, numeric grounding check
@@ -130,7 +131,7 @@ Plan: plan_id, request, dataset_ids, steps: list[Step], cannot_fulfill: bool = f
 Step: id ("s1", "s2", ...), capability: str, inputs: dict[str, str] (input name -> earlier step id), params: dict[str, Any], rationale: str (one sentence).
 Export the JSON schema for use as the LLM tool schema.
 
-## Validation and guardrails (guardrails.py and executor.py)
+## Validation and guardrails (guardrails.py, validator.py and executor.py)
 
 Every issue: code, action (BLOCK | WARN | APPROVE), step_id, message, suggestion. ValidationReport has helpers: is_blocked, approvals_required, warnings. Each guardrail is a small named function with a docstring explaining what goes wrong without it. Put a table of all guardrails in the README.
 

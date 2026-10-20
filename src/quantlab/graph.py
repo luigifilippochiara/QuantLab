@@ -2,10 +2,10 @@
 
 Role in the architecture: a LangGraph `StateGraph` moves one run through the
 pipeline, from request to saved record. Each node is a thin wrapper around one
-stage's function: the planner, guardrails, executor, narrator and lineage hold all
-the logic, and the nodes only log monitoring events, keep the state and decide
-where the run goes next. Every run is saved (lineage.save_run), so it can be
-replayed and traced.
+stage's function: guardrails (the request check), the planner, validator, executor,
+narrator and lineage hold all the logic, and the nodes only log monitoring events,
+keep the state and decide where the run goes next. Every run is saved
+(lineage.save_run), so it can be replayed and traced.
 
     START -> request_check -> planner -> validator -> approval -> executor -> narrator
           -> recorder -> END
@@ -59,10 +59,7 @@ from quantlab.guardrails import (
     GuardrailType,
     Issue,
     ValidationReport,
-    check_edits,
     check_request_length,
-    fill_defaults,
-    validate_plan,
 )
 from quantlab.lineage import (
     Approval,
@@ -88,6 +85,7 @@ from quantlab.planner import (
 )
 from quantlab.registry import registry_version
 from quantlab.types import Artifact, DataType, Frequency, SeriesKind, TokenUsage
+from quantlab.validator import check_edits, fill_defaults, validate_plan
 
 # ---------------------------------------------------------------------------
 # The run's state, its context and the reviewer's answer

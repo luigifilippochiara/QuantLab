@@ -6,7 +6,6 @@ import json
 from quantlab.config import Settings
 from quantlab.data import Catalog
 from quantlab.executor import StepRecord, execute_plan
-from quantlab.guardrails import validate_plan
 from quantlab.lineage import (
     Approval,
     RunRecord,
@@ -23,6 +22,7 @@ from quantlab.lineage import (
 )
 from quantlab.monitoring import read_events
 from quantlab.registry import REGISTRY, registry_version
+from quantlab.validator import validate_plan
 
 from conftest import SPREAD_PLAN, VOLATILITY_APPROVALS, as_plan, volatility_plan
 

@@ -37,11 +37,12 @@ import openai
 
 from quantlab.config import Settings
 from quantlab.data import Catalog, describe_datasets
-from quantlab.guardrails import Issue, check_schema, planner_failure_issue
+from quantlab.guardrails import Issue
 from quantlab.mock_scenarios import match_scenario
 from quantlab.plan import SYSTEM_FIELDS, Plan, new_plan_id, plan_tool_schema
 from quantlab.registry import llm_summary, registry_version
 from quantlab.types import TokenUsage
+from quantlab.validator import check_schema, planner_failure_issue
 
 # Bump whenever SYSTEM_PROMPT changes: it is part of the plan-cache key and of
 # every run record, so old cached plans are not reused with a new prompt.

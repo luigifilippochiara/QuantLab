@@ -34,20 +34,14 @@ from labels import (
 from quantlab.config import Settings, load_settings
 from quantlab.data import Catalog, load_catalog
 from quantlab.graph import GraphState, change_request_refusal, revision_number
-from quantlab.guardrails import (
-    ENFORCERS,
-    GUARDRAILS,
-    Action,
-    Issue,
-    ValidationReport,
-    fill_defaults,
-)
+from quantlab.guardrails import ENFORCERS, GUARDRAILS, Action, Issue, ValidationReport
 from quantlab.lineage import PlanRevision, ReplayReport, TraceResult
 from quantlab.mock_scenarios import SCENARIOS_BY_ID
 from quantlab.narrator import describe_quotes, format_number
 from quantlab.plan import Plan, Step
 from quantlab.registry import CapabilitySpec, ParamSpec, capability_code
 from quantlab.types import Artifact, DataType, Frequency
+from quantlab.validator import fill_defaults
 
 SERIES_COLOR = "#3987e5"  # blue: the series itself
 REGIME_COLOR = "#d95926"  # orange: flagged regimes, and the second measure in grouped bars

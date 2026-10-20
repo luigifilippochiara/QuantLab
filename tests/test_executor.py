@@ -15,10 +15,10 @@ from quantlab.executor import (
     dispatch,
     execute_plan,
 )
-from quantlab.guardrails import fill_defaults, validate_plan
 from quantlab.plan import Plan, Step
 from quantlab.registry import REGISTRY
 from quantlab.types import Artifact, ArtifactMeta, DataType, Frequency, SeriesKind
+from quantlab.validator import fill_defaults, validate_plan
 
 from conftest import (
     ARIMA_PLAN,

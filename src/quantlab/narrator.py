@@ -33,7 +33,7 @@ from pydantic import BaseModel, Field
 
 from quantlab.capabilities import count_episodes
 from quantlab.config import Settings
-from quantlab.guardrails import PERIOD_NAMES, Action, Issue, fill_defaults, make_issue
+from quantlab.guardrails import PERIOD_NAMES, Action, Issue, make_issue
 from quantlab.mock_scenarios import match_scenario
 from quantlab.plan import Plan, describe_plan
 from quantlab.planner import (
@@ -43,6 +43,7 @@ from quantlab.planner import (
     make_openai_client,
 )
 from quantlab.types import ANNUALISATION_FACTORS, Artifact, DataType, TokenUsage
+from quantlab.validator import fill_defaults
 
 NARRATOR_PROMPT_VERSION = "narrator-v7"
 # The narratives an LLM wrote in live runs and mock mode replays (Scenario.narrative).

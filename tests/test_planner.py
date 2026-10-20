@@ -10,7 +10,6 @@ import pytest
 
 from quantlab.config import Settings
 from quantlab.data import Catalog, load_dataset
-from quantlab.guardrails import validate_plan
 from quantlab.mock_scenarios import SCENARIOS
 from quantlab.plan import plan_hash, plan_tool_schema
 from quantlab.planner import (
@@ -25,6 +24,7 @@ from quantlab.planner import (
     generate_plan,
     plan_from_output,
 )
+from quantlab.validator import validate_plan
 
 from conftest import CHANGE_REQUEST_COMMENT, VOLATILITY_PLAN, as_plan, raw_plan, spread_weekly_plan
 from fakes import (

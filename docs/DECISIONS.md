@@ -2421,3 +2421,22 @@ entire history.": both yields are named as US Treasury yields, as their datasets
 (DGS10, DGS2). The plan and outcome are unchanged (V08 BLOCK, V09 to approve), and so
 are the golden records, which hold no request text. The canned plans are
 `canned-scenarios-v24`.
+
+
+## guardrails.py split into catalogue and validator
+
+**What.** `guardrails.py` (about 1,240 lines) did two jobs; it is now two modules.
+`guardrails.py` keeps the catalogue that every stage uses: the GUARDRAILS table with its
+enums, `Issue`, `make_issue`, `ValidationReport`, the constants shared by several stages
+(`FREQUENCY_NAMES`, `PERIOD_NAMES`, `FREQUENCY_RANK`, `OUTCOME_INPUTS`) and the R01
+request check, a stage of its own that is too small for a module. The new `validator.py`
+holds the V stage: the parameter helpers, `check_schema`, the plan- and step-level
+checks, the P01 refusal block, `check_edits`, the dry run and `validate_plan`. Only code
+moved: no function body, issue message, guardrail code, prompt or registry version
+changed, and the golden records still match with no migration. `validator.py` imports
+`guardrails.py`, never the reverse, and no shim re-exports the moved names. The
+validator's tests moved to `tests/test_validator.py`. **Why.** One role per module, named
+like the stage letters: `validator.py` raises V as `executor.py` raises E and
+`narrator.py` N, and the table they all read sits apart from any one stage.
+**Alternative.** Keep one file, rejected: the table every stage imports and the logic of
+one stage would stay mixed, and a reader looking for either would scroll past the other.

@@ -13,7 +13,8 @@ The LLM proposes, the system disposes.
 
 1. The request check refuses an oversized request before any LLM call (R01); the
    planner LLM writes a plan: inert JSON naming registered capabilities, or refuses (P01).
-2. `guardrails.py` checks it with the validator's guardrails (V codes). Every
+2. `validator.py` checks it with the validator's guardrails (V codes). Every
+   guardrail is described in the GUARDRAILS table in `guardrails.py`, and every
    guardrail issue has an action: BLOCK / APPROVE / WARN. Code prefixes name the
    stage: R request check, P planner, V validator, E executor, N narrator check.
 3. A human reviews (the run pauses at the graph's approval interrupt), edits parameter
@@ -43,7 +44,8 @@ hash-verified snapshots) -> `capabilities` (the quant functions: descriptive
 building blocks and one significance test; the ONLY code calling
 pandas/numpy/statsmodels for analysis) -> `registry` (specs,
 REGISTRY, LLM summary, version) -> `plan` (Pydantic Plan/Step) -> `guardrails`
-(static guardrails, dry run, GUARDRAILS table) -> `mock_scenarios` (example workflows) ->
+(GUARDRAILS table, Issue types, R01 request check) -> `validator` (static V guardrails,
+dry run, edit lock) -> `mock_scenarios` (example workflows) ->
 `executor` (dispatch, runtime guardrails, step records) -> `planner` /
 `narrator` (the only LLM code; OpenAI and Anthropic) -> `lineage` (manifest, replay, trace) ->
 `monitoring` (events.jsonl, the Monitoring page's metrics) -> `graph` (the orchestrator

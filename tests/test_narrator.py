@@ -7,7 +7,6 @@ import pytest
 from quantlab.config import Settings
 from quantlab.data import Catalog
 from quantlab.executor import execute_plan
-from quantlab.guardrails import validate_plan
 from quantlab.narrator import (
     AI_WRITTEN_NOTE,
     NUMBERS_CHECKED_NOTE,
@@ -26,6 +25,7 @@ from quantlab.narrator import (
 )
 from quantlab.plan import Plan
 from quantlab.types import Artifact, ArtifactMeta, DataType, Frequency, TokenUsage
+from quantlab.validator import validate_plan
 
 from conftest import (
     QUOTE_CONVENTIONS,

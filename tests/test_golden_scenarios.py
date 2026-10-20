@@ -91,10 +91,11 @@ from quantlab.config import PROJECT_ROOT, Settings
 from quantlab.data import load_catalog
 from quantlab.evaluation import load_golden, score_case
 from quantlab.graph import GraphState, run_graph
-from quantlab.guardrails import GUARDRAILS, Issue, fill_defaults, validate_plan
+from quantlab.guardrails import GUARDRAILS, Issue
 from quantlab.mock_scenarios import SCENARIOS
 from quantlab.planner import generate_plan
 from quantlab.types import DataType, canonical_text
+from quantlab.validator import fill_defaults, validate_plan
 
 FIXTURE = Path(__file__).parent / "fixtures" / "golden_scenarios.json"
 

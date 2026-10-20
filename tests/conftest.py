@@ -20,9 +20,9 @@ from langgraph.graph.state import CompiledStateGraph
 from quantlab.config import Settings
 from quantlab.data import Catalog, file_sha256, load_catalog, read_fred_csv
 from quantlab.graph import GraphRun, build_graph, resume_run, start_run
-from quantlab.guardrails import fill_defaults
 from quantlab.mock_scenarios import SCENARIOS_BY_ID
 from quantlab.plan import Plan
+from quantlab.validator import fill_defaults
 
 # 30 years of business days: long enough for every scenario and for weekly and
 # monthly variations of them (e.g. a 52-week window needs 3 x 52 weeks of returns).

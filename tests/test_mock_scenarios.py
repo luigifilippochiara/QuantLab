@@ -16,7 +16,7 @@ import pytest
 from quantlab.config import PROJECT_ROOT, Settings
 from quantlab.data import Catalog, load_catalog
 from quantlab.graph import refusal_reason, run_graph
-from quantlab.guardrails import Action, fill_defaults, validate_plan
+from quantlab.guardrails import Action
 from quantlab.lineage import replay
 from quantlab.mock_scenarios import (
     DIP_REQUEST,
@@ -30,6 +30,7 @@ from quantlab.mock_scenarios import (
 from quantlab.narrator import AI_WRITTEN_NOTE, NUMBERS_CHECKED_NOTE
 from quantlab.plan import Plan
 from quantlab.registry import REGISTRY
+from quantlab.validator import fill_defaults, validate_plan
 
 from conftest import (
     ARIMA_PLAN,
