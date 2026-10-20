@@ -2238,3 +2238,42 @@ executed. Write a new request to continue.", as for a plan rejected as a whole.
   rejected: Step 1 · Run python is blocked.") and points to Validation; it no longer
   lists each guardrail's code and message, and an unregistered step's caption reads
   "Blocked: it can be neither run nor edited (see Validation)."
+
+
+## LangGraph orchestration prototype (QuantLab_LangGraph branch)
+
+**An experiment, kept off main.** `graph.py` re-expresses the orchestration of
+`engine.Session` as a LangGraph `StateGraph`, to judge what a graph framework buys
+over the plain dataclass. Every other module is imported and called unchanged
+(planner, guardrails, executor, narrator, lineage, monitoring); `engine.py` stays,
+since the app, `cli demo`, evaluation and notebooks use it. The nodes are
+`request_check`, `planner`, `validator`, `approval`, `executor`, `narrator` and
+`recorder`, each a thin wrapper that logs the engine's monitoring events and saves the
+engine's run record. `cli graph-demo` runs the examples through it, and
+`tests/test_graph.py` checks that every example gives the same record (step hashes,
+facts, narrative, error) and the same events as `run_request`.
+- **Review is an `interrupt()`** in the `approval` node, with an in-memory checkpointer
+  (`InMemorySaver`, one thread per run id): a run pauses there and resumes with the same
+  state. The answer is a `ReviewDecision` (approve, edit or reject), validated by
+  `interrupt`'s `response_schema`. An edit goes back to the validator. A BLOCK ends the
+  run through the recorder; a plan awaiting review is saved as "ready", as in the engine.
+- **An approval of an issue that is not open asks again rather than raising**, unlike
+  `Session.approve`: once a node fails after its interrupt, LangGraph replays the same
+  answer on every resume, so the run could never go on.
+- **A blocked plan ends the run**, as in `run_request`; the Analysis page's "edit a
+  blocked plan until it passes" would need the BLOCK edge to lead to the interrupt.
+- **Mock mode only**: `start_run` refuses any other mode, so the prototype never calls
+  an LLM API.
+- **Checkpoint serialisation.** Settings and the catalog are passed as LangGraph's
+  runtime context, not stored in the state. The state's Pydantic models and
+  dataclasses are stored as msgpack and rebuilt only if listed in
+  `graph.CHECKPOINT_TYPES` (otherwise LangGraph returns a plain dict and logs it; a test
+  checks the whole state round-trips). Artifacts hold pandas Series, which msgpack
+  cannot encode, so that value falls back to pickle; checkpoints only ever live in this
+  process's memory, so no pickle from outside is ever loaded.
+- **Dependencies:** `langgraph` pinned exactly, an exception to "no LangChain" for this
+  branch: it brings `langchain-core`, `langsmith` and `langgraph-sdk` with it, and the
+  lock moves `websockets` from 17.2 to 16.1.1 (capped by `langsmith` and
+  `langgraph-sdk`; Streamlit accepts it).
+- **Alternative:** keep `Session` alone (the main branch). The comparison is recorded
+  when the branch is reviewed.

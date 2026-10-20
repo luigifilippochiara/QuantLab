@@ -1,6 +1,7 @@
 """Command-line interface.
 
     uv run python -m quantlab.cli demo                    # the example workflows, mock mode
+    uv run python -m quantlab.cli graph-demo              # the same, through LangGraph (graph.py)
     uv run python -m quantlab.cli run "<request>" --datasets NASDAQCOM --mode mock --approve-all
     uv run python -m quantlab.cli replay <run_id>          # re-run without the LLM, compare hashes
     uv run python -m quantlab.cli trace <run_id> <step_id> # where does this number come from?
@@ -8,8 +9,8 @@
     uv run python -m quantlab.cli eval --mode live --case s1_chf_safe_haven
     uv run python -m quantlab.cli eval --set adversarial --mode live   # refuse or plan?
 
-Role in the architecture: a thin, headless front end over engine.py,
-lineage.py and evaluation.py; it contains no analysis logic of its own.
+Role in the architecture: a thin, headless front end over engine.py (graph.py
+for graph-demo), lineage.py and evaluation.py; it contains no analysis logic of its own.
 """
 
 import argparse
@@ -24,6 +25,7 @@ from quantlab.evaluation import (
     write_adversarial_report,
     write_report,
 )
+from quantlab.graph import build_graph, issue_codes, resume_run, start_run
 from quantlab.lineage import TraceResult, load_run, replay, trace
 from quantlab.mock_scenarios import SCENARIOS
 from quantlab.plan import describe_plan
@@ -152,6 +154,40 @@ def cmd_demo(args: argparse.Namespace, settings: Settings) -> int:
     if first.status == "completed":
         print("\nAudit trail (traceability): ", end="")
         print_trace(first.trace(first.plan.steps[-1].id))
+    return 0 if all_ok else 1
+
+
+def cmd_graph_demo(args: argparse.Namespace, settings: Settings) -> int:
+    """Run example workflows 1-5 through the LangGraph prototype (graph.py), in mock mode.
+
+    A run whose plan needs approvals pauses at the approval interrupt; the demo then
+    resumes it from the in-memory checkpoint, approving every open issue for the
+    scenarios `demo` auto-approves (1 and 5) and none for the others. The checks
+    are the same as `demo` in mock mode: the status and the issue codes.
+    """
+    graph = build_graph()
+    rows = []
+    all_ok = True
+    for scenario in SCENARIOS:
+        run = start_run(graph, scenario.request, list(scenario.dataset_ids), settings)
+        paused = "-"
+        if run.paused_for is not None:
+            open_ids = [issue["issue_id"] for issue in run.paused_for["open_approvals"]]
+            paused = ",".join(open_ids)
+            approved = open_ids if scenario.auto_approve else []
+            decision = {"action": "approve", "issue_ids": approved, "approved_by": "cli"}
+            run = resume_run(graph, run, decision)
+        codes = issue_codes(run.state)
+        ok = run.state["status"] == scenario.expected_status
+        ok = ok and set(scenario.expected_codes) <= set(codes)
+        all_ok &= ok
+        rows.append(
+            [scenario.id, paused, run.state["status"], ",".join(codes) or "-",
+             run.state["run_id"], "ok" if ok else "MISMATCH"]
+        )  # fmt: skip
+    headers = ["scenario", "paused for approval", "status", "issue codes", "run_id", "check"]
+    print_table(headers, rows)
+    print("\nAll scenarios behaved as expected." if all_ok else "\nSome scenarios did NOT.")
     return 0 if all_ok else 1
 
 
@@ -288,6 +324,10 @@ def build_parser() -> argparse.ArgumentParser:
     demo = commands.add_parser("demo", help="run example workflows 1-5, then trace example 1")
     demo.add_argument("--mode", choices=LLM_MODES, default="mock")
 
+    commands.add_parser(
+        "graph-demo", help="run example workflows 1-5 through the LangGraph prototype (mock)"
+    )
+
     run = commands.add_parser("run", help="run one request")
     run.add_argument("request")
     run.add_argument("--datasets", nargs="+", required=True)
@@ -330,6 +370,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     settings = load_settings()
     handlers = {
         "demo": cmd_demo,
+        "graph-demo": cmd_graph_demo,
         "run": cmd_run,
         "replay": cmd_replay,
         "trace": cmd_trace,
