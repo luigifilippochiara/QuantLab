@@ -1,6 +1,6 @@
 """The example workflows and the mock eval set give exactly the results of their golden records.
 
-tests/fixtures/golden_scenarios.json holds thirteen records. For each example
+tests/fixtures/golden_scenarios.json holds fourteen records. For each example
 workflow, run in mock mode and auto-approved as `cli demo` does, each holds: the
 status, every static and runtime issue, the plan, every step's input and output
 hashes and metadata, the numbers of every output table and the facts sheet, on
@@ -48,6 +48,10 @@ snapshots.
 - "scenario_4_single_step": all five examples and the mock eval set, recorded after
   commit 2ceea2a, when example 4's simulated planner proposed one unregistered step
   and V01 and V02 became terminal blocks (the whole plan rejected).
+- "golden_set_grown": all five examples and the mock eval set, recorded after commit
+  d1384a2, when the planner's golden set grew from 11 to 50 cases. Every example and
+  every earlier case is exactly as in "scenario_4_single_step"; this record adds the
+  new cases.
 
 Every result must be the same as recorded. The only allowed differences are the
 changes made on purpose since a record was made (MIGRATIONS), applied in order:
@@ -70,7 +74,8 @@ it; example 1's test-only plan replaced it and its eval case, and the test's new
 mean_flagged changed example 5's results (its eval case, a plan and issues, is
 unchanged); example 5's test-only plan then replaced it and its eval case, and
 example 1's plan in the live planner's order replaced it and its eval case, and
-example 4's single unregistered step replaced it and its eval case. No narrative
+example 4's single unregistered step replaced it and its eval case. The golden set
+then grew without changing any earlier case, so it needed no migration. No narrative
 raises N01, and no example or eval request raises R01.
 
 The examples run through the graph (graph.run_graph), the orchestrator. Every record
@@ -396,6 +401,9 @@ MIGRATIONS = {
     "scenario_5_test_only": (SCENARIO_1_LIVE_ORDER, SCENARIO_4_SINGLE_STEP),
     "scenario_1_live_order": (SCENARIO_4_SINGLE_STEP,),
     "scenario_4_single_step": (),
+    # The golden set grew by 39 cases; no existing case or example changed, so the
+    # records above need no migration for it, and this record covers the new cases.
+    "golden_set_grown": (),
 }
 # The records that hold (part of) the mock eval set.
 EVAL_RECORDS = (
@@ -410,6 +418,7 @@ EVAL_RECORDS = (
     "scenario_5_test_only",
     "scenario_1_live_order",
     "scenario_4_single_step",
+    "golden_set_grown",
 )
 
 # Output metadata compared step by step (the notes are free text and are not).

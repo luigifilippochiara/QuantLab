@@ -59,7 +59,10 @@ def test_mock_evaluation_scores_and_report(settings: Settings, tmp_path: Path) -
     # the mock declines it too. Partial credit is scored with a fake live planner below.
     assert not scores["nasdaq_weekly_log_vol"].valid
 
-    assert report.metrics["guardrail_outcome_match"] == 1.0  # every example as canned
+    # Every example gives its canned outcome. Other cases with an expected outcome (the
+    # examples' paraphrases, among others) mostly fail in mock mode, by design.
+    examples = load_golden()[: len(SCENARIOS)]
+    assert all(scores[case.id].guardrails_match for case in examples)
 
     path = write_report(report, tmp_path)
     text = path.read_text()

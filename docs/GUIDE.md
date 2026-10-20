@@ -334,16 +334,25 @@ to **mock**: everything keeps working offline with the canned plans.
 Two separate questions, measured separately:
 
 * **Does the planner choose the right plan?** Measured by `quantlab.cli eval` (or
-  `planner_eval/run_eval.py`) on `planner_eval/golden_requests.yaml`: the five example workflows,
-  simple variations, and adversarial requests (such as a forecast) that must end
-  in a refusal or a BLOCK. Metrics: valid-plan rate, exact capability-sequence
-  match, capability-set Jaccard, key-parameter accuracy, guardrail-outcome match
-  and correct refusal/block rate. Each case is also reported item by item (every
+  `planner_eval/run_eval.py`) on `planner_eval/golden_requests.yaml`: 50 cases, each
+  with the plan it expects. The five example workflows and examples 1 and 5 in other
+  words (shorter, longer, plainer, more technical); every capability as the main
+  point of a case; requests that state a parameter value (a frequency, a window, a
+  quantile, the full-sample threshold, a description without a test); methodological
+  traps the planner should avoid by itself (returns of a yield, a daily series against
+  weekly returns, a volatility of prices, forward returns beyond the outcome); requests
+  with no dataset selected, the series named in words, or more datasets selected than
+  needed; and out-of-scope requests (such as a forecast or a correlation) that must end
+  in a refusal or a BLOCK. Every expected plan was checked with the validator.
+  Metrics: valid-plan rate, exact capability-sequence match, capability-set Jaccard,
+  key-parameter accuracy, guardrail-outcome match and correct refusal/block rate.
+  Each case is also reported item by item (every
   step in order, every key parameter, the issues of each action), so a live
   mismatch shows exactly what the planner chose differently; `--case <id>` runs
   one case, such as example 1's (`s1_chf_safe_haven`).
   Reports go to `planner_eval/reports/`. In mock mode this checks the harness only
-  (the mock knows just the five examples); `--mode live` measures the real model.
+  (the mock knows just the five examples, so most cases fail there by design);
+  `--mode live` measures the real model.
 * **Does the planner refuse when it should, and only then?** Measured by
   `quantlab.cli eval --set adversarial` on `planner_eval/adversarial_requests.yaml`: 33
   requests in eight categories (vague, out-of-scope methods, unavailable data,
@@ -369,7 +378,8 @@ Two separate questions, measured separately:
   Planner-v6 chose an analysis itself when a request had no question. Planner-v7 plans
   only a concrete analytical question, otherwise declines, says what QuantLab can
   compute and suggests requests. It never gives financial advice. On the golden set
-  the two versions score the same (8 of 11, the same three misses). A full run costs
+  as it was then (11 cases) the two versions scored the same (8 of 11, the same three
+  misses). A full run costs
   about $0.02.
 * **Are the computations right?** Measured by the unit tests, independently of
   any model: returns, differences, spread alignment, rolling volatility and

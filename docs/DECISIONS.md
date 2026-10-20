@@ -2479,3 +2479,31 @@ Whether the computations are right is measured by the unit tests, and "evaluatio
 suggested it judged the whole system. **Alternative.** Keep the old names, rejected for
 that reason; renaming the CLI command as well was not done, so the documented commands
 keep working.
+
+
+## The planner golden set grows to 50 cases
+
+**What.** `planner_eval/golden_requests.yaml` grew from 11 to 50 cases; the 11 earlier
+cases are unchanged. The new ones, in commented groups: examples 1 and 5 in four other
+wordings each (the same plan expected), one case per capability as its main point,
+requests that state a non-default parameter (including the full-sample threshold, a V09
+approval, and a description without a test), methodological traps the planner should
+avoid by itself (returns of a yield, the daily VIX against weekly returns, forward
+returns beyond the outcome, volatility of a price, a flag method left unstated, a
+significance question, a spread of two frequencies), dataset naming and selection
+(none selected, or more than needed), and three refusals the adversarial set lacks
+(correlation, a four-week horizon, hourly data). Every expected plan was written out in
+full and run through `validate_plan`, and the expected sequence, key parameters and
+outcome were checked against it. `guardrails` is given where the outcome is the point
+(the examples and their paraphrases, the full-sample case, the traps); elsewhere the
+sequence and key parameters say it all. A plan on two series is expected in the
+examples' order: the series the request names first is prepared first. Mock mode
+knows only the examples, so most new cases fail there by design; the mock test now
+derives its checks from the file, and the golden record `golden_set_grown` pins every
+case's mock result, with every earlier case and example identical. The planner, its
+prompt, the registry, the guardrails and the scoring are unchanged. **Why.** Eleven
+cases, five of them the examples the prompt was tuned on, could not show whether the
+planner generalises: wording, every capability and parameter, the methodological
+rules and dataset naming each needed cases of their own. **Alternatives.** Generating
+cases from templates (many near-identical requests, little new wording); more refusal
+cases here (the adversarial set covers that boundary).
