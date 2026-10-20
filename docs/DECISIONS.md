@@ -2440,3 +2440,26 @@ like the stage letters: `validator.py` raises V as `executor.py` raises E and
 `narrator.py` N, and the table they all read sits apart from any one stage.
 **Alternative.** Keep one file, rejected: the table every stage imports and the logic of
 one stage would stay mixed, and a reader looking for either would scroll past the other.
+
+
+## graph.py split into nodes and wiring
+
+**What.** `graph.py` (about 1,195 lines) held both what each step of a run does and how
+the steps are connected; it is now two modules. `nodes.py` holds the run's state
+(`GraphState`, `GraphContext`, `ReviewDecision`, `MAX_CHANGE_REQUESTS`), the state readers
+the nodes and the app use, the recording helpers (`build_record`, `_save`...) and every
+node. `graph.py` (about 320 lines) keeps the edges, `CHECKPOINT_TYPES`, `new_checkpointer`,
+`build_graph` and the run API (`GraphRun`, `start_run`, `resume_run`, `run_graph`). The
+edge after the validator, `after_validation`, is in `nodes.py`: `validator_node` consults
+it to save a run that will pause for review, and `graph.py` imports it to wire it. Only
+code moved: no function body, node or event name, or order of nodes and edges changed,
+and the golden records match with no migration. `graph.py` imports `nodes.py`, never the
+reverse, and every caller imports each name from the module that defines it. Both
+modules import LangGraph (the nodes need `Runtime` and `interrupt`), and the safety test
+now allows exactly those two. This reverses "graph.py stays one module, in named
+sections". **Why.** The whole flow reads in one short file, in the order LangGraph itself
+is explained (nodes, edges, compile), and the imports go one way: the steps never depend
+on the wiring. **Alternatives.** `state.py` + `graph.py` (the nodes would stay mixed with
+the wiring); `graph.py` + a `runs.py` API module (the run API is about 120 lines, and the
+nodes would stay in `graph.py`); keep one file (the earlier decision: everything in one
+place, but about 1,200 lines to read for the flow).

@@ -8,7 +8,7 @@
     uv run python -m quantlab.cli eval --mode live --case s1_chf_safe_haven
     uv run python -m quantlab.cli eval --set adversarial --mode live   # refuse or plan?
 
-Role in the architecture: a thin, headless front end over graph.py (the
+Role in the architecture: a thin, headless front end over graph.py and nodes.py (the
 orchestrator), lineage.py and evaluation.py; it contains no analysis logic of its own.
 """
 
@@ -23,17 +23,10 @@ from quantlab.evaluation import (
     write_adversarial_report,
     write_report,
 )
-from quantlab.graph import (
-    GraphState,
-    build_graph,
-    issue_codes,
-    resume_run,
-    run_graph,
-    start_run,
-    unresolved_approvals,
-)
+from quantlab.graph import build_graph, resume_run, run_graph, start_run
 from quantlab.lineage import TraceResult, load_run, replay, trace
 from quantlab.mock_scenarios import SCENARIOS
+from quantlab.nodes import GraphState, issue_codes, unresolved_approvals
 from quantlab.plan import describe_plan
 
 

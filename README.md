@@ -21,10 +21,10 @@ a deterministic check verifies every number it writes (N01). Every run is saved,
 be replayed without the LLM and traced to the source file. The LLM proposes, the
 system disposes.
 
-One LangGraph graph ([src/quantlab/graph.py](src/quantlab/graph.py)) runs this
-pipeline for the app, the CLI and the notebooks: each stage is a node, and the review
-is an interrupt where the run pauses, its state checkpointed, until the reviewer
-answers.
+One LangGraph graph ([src/quantlab/graph.py](src/quantlab/graph.py), its nodes in
+[src/quantlab/nodes.py](src/quantlab/nodes.py)) runs this pipeline for the app, the
+CLI and the notebooks: each stage is a node, and the review is an interrupt where the
+run pauses, its state checkpointed, until the reviewer answers.
 
 ## Request changes
 
@@ -118,7 +118,7 @@ the snapshots. The full roadmap is in
 | [docs/DECISIONS.md](docs/DECISIONS.md) | Every design decision, with its reason and the alternatives |
 | [docs/SPEC.md](docs/SPEC.md) | The original v1 specification |
 | [data/README.md](data/README.md) | Datasets, sources, licences and snapshot hashes |
-| [src/quantlab/](src/quantlab/) | The package: registry, guardrails, validator, planner, executor, narrator, lineage, and the graph that orchestrates them |
+| [src/quantlab/](src/quantlab/) | The package: registry, guardrails, validator, planner, executor, narrator, lineage, and the graph and its nodes that orchestrate them |
 | [app/](app/) | The Streamlit app |
 | [notebooks/](notebooks/) | One notebook per layer, run in mock mode |
 | [tests/](tests/) | The test suite, with synthetic data and simulated LLM clients |

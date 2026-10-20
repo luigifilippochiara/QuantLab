@@ -48,10 +48,9 @@ REGISTRY, LLM summary, version) -> `plan` (Pydantic Plan/Step) -> `guardrails`
 dry run, edit lock) -> `mock_scenarios` (example workflows) ->
 `executor` (dispatch, runtime guardrails, step records) -> `planner` /
 `narrator` (the only LLM code; OpenAI and Anthropic) -> `lineage` (manifest, replay, trace) ->
-`monitoring` (events.jsonl, the Monitoring page's metrics) -> `graph` (the orchestrator
-used by the app, CLI and notebooks: LangGraph nodes for the stages, the approval
-interrupt, an in-memory checkpointer, change requests) -> `evaluation`, `cli`. The
-Streamlit app is in `app/` (user interface only).
+`monitoring` (events.jsonl, the Monitoring page's metrics) -> `nodes` (run state, the
+nodes) -> `graph` (edges, checkpointer, run API; used by the app, CLI and notebooks)
+-> `evaluation`, `cli`. The Streamlit app is in `app/` (user interface only).
 
 ## Adding a capability
 
@@ -77,9 +76,9 @@ significance test (`hac_mean_difference`), and no forecasts or models (see
 - Python 3.12+, managed with uv. Direct dependencies pinned exactly in
   `pyproject.toml`; do not add libraries without a recorded decision
   (deliberately excluded: scikit-learn, arch, LangChain and other frameworks;
-  LangGraph is the one accepted framework, for the orchestrator in `graph.py`, and
-  nothing else may use it; statsmodels is used only for the significance test, and
-  scipy, which it installs, is never imported directly).
+  LangGraph is the one accepted framework, for the orchestrator in `graph.py` and
+  `nodes.py`, and nothing else may use it; statsmodels is used only for the
+  significance test, and scipy, which it installs, is never imported directly).
 - Clear, explicit code: plain functions, Pydantic models (for untrusted input
   and records) and dataclasses (for specs). No metaprogramming, no
   registration decorators, no deep class hierarchies.

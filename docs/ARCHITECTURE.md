@@ -75,7 +75,8 @@ QuantLab also runs fully offline in **mock mode**, which needs no API key.
 | `narrator.py` | Facts sheet, LLM narrator, template fallback, numeric grounding check (N01) |
 | `lineage.py` | Run record (manifest), save/load, replay, trace |
 | `monitoring.py` | Append-only JSONL event log; the Monitoring page's metrics, from run records and events, and its attention thresholds |
-| `graph.py` | The orchestrator, a LangGraph graph: one node per stage, review as an interrupt, edits and change requests back through validation, every run saved; used by app, CLI, notebooks |
+| `nodes.py` | The run's state and one node per stage (each logs its monitoring events and returns the fields it changes); review as an interrupt; the run record built and saved |
+| `graph.py` | The orchestrator, a LangGraph graph: the edges (edits and change requests back through validation), the checkpointer and the run API; used by app, CLI, notebooks |
 | `evaluation.py` | Planner evaluation on golden requests |
 | `cli.py` | `python -m quantlab.cli demo / run / replay / trace / eval` |
 
@@ -85,8 +86,9 @@ enforces this). Everything else is deterministic Python.
 ### Orchestration: one graph
 
 `graph.py` runs every request, for the app, the CLI and the notebooks, as a LangGraph
-`StateGraph`. Each stage is a node that calls one module's function and returns the
-fields of the run's state it changes:
+`StateGraph`: it holds the edges, the checkpointer and the run API, and `nodes.py`
+holds the run's state and the nodes. Each stage is a node that calls one module's
+function and returns the fields of the run's state it changes:
 
 ```text
 request_check -> planner -> validator -> approval -> executor -> narrator -> recorder

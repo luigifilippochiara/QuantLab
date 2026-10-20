@@ -90,9 +90,10 @@ import pytest
 from quantlab.config import PROJECT_ROOT, Settings
 from quantlab.data import load_catalog
 from quantlab.evaluation import load_golden, score_case
-from quantlab.graph import GraphState, run_graph
+from quantlab.graph import run_graph
 from quantlab.guardrails import GUARDRAILS, Issue
 from quantlab.mock_scenarios import SCENARIOS
+from quantlab.nodes import GraphState
 from quantlab.planner import generate_plan
 from quantlab.types import DataType, canonical_text
 from quantlab.validator import fill_defaults, validate_plan

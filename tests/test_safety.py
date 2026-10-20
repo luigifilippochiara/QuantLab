@@ -49,12 +49,13 @@ def test_llm_is_used_only_by_planner_and_narrator() -> None:
 
 
 def test_langgraph_is_used_only_by_the_graph() -> None:
-    """LangGraph is the orchestrator's framework only: no other module, and no page of
-    the app, imports it (the app goes through quantlab.graph)."""
+    """LangGraph is the orchestrator's framework only: the graph (graph.py) and its nodes
+    (nodes.py) import it, no other module and no page of the app does (the app goes
+    through quantlab.graph and quantlab.nodes)."""
     app_files = sorted((PROJECT_ROOT / "app").rglob("*.py"))
     importers = {
         p.name
         for p in [*source_files(), *app_files]
         if re.search(r"^from langgraph|^import langgraph", p.read_text(), re.MULTILINE)
     }
-    assert importers == {"graph.py"}
+    assert importers == {"graph.py", "nodes.py"}

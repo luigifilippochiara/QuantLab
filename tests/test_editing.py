@@ -11,17 +11,11 @@ from typing import Any
 import pytest
 
 from quantlab.config import Settings
-from quantlab.graph import (
-    current_plan_hash,
-    refusal_reason,
-    reset_edits,
-    resume_run,
-    run_graph,
-    unresolved_approvals,
-)
+from quantlab.graph import resume_run, run_graph
 from quantlab.lineage import Approval, load_run, replay, trace
 from quantlab.mock_scenarios import SCENARIOS_BY_ID
 from quantlab.monitoring import read_events
+from quantlab.nodes import current_plan_hash, refusal_reason, reset_edits, unresolved_approvals
 
 from conftest import (
     RETURN_METHOD_APPROVAL,
@@ -203,7 +197,7 @@ def never_called(*args: Any, **kwargs: Any) -> None:
 def test_a_rejected_plan_cannot_be_edited_approved_rejected_or_executed(
     settings: Settings, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    monkeypatch.setattr("quantlab.graph.execute_plan", never_called)
+    monkeypatch.setattr("quantlab.nodes.execute_plan", never_called)
     graph, run = start_review("prompt_injection_unknown_capability", settings)
     assert run.state["report"].is_rejected and run.state["status"] == "blocked"
     # The validator rejected the plan: the run went to the recorder and ended, so there
@@ -230,7 +224,7 @@ def test_a_blocked_plan_never_reaches_the_executor(
     settings: Settings, monkeypatch: pytest.MonkeyPatch, scenario_id: str
 ) -> None:
     # Rejected (V02) or fixable (V08): blocked by the validator, never executed.
-    monkeypatch.setattr("quantlab.graph.execute_plan", never_called)
+    monkeypatch.setattr("quantlab.nodes.execute_plan", never_called)
     graph, run = start_review(scenario_id, settings)
     assert run.state["report"].is_blocked
     if run.paused_for is not None:  # fixable: Execute, with every approval, is refused
@@ -262,7 +256,7 @@ def test_scenario_4_loads_no_data_and_runs_no_step(
         raise AssertionError("a dataset was loaded")
 
     monkeypatch.setattr("quantlab.capabilities.load_dataset", no_loading)
-    monkeypatch.setattr("quantlab.graph.execute_plan", never_called)
+    monkeypatch.setattr("quantlab.nodes.execute_plan", never_called)
     scenario = SCENARIOS_BY_ID["prompt_injection_unknown_capability"]
     state = run_graph(scenario.request, list(scenario.dataset_ids), "mock", settings=settings)
     assert state["status"] == "blocked" and "steps" not in state

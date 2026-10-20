@@ -1,4 +1,5 @@
-"""Change requests: a reviewer's comment sends the plan back to the planner (graph.py).
+"""Change requests: a reviewer's comment sends the plan back to the planner (nodes.py,
+graph.py).
 
 Live mode with a fake planner (tests/fakes.py), so no network: the fake serves the
 first plan, each revision and the narrative in order, and fails on any other call,
@@ -10,17 +11,12 @@ from typing import Any
 import pytest
 
 from quantlab.config import Settings
-from quantlab.graph import (
-    MAX_CHANGE_REQUESTS,
-    GraphRun,
-    build_graph,
-    resume_run,
-    start_run,
-)
+from quantlab.graph import GraphRun, build_graph, resume_run, start_run
 from quantlab.guardrails import MAX_REQUEST_CHARS
 from quantlab.lineage import load_run, replay
 from quantlab.mock_scenarios import SCENARIOS_BY_ID
 from quantlab.monitoring import read_events
+from quantlab.nodes import MAX_CHANGE_REQUESTS
 
 from conftest import CHANGE_REQUEST_COMMENT, raw_plan, spread_weekly_plan
 from fakes import FakeAnthropicClient, FakeResponse, text_response, tool_response

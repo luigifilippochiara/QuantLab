@@ -15,7 +15,7 @@ import pytest
 
 from quantlab.config import PROJECT_ROOT, Settings
 from quantlab.data import Catalog, load_catalog
-from quantlab.graph import refusal_reason, run_graph
+from quantlab.graph import run_graph
 from quantlab.guardrails import Action
 from quantlab.lineage import replay
 from quantlab.mock_scenarios import (
@@ -28,6 +28,7 @@ from quantlab.mock_scenarios import (
     match_scenario,
 )
 from quantlab.narrator import AI_WRITTEN_NOTE, NUMBERS_CHECKED_NOTE
+from quantlab.nodes import refusal_reason
 from quantlab.plan import Plan
 from quantlab.registry import REGISTRY
 from quantlab.validator import fill_defaults, validate_plan

@@ -15,21 +15,18 @@ import pandas as pd
 import streamlit as st
 
 from quantlab.config import LLM_MODES
-from quantlab.graph import (
-    MAX_CHANGE_REQUESTS,
-    GraphRun,
-    build_graph,
-    change_request_refusal,
-    current_plan_hash,
-    reset_edits,
-    resume_run,
-    revision_number,
-    start_run,
-)
-from quantlab.graph import proposal as current_proposal
+from quantlab.graph import GraphRun, build_graph, resume_run, start_run
 from quantlab.guardrails import ENFORCERS, Action
 from quantlab.lineage import replay, trace
 from quantlab.mock_scenarios import SCENARIOS, match_scenario
+from quantlab.nodes import (
+    MAX_CHANGE_REQUESTS,
+    change_request_refusal,
+    current_plan_hash,
+    reset_edits,
+    revision_number,
+)
+from quantlab.nodes import proposal as current_proposal
 from quantlab.registry import REGISTRY
 
 import ui
