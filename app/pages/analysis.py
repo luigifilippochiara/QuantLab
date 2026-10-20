@@ -34,7 +34,7 @@ from quantlab.registry import REGISTRY
 
 import ui
 
-# The two decisions on a plan in their own colours: Execute green, Reject plan red.
+# The two decisions on a plan in their own colours: Execute plan green, Reject plan red.
 # Streamlit has no colour option for a button, so each one has a key, which gives its
 # container a CSS class, and these rules colour it while enabled (a disabled button
 # keeps the neutral disabled look). White text on both: contrast 5.0:1 and 4.8:1.
@@ -437,7 +437,7 @@ if offer_changes:
 else:
     execute_col, reject_col = st.columns(2)
 if execute_col.button(
-    "Execute",
+    "Execute plan",
     key="execute",
     type="primary",
     icon=":material/play_arrow:",

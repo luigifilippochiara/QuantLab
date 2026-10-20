@@ -98,9 +98,9 @@ def test_scenario_1_full_flow(app_env: Settings) -> None:
     # The plan is reviewed in the readable view only: no raw JSON of it on this page.
     assert not any("JSON" in e.label for e in app.expander) and not app.json
 
-    assert button(app, "Execute").disabled  # the V10 approvals are not ticked yet
+    assert button(app, "Execute plan").disabled  # the V10 approvals are not ticked yet
     approve_all(app)
-    button(app, "Execute").click().run()
+    button(app, "Execute plan").click().run()
     assert not app.exception, app.exception
 
     successes = [s.value for s in app.success]
@@ -171,7 +171,7 @@ def test_scenario_1_shows_its_recorded_narrative_on_the_committed_data(
         pytest.skip("the committed snapshots changed since example 1's narrative was recorded")
     app = plan_scenario_1(app_env)
     approve_all(app)
-    button(app, "Execute").click().run()
+    button(app, "Execute plan").click().run()
     assert not app.exception, app.exception
     assert any(m.value == ui_escaped(VIX_CHF_NARRATIVE.text) for m in app.markdown)
     assert any("numbers verified" in s.value for s in app.success)
@@ -314,7 +314,7 @@ def test_datasets_are_picked_by_ticker_and_listed_ticker_first(app_env: Settings
     assert "- SP500 - Synthetic S&P 500" in load.help
 
     approve_all(app)
-    button(app, "Execute").click().run()
+    button(app, "Execute plan").click().run()
     label = ui_escaped("NASDAQCOM - Synthetic equity index")  # captions are Markdown
     assert any(c.value == f"Source: {label}" for c in app.caption)
     sources = next(d.value for d in app.dataframe if "file sha256" in d.value.columns)
@@ -381,7 +381,7 @@ def test_blocked_scenario_cannot_execute(app_env: Settings) -> None:
     app = open_page("analysis.py")
     app.sidebar.button(key="scenario-spread_frequency_mismatch_block").click().run()
     button(app, "Generate plan").click().run()
-    assert button(app, "Execute").disabled
+    assert button(app, "Execute plan").disabled
     assert any("blocked" in m.value for m in app.markdown if "Run `" in m.value)
     # A blocked plan can still be rejected.
     assert not button(app, "Reject plan").disabled
@@ -399,7 +399,7 @@ def test_a_planner_refusal_is_shown_in_the_plan_not_in_validation(app_env: Setti
     (card,) = [m.value for m in app.markdown if "PLANNER_REFUSED" in m.value]
     assert card.endswith("**P01 PLANNER_REFUSED** · request")
     labels = [b.label for b in app.button]
-    assert not any(label.startswith(("Execute", "Reject plan")) for label in labels)
+    assert not any(label.startswith(("Execute plan", "Reject plan")) for label in labels)
     assert app.main.caption[-1].value == "Nothing was executed. Write a new request to continue."
 
 
@@ -415,7 +415,7 @@ def test_a_request_too_long_is_shown_before_the_plan(app_env: Settings) -> None:
     assert card.endswith("**R01 REQUEST_TOO_LONG** · request")
     assert not app.error
     labels = [b.label for b in app.button]
-    assert not any(label.startswith(("Execute", "Reject plan")) for label in labels)
+    assert not any(label.startswith(("Execute plan", "Reject plan")) for label in labels)
     assert app.main.caption[-1].value == (
         "The planner was not called and nothing was executed. Write a new request to continue."
     )
@@ -449,7 +449,7 @@ def test_scenario_4_is_rejected_whole_with_a_banner_and_no_controls(app_env: Set
     assert not app.number_input and not app.checkbox
     assert not [s for s in app.selectbox if s.key and s.key.startswith("param-")]
     labels = [b.label for b in app.button]
-    for hidden in ("Apply changes", "Reset to planner", "Execute", "Reject plan"):
+    for hidden in ("Apply changes", "Reset to planner", "Execute plan", "Reject plan"):
         assert not any(label.startswith(hidden) for label in labels), hidden
     assert "Nothing was executed. Write a new request to continue." in [
         c.value for c in app.caption]  # fmt: skip
@@ -467,7 +467,7 @@ def test_execute_is_green_and_reject_red(app_env: Settings) -> None:
     button(app, "Generate plan").click().run()
     # Each decision button has a key, whose CSS class the page's style block colours.
     assert (app.button(key="execute").label, app.button(key="reject-plan").label) == (
-        "Execute", "Reject plan")  # fmt: skip
+        "Execute plan", "Reject plan")  # fmt: skip
     (style,) = [h.proto.body for h in app.get("html") if "st-key-execute" in h.proto.body]
     assert ".st-key-execute button:not(:disabled)" in style and "#188038" in style  # green
     assert ".st-key-reject-plan button:not(:disabled)" in style and "#d93025" in style  # red
@@ -479,7 +479,7 @@ def test_the_reviewer_can_reject_a_plan(app_env: Settings) -> None:
     button(app, "Generate plan").click().run()
     button(app, "Reject plan").click().run()
     assert not app.exception, app.exception
-    assert button(app, "Execute").disabled and button(app, "Reject plan").disabled
+    assert button(app, "Execute plan").disabled and button(app, "Reject plan").disabled
     assert any(i.value.startswith("You rejected this plan") for i in app.info)
     [record] = load_runs(app_env.runs_dir)
     assert (record.status, record.decision, record.interactive) == ("rejected", "rejected", True)
@@ -717,7 +717,7 @@ def test_weekly_to_daily_edit_re_validates_and_runs_after_re_approval(app_env: S
     assert "counted in periods of the input's frequency" in history.help
 
     next(s for s in app.selectbox if s.key.endswith("-s2-freq")).select("D").run()
-    assert button(app, "Execute").disabled  # the change is not applied yet
+    assert button(app, "Execute plan").disabled  # the change is not applied yet
     assert any(c.value == "Apply or reset your parameter changes to continue." for c in app.caption)
 
     button(app, "Apply changes").click().run()
@@ -726,7 +726,7 @@ def test_weekly_to_daily_edit_re_validates_and_runs_after_re_approval(app_env: S
     assert any("edited (was Weekly)" in c.value for c in app.caption)
 
     approve_all(app)
-    button(app, "Execute").click().run()
+    button(app, "Execute plan").click().run()
     assert not app.exception, app.exception
     trace = next(d.value for d in app.dataframe if "library call" in d.value.columns)
     params = dict(zip(trace["step"], trace["params"], strict=True))
@@ -780,7 +780,7 @@ def test_execute_ignores_a_click_while_a_change_is_not_applied(app_env: Settings
     # A value typed, then Execute clicked straight away: both reach the same run, where
     # the unapplied change disables Execute, so Streamlit does not count the click.
     next(n for n in app.number_input if n.key.endswith("-s4-min_periods")).set_value(104)
-    button(app, "Execute").click().run()
+    button(app, "Execute plan").click().run()
     assert not app.exception, app.exception
     assert "Results" not in [h.value for h in app.subheader]  # nothing ran
     assert any(c.value == "Apply or reset your parameter changes to continue." for c in app.caption)
@@ -819,7 +819,7 @@ def test_plan_steps_are_collapsed_and_approvals_stay_in_validation(app_env: Sett
     assert v10[0].endswith("· Step 3 · C03 · Compute returns (s3)")
     assert v10[1].endswith("· Step 5 · C08 · Forward return (s5)")
     assert len([c for c in app.checkbox if c.key.startswith("approve-")]) == 2
-    assert button(app, "Execute").disabled
+    assert button(app, "Execute plan").disabled
     # Collapsing is visual only: the editor still runs.
     assert next(n for n in app.number_input if n.key.endswith("-s4-min_periods")).value == 52
 
@@ -933,7 +933,7 @@ def test_each_regime_chart_belongs_to_its_flag_regime_step(
 def test_the_regime_chart_is_in_the_open_flag_regime_section(app_env: Settings) -> None:
     app = plan_scenario_1(app_env)
     approve_all(app)
-    button(app, "Execute").click().run()
+    button(app, "Execute plan").click().run()
     assert not app.exception, app.exception
     sections = {e.label.split(" · completed")[0]: e for e in app.expander if " · C" in e.label}
     flags, series = sections["s3 · C07 · Flag regime"], sections["s2 · C02 · Resample"]
@@ -1233,7 +1233,7 @@ def test_a_change_request_revises_the_plan_on_the_page(app_env: Settings) -> Non
     narrative = text_response("The flagged weeks are the most inverted of the whole history.")
     app = live_page(app_env, [tool_response(spread_weekly_plan()), narrative])
     # Blocked by V08: no Execute, but Execute | Request changes | Reject are offered.
-    assert button(app, "Execute").disabled and not app.button(key="request-changes").disabled
+    assert button(app, "Execute plan").disabled and not app.button(key="request-changes").disabled
     request_changes(app, CHANGE_REQUEST_COMMENT)
     # The revision: its number, the comment, and the diff of steps and parameters.
     badge = next(m.value for m in app.markdown if "Revision 1 of 3" in m.value)
@@ -1247,7 +1247,7 @@ def test_a_change_request_revises_the_plan_on_the_page(app_env: Settings) -> Non
     # V08 is gone; the look-ahead approval (V09) remains, then Execute runs it.
     assert not any("FREQUENCY_MISMATCH" in m.value for m in app.markdown)
     approve_all(app)
-    button(app, "Execute").click().run()
+    button(app, "Execute plan").click().run()
     assert app.session_state["run"].state["status"] == "completed"
     # The trace shows how the plan came about, and still traces the executed plan.
     assert any(m.value == "**Revision history**" for m in app.markdown)
@@ -1275,7 +1275,7 @@ def test_after_the_last_change_request_only_execute_and_reject_remain(app_env: S
         request_changes(app, f"try again, attempt {number + 1}")
     assert any("Revision 3 of 3" in m.value for m in app.markdown)
     labels = [b.label for b in app.button]
-    assert "Request changes" not in labels and "Execute" in labels and "Reject plan" in labels
+    assert "Request changes" not in labels and "Execute plan" in labels and "Reject plan" in labels
     assert not [t for t in app.text_area if t.key.startswith("comment-")]
 
 

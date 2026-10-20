@@ -65,7 +65,7 @@ The **Analysis** page follows the safety model step by step:
    above where the plan would be, since the planner is never called; a request the
    planner declines (P01) is shown in the **Plan** section. Neither has a
    Validation section or anything to execute or reject.
-4. Click **Execute** (your approval of the plan). Results appear per step: charts for series (with flagged
+4. Click **Execute plan** (your approval of the plan). Results appear per step: charts for series (with flagged
    periods shaded), tables for statistics, and a plain-English narrative marked
    "all numbers verified" when every number checks out. A short note under the
    narrative says who wrote it (an AI narrative may contain errors in wording or
