@@ -1,7 +1,7 @@
 """Planner evaluation: does the planner pick the right plan for known requests?
 
 Role in the architecture: this measures PLANNER accuracy only. It runs the
-planner (mock or live) on the golden requests in eval/golden_requests.yaml,
+planner (mock or live) on the golden requests in planner_eval/golden_requests.yaml,
 validates each plan, and scores it against the expected capability sequence,
 key parameters and (where given) the expected guardrail outcome. It does not
 execute anything: whether the computations themselves are right is measured
@@ -18,9 +18,9 @@ Metrics (normal cases = expect "plan"; adversarial = expect "refuse_or_block"):
 Each normal case is also scored item by item (every step in order, every key
 parameter, each action of the guardrail outcome), so a mismatch shows exactly
 what the planner chose differently. The CLI (`quantlab.cli eval`) and
-eval/run_eval.py both call `run_evaluation`.
+planner_eval/run_eval.py both call `run_evaluation`.
 
-A second, separate set (eval/adversarial_requests.yaml, `run_adversarial`) checks
+A second, separate set (planner_eval/adversarial_requests.yaml, `run_adversarial`) checks
 the boundary instead: vague, out-of-scope, unavailable-data, advice, injection,
 off-topic and mixed requests must be refused (P01), and valid but loosely worded
 ones must be planned. It reports accuracy per category, false plans and false
@@ -45,8 +45,8 @@ from quantlab.planner import PROMPT_VERSION, PlanResult, generate_plan
 from quantlab.registry import REGISTRY
 from quantlab.validator import effective_params, fill_defaults, validate_plan
 
-GOLDEN_PATH = PROJECT_ROOT / "eval" / "golden_requests.yaml"
-ADVERSARIAL_PATH = PROJECT_ROOT / "eval" / "adversarial_requests.yaml"
+GOLDEN_PATH = PROJECT_ROOT / "planner_eval" / "golden_requests.yaml"
+ADVERSARIAL_PATH = PROJECT_ROOT / "planner_eval" / "adversarial_requests.yaml"
 # The adversarial set's categories, in report order.
 ADVERSARIAL_CATEGORIES = (
     "vague",
@@ -58,7 +58,7 @@ ADVERSARIAL_CATEGORIES = (
     "mixed",
     "valid_loose",
 )
-REPORTS_DIR = PROJECT_ROOT / "eval" / "reports"
+REPORTS_DIR = PROJECT_ROOT / "planner_eval" / "reports"
 
 # The keys of a golden case's `guardrails` entry (one per action), and the item
 # names they are reported under.
@@ -451,7 +451,7 @@ def write_report(report: EvalReport, reports_dir: Path = REPORTS_DIR) -> Path:
 
 @dataclass
 class AdversarialCase:
-    """One adversarial request (see the header of eval/adversarial_requests.yaml)."""
+    """One adversarial request (see the header of planner_eval/adversarial_requests.yaml)."""
 
     id: str
     category: str

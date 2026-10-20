@@ -5,8 +5,8 @@
 runs/
 
 # Evaluation reports are timestamped outputs; regenerate with `quantlab.cli eval`.
-eval/reports/*
-!eval/reports/.gitkeep
+planner_eval/reports/*
+!planner_eval/reports/.gitkeep
 
 # NOTE: data/snapshots/*.csv IS committed on purpose, so every run is reproducible
 # from a clean clone without network access (see data/README.md).

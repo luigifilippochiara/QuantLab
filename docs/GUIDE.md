@@ -27,7 +27,7 @@ uv run python -m quantlab.cli demo                # run the example workflows, t
 uv run python -m quantlab.cli run 1 --datasets VIXCLS DEXSZUS --mode mock --approve-all   # example 1 by number
 uv run python -m quantlab.cli replay <run_id>     # re-run without the model, compare hashes
 uv run python -m quantlab.cli trace <run_id> s5   # where does this number come from?
-uv run python -m quantlab.cli eval --mode mock    # planner evaluation -> eval/reports/
+uv run python -m quantlab.cli eval --mode mock    # planner evaluation -> planner_eval/reports/
 uv run python -m quantlab.cli eval --mode live --case s1_chf_safe_haven   # one case, item by item
 uv run python -m quantlab.cli eval --set adversarial --mode live   # refuse or plan? (33 cases)
 
@@ -334,7 +334,7 @@ to **mock**: everything keeps working offline with the canned plans.
 Two separate questions, measured separately:
 
 * **Does the planner choose the right plan?** Measured by `quantlab.cli eval` (or
-  `eval/run_eval.py`) on `eval/golden_requests.yaml`: the five example workflows,
+  `planner_eval/run_eval.py`) on `planner_eval/golden_requests.yaml`: the five example workflows,
   simple variations, and adversarial requests (such as a forecast) that must end
   in a refusal or a BLOCK. Metrics: valid-plan rate, exact capability-sequence
   match, capability-set Jaccard, key-parameter accuracy, guardrail-outcome match
@@ -342,10 +342,10 @@ Two separate questions, measured separately:
   step in order, every key parameter, the issues of each action), so a live
   mismatch shows exactly what the planner chose differently; `--case <id>` runs
   one case, such as example 1's (`s1_chf_safe_haven`).
-  Reports go to `eval/reports/`. In mock mode this checks the harness only
+  Reports go to `planner_eval/reports/`. In mock mode this checks the harness only
   (the mock knows just the five examples); `--mode live` measures the real model.
 * **Does the planner refuse when it should, and only then?** Measured by
-  `quantlab.cli eval --set adversarial` on `eval/adversarial_requests.yaml`: 33
+  `quantlab.cli eval --set adversarial` on `planner_eval/adversarial_requests.yaml`: 33
   requests in eight categories (vague, out-of-scope methods, unavailable data,
   advice, prompt injection, off-topic, mixed, and valid but loosely worded), each
   expected to be refused (P01) or planned. The report gives accuracy per category,
@@ -394,7 +394,7 @@ scripts/fetch_data.py       refreshes the FRED snapshot and catalog
 src/quantlab/               the package (module map: ARCHITECTURE.md)
 app/                        Streamlit: streamlit_app.py (router), ui.py, pages/
 notebooks/01..08            one notebook per layer, executed in mock mode
-eval/                       golden_requests.yaml, run_eval.py, reports/
+planner_eval/               golden_requests.yaml, run_eval.py, reports/
 tests/                      pytest suite (synthetic data, simulated model clients)
 runs/                       run records, plan cache, events.jsonl (git-ignored)
 ```

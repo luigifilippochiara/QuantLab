@@ -9,7 +9,8 @@
     uv run python -m quantlab.cli eval --set adversarial --mode live   # refuse or plan?
 
 Role in the architecture: a thin, headless front end over graph.py and nodes.py (the
-orchestrator), lineage.py and evaluation.py; it contains no analysis logic of its own.
+orchestrator), lineage.py and planner_evaluation.py; it contains no analysis logic of
+its own.
 """
 
 import argparse
@@ -17,17 +18,17 @@ import sys
 from collections.abc import Sequence
 
 from quantlab.config import LLM_MODES, Settings, load_settings
-from quantlab.evaluation import (
-    run_adversarial,
-    run_evaluation,
-    write_adversarial_report,
-    write_report,
-)
 from quantlab.graph import build_graph, resume_run, run_graph, start_run
 from quantlab.lineage import TraceResult, load_run, replay, trace
 from quantlab.mock_scenarios import SCENARIOS
 from quantlab.nodes import GraphState, issue_codes, unresolved_approvals
 from quantlab.plan import describe_plan
+from quantlab.planner_evaluation import (
+    run_adversarial,
+    run_evaluation,
+    write_adversarial_report,
+    write_report,
+)
 
 
 def print_table(headers: Sequence[str], rows: Sequence[Sequence[object]]) -> None:
@@ -224,7 +225,7 @@ def cmd_trace(args: argparse.Namespace, settings: Settings) -> int:
 
 
 def cmd_eval(args: argparse.Namespace, settings: Settings) -> int:
-    """Evaluate the planner on the golden requests and write a Markdown report.
+    """Planner evaluation: score the planner on the golden requests and write a report.
 
     Item checks (expected versus planned) are printed for the cases named with
     --case, all of them; without --case, only the items that do not match. With
@@ -258,7 +259,7 @@ def cmd_eval(args: argparse.Namespace, settings: Settings) -> int:
 
 
 def cmd_eval_adversarial(args: argparse.Namespace, settings: Settings) -> int:
-    """Evaluate the planner on the adversarial set (refuse or plan) and write a report."""
+    """Planner evaluation on the adversarial set (refuse or plan): score it, write a report."""
     report = run_adversarial(args.mode, settings, holdout=args.holdout)
     path = write_adversarial_report(report)
     print_table(
@@ -304,7 +305,9 @@ def build_parser() -> argparse.ArgumentParser:
     trace_cmd.add_argument("run_id")
     trace_cmd.add_argument("step_id")
 
-    evaluate = commands.add_parser("eval", help="evaluate the planner on golden requests")
+    evaluate = commands.add_parser(
+        "eval", help="planner evaluation on golden or adversarial requests"
+    )
     evaluate.add_argument("--mode", choices=LLM_MODES, default="mock")
     evaluate.add_argument(
         "--set", choices=("golden", "adversarial"), default="golden",

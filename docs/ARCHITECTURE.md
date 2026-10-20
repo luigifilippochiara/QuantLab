@@ -77,7 +77,7 @@ QuantLab also runs fully offline in **mock mode**, which needs no API key.
 | `monitoring.py` | Append-only JSONL event log; the Monitoring page's metrics, from run records and events, and its attention thresholds |
 | `nodes.py` | The run's state and one node per stage (each logs its monitoring events and returns the fields it changes); review as an interrupt; the run record built and saved |
 | `graph.py` | The orchestrator, a LangGraph graph: the edges (edits and change requests back through validation), the checkpointer and the run API; used by app, CLI, notebooks |
-| `evaluation.py` | Planner evaluation on golden requests |
+| `planner_evaluation.py` | Planner evaluation on the golden and adversarial requests |
 | `cli.py` | `python -m quantlab.cli demo / run / replay / trace / eval` |
 
 The language model appears only in `planner.py` and `narrator.py` (a test

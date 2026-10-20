@@ -122,4 +122,4 @@ the snapshots. The full roadmap is in
 | [app/](app/) | The Streamlit app |
 | [notebooks/](notebooks/) | One notebook per layer, run in mock mode |
 | [tests/](tests/) | The test suite, with synthetic data and simulated LLM clients |
-| [eval/](eval/) | Golden and adversarial request sets, and the evaluation runner |
+| [planner_eval/](planner_eval/) | Golden and adversarial request sets, and the planner evaluation runner |

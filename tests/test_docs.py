@@ -4,9 +4,9 @@ import json
 import re
 
 from quantlab.config import PROJECT_ROOT
-from quantlab.evaluation import load_golden
 from quantlab.guardrails import CATEGORY_DEFINITIONS, GUARDRAILS, Category
 from quantlab.mock_scenarios import SCENARIOS_BY_ID, VIX_CHF_REQUEST
+from quantlab.planner_evaluation import load_golden
 from quantlab.registry import REGISTRY
 
 README = (PROJECT_ROOT / "README.md").read_text(encoding="utf-8")
@@ -109,7 +109,7 @@ def test_scenario_1_request_is_one_constant_used_everywhere() -> None:
     assert VIX_CHF_REQUEST in GUIDE  # on one line, character for character
     # The text is written only where it is defined, and quoted in the guide.
     opening = VIX_CHF_REQUEST[:48]
-    texts = {**written_text(), "eval/golden_requests.yaml": (PROJECT_ROOT / "eval" /
+    texts = {**written_text(), "planner_eval/golden_requests.yaml": (PROJECT_ROOT / "planner_eval" /
              "golden_requests.yaml").read_text(encoding="utf-8")}  # fmt: skip
     assert sorted(path for path, text in texts.items() if opening in text) == [
         "docs/GUIDE.md",

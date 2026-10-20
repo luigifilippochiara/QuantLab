@@ -50,7 +50,7 @@ dry run, edit lock) -> `mock_scenarios` (example workflows) ->
 `narrator` (the only LLM code; OpenAI and Anthropic) -> `lineage` (manifest, replay, trace) ->
 `monitoring` (events.jsonl, the Monitoring page's metrics) -> `nodes` (run state, the
 nodes) -> `graph` (edges, checkpointer, run API; used by the app, CLI and notebooks)
--> `evaluation`, `cli`. The Streamlit app is in `app/` (user interface only).
+-> `planner_evaluation`, `cli`. The Streamlit app is in `app/` (user interface only).
 
 ## Adding a capability
 

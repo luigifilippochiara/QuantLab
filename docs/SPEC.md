@@ -78,7 +78,7 @@ quantlab/
     cli.py           # `python -m quantlab.cli demo | run | replay <run_id> | eval`
   app/streamlit_app.py + app/pages/*.py
   notebooks/01..08 (see below)
-  eval/golden_requests.yaml, eval/run_eval.py
+  planner_eval/golden_requests.yaml, planner_eval/run_eval.py
   tests/
   runs/  (gitignored: run records, plan cache, events.jsonl)
 ```
@@ -235,10 +235,10 @@ The v1 set; the current example workflows are described in the README.
 - `python -m quantlab.cli replay <run_id>`
 - `python -m quantlab.cli eval [--mode mock|live]`
 
-## Evaluation (eval/)
+## Planner evaluation (planner_eval/)
 
 - golden_requests.yaml: about 12 requests with expected capability sequence and key params (scenarios A–F plus variations), including adversarial ones expected to end in refusal or BLOCK.
-- run_eval.py: runs the planner (mock or live) on each request, validates, and reports valid-plan rate, exact capability-sequence match, capability-set Jaccard, key-param accuracy, and correct-refusal/block rate on adversarial cases. Write a markdown report to eval/reports/<timestamp>.md.
+- run_eval.py: runs the planner (mock or live) on each request, validates, and reports valid-plan rate, exact capability-sequence match, capability-set Jaccard, key-param accuracy, and correct-refusal/block rate on adversarial cases. Write a markdown report to planner_eval/reports/<timestamp>.md.
 - The README must explain that planner accuracy (does the LLM pick the right plan?) and numerical correctness (are the computations right?) are measured separately: the first by this eval, the second by unit tests.
 
 ## Tests (tests/, pytest, no network, no API key needed)

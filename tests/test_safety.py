@@ -31,7 +31,8 @@ def test_scan_would_catch_violations() -> None:
     for bad in ["eval(x)", "exec (code)", "getattr(np, name)", "importlib.import_module(m)",
                 "__import__('os')", "compile(src, 'f', 'exec')"]:  # fmt: skip
         assert FORBIDDEN.search(bad), bad
-    for fine in ["re.compile(r'x')", "execute_plan(plan)", "evaluation.run()", "model.eval_x"]:
+    for fine in ["re.compile(r'x')", "execute_plan(plan)", "planner_evaluation.run()",
+                 "model.eval_x"]:  # fmt: skip
         assert not FORBIDDEN.search(fine), fine
 
 

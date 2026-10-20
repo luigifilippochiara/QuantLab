@@ -8,7 +8,9 @@ import pytest
 
 from quantlab.config import Settings
 from quantlab.data import Catalog
-from quantlab.evaluation import (
+from quantlab.guardrails import MAX_REQUEST_WORDS
+from quantlab.mock_scenarios import SCENARIOS, SCENARIOS_BY_ID
+from quantlab.planner_evaluation import (
     ADVERSARIAL_CATEGORIES,
     AdversarialCase,
     GoldenCase,
@@ -21,8 +23,6 @@ from quantlab.evaluation import (
     write_adversarial_report,
     write_report,
 )
-from quantlab.guardrails import MAX_REQUEST_WORDS
-from quantlab.mock_scenarios import SCENARIOS, SCENARIOS_BY_ID
 
 from conftest import ARIMA_PLAN, SPREAD_PLAN, VOLATILITY_PLAN, volatility_plan
 from fakes import FakeAnthropicClient, tool_response

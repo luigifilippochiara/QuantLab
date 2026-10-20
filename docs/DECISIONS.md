@@ -282,9 +282,9 @@ is checked before planning, so a 50 KB paste costs nothing.
 expected one (or the run completed / all hashes match), 1 otherwise, so the
 commands can be used in CI.
 
-**Evaluation logic lives in `src/quantlab/evaluation.py`**, not in
-`eval/run_eval.py`: the package's CLI cannot import a script outside the
-package without dynamic imports (which the safety rules forbid). `eval/run_eval.py`
+**Evaluation logic lives in `src/quantlab/planner_evaluation.py`**, not in
+`planner_eval/run_eval.py`: the package's CLI cannot import a script outside the
+package without dynamic imports (which the safety rules forbid). `planner_eval/run_eval.py`
 is a three-line wrapper around the same code.
 
 **The golden set references example workflows by id** (`scenario: volatility_flag_success`)
@@ -406,7 +406,7 @@ was reworded only where it gave such a count or range. Alternative: keep the
 numbers and update them with each change, rejected because they were already
 stale in several places (an old range in a notebook, a count in the spec).
 
-**Evaluation reports are not committed** (`eval/reports/` is git-ignored except
+**Evaluation reports are not committed** (`planner_eval/reports/` is git-ignored except
 for a `.gitkeep`): they are timestamped outputs; regenerate them with
 `quantlab.cli eval`.
 
@@ -1293,7 +1293,7 @@ with the image would change the sidebar and header layout for no gain.
 finding confirmed by hand, found nothing to remove in the tracked code: the names
 vulture reports are used by a framework (Pydantic `model_config` and record fields,
 Streamlit `st.session_state` keys, pytest fixtures requested for their side effects).
-`eval/run_eval.py` duplicates `cli eval` but is documented and kept.
+`planner_eval/run_eval.py` duplicates `cli eval` but is documented and kept.
 
 ## Guardrails page: shorter texts and filters
 
@@ -1639,7 +1639,7 @@ last. Nothing else about either example changed: request, plan, codes and result
 the same. The number is part of the label ("2 · Frequency-alignment protection"), of
 the MockPlanner's aliases ("2") and of the two eval case ids, now
 `s2_spread_frequency_mismatch` and `s5_vix_full_sample_lookahead`, reordered in
-`eval/golden_requests.yaml`. The golden fixture stays frozen: a `RENUMBERING`
+`planner_eval/golden_requests.yaml`. The golden fixture stays frozen: a `RENUMBERING`
 migration in `tests/test_golden_scenarios.py` maps the recorded ids to the new ones.
 Earlier sections of this file keep the numbers they were written with. Alternative:
 keep the old eval ids, rejected because an "s2_" case would then be example 5.
@@ -1883,7 +1883,7 @@ forecast, 4 the prompt injection, and 5 buy the dip (moved from 6).
 
 ## An adversarial evaluation set for the planner's boundary
 
-**A second evaluation set, `eval/adversarial_requests.yaml`**, checks the boundary that
+**A second evaluation set, `planner_eval/adversarial_requests.yaml`**, checks the boundary that
 the golden set does not: should the planner refuse, or plan? It has 33 requests in eight
 categories, 3 to 5 each: vague, out-of-scope methods, unavailable data, advice,
 injection, off-topic, mixed (a valid part plus an unsupported part), and valid but
@@ -2463,3 +2463,19 @@ on the wiring. **Alternatives.** `state.py` + `graph.py` (the nodes would stay m
 the wiring); `graph.py` + a `runs.py` API module (the run API is about 120 lines, and the
 nodes would stay in `graph.py`); keep one file (the earlier decision: everything in one
 place, but about 1,200 lines to read for the flow).
+
+
+## evaluation renamed to planner evaluation
+
+**What.** `src/quantlab/evaluation.py` is now `planner_evaluation.py`, the `eval/` folder
+is `planner_eval/` (the golden and adversarial sets, `run_eval.py` and the git-ignored
+reports, file names unchanged), and `tests/test_evaluation.py` is
+`tests/test_planner_evaluation.py`. Moved with `git mv`: no function, metric or case
+changed, and no alias is left under the old names, so a stale import fails loudly. The
+CLI command stays `cli eval` with the same options; only its help text and docstrings
+say "planner evaluation". Older entries in this file now name the new paths. **Why.** It
+measures only the planner: whether it picks the right plan, and refuses when it should.
+Whether the computations are right is measured by the unit tests, and "evaluation" alone
+suggested it judged the whole system. **Alternative.** Keep the old names, rejected for
+that reason; renaming the CLI command as well was not done, so the documented commands
+keep working.
