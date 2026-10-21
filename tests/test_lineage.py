@@ -136,7 +136,7 @@ def test_volatility_plan_trace_from_the_test_back_to_the_nasdaq_file(
     assert [(s.step_id, s.capability) for s in result.chain] == [
         ("s8", "hac_mean_difference"),
         ("s6", "forward_return"),
-        ("s5", "flag_regime"),
+        ("s5", "flag_quantile"),
         ("s4", "rolling_volatility"),
         ("s3", "compute_returns"),
         ("s2", "resample"),

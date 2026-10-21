@@ -66,7 +66,7 @@ def test_mock_evaluation_scores_and_report(settings: Settings, tmp_path: Path) -
     path = write_report(report, tmp_path)
     text = path.read_text()
     assert "Valid-plan rate" in text and "Mock mode tests the evaluation harness" in text
-    assert "## Item checks" in text and "| flag_regime.direction | below | below | yes |" in text
+    assert "## Item checks" in text and "| flag_quantile.direction | below | below | yes |" in text
     # The same report as the adversarial set's: accuracy per category, and each wrong
     # answer with the note on why its expectation holds.
     assert "## Accuracy per category" in text and "| example | 5/5 (100%) |" in text
@@ -118,7 +118,7 @@ def test_live_scoring_of_scenario_1_with_a_perfect_fake_planner(
     assert score.guardrails_match and all(check.match for check in score.checks)
     items = [check.item for check in score.checks]
     assert items == [f"step {i}" for i in range(1, 8)] + [
-        "flag_regime.method", "approvals", "warnings", "blocks",
+        "flag_quantile.method", "approvals", "warnings", "blocks",
     ]  # fmt: skip
 
 
@@ -136,7 +136,7 @@ VOLATILITY_CASE = EvalCase(
     key_params={
         "compute_returns": {"method": "log"},
         "rolling_volatility": {"window": 12},
-        "flag_regime": {"method": "expanding", "quantile": 0.90},
+        "flag_quantile": {"method": "expanding", "quantile": 0.90},
         "forward_return": {"method": "simple"},
     },
     guardrails={"approve": ["V10", "V10"], "warn": [], "block": []},
@@ -151,8 +151,8 @@ def test_live_scoring_with_a_perfect_fake_planner(settings: Settings, catalog: C
     assert score.guardrails_match and all(check.match for check in score.checks)
     items = [check.item for check in score.checks]
     assert items == [f"step {i}" for i in range(1, 9)] + [
-        "compute_returns.method", "rolling_volatility.window", "flag_regime.method",
-        "flag_regime.quantile", "forward_return.method", "approvals", "warnings", "blocks",
+        "compute_returns.method", "rolling_volatility.window", "flag_quantile.method",
+        "flag_quantile.quantile", "forward_return.method", "approvals", "warnings", "blocks",
     ]  # fmt: skip
 
 
@@ -184,7 +184,7 @@ def test_a_live_mismatch_shows_what_the_planner_chose_differently(
     assert wrong == {
         "step 7": ("compare_groups", "hac_mean_difference"),
         "step 8": ("hac_mean_difference", "(none)"),
-        "flag_regime.method": ("expanding", "full_sample"),
+        "flag_quantile.method": ("expanding", "full_sample"),
         "forward_return.method": ("simple", "log"),
         "approvals": ("V10, V10", "V09, V10, V10"),  # the look-ahead approval
     }

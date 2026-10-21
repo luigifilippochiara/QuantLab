@@ -67,10 +67,10 @@
   scenario: chf_safe_haven_success
   expect: plan
   holdout: false
-  capabilities: [load_series, resample, flag_regime, load_series, resample, forward_return,
+  capabilities: [load_series, resample, flag_quantile, load_series, resample, forward_return,
                  hac_mean_difference]
   key_params:
-    flag_regime: {method: expanding}
+    flag_quantile: {method: expanding}
   guardrails: {approve: [V10], warn: [], block: []}
   note: >-
     Example 1's request names the series, a threshold from past data only and the test;
@@ -87,7 +87,7 @@
   scenario: spread_frequency_mismatch_block
   expect: refuse_or_block
   holdout: false
-  capabilities: [load_series, resample, load_series, spread, flag_regime]
+  capabilities: [load_series, resample, load_series, spread, flag_quantile]
   guardrails: {approve: [V09], warn: [], block: [V08]}
   note: >-
     The canned plan follows the request (weekly 10-year, daily 2-year), then flags the
@@ -119,10 +119,10 @@
   scenario: buy_the_dip_tech
   expect: plan
   holdout: false
-  capabilities: [load_series, resample, compute_returns, flag_regime, forward_return,
+  capabilities: [load_series, resample, compute_returns, flag_quantile, forward_return,
                  hac_mean_difference]
   key_params:
-    flag_regime: {quantile: 0.10, direction: below}
+    flag_quantile: {quantile: 0.10, direction: below}
   guardrails: {approve: [V10, V10], warn: [], block: []}
   note: >-
     Buy the dip: the bottom 10% of weekly returns (direction below; the registry's
@@ -139,9 +139,9 @@
   datasets: [VIXCLS]
   expect: plan
   holdout: false
-  capabilities: [load_series, flag_regime]
+  capabilities: [load_series, flag_quantile]
   key_params:
-    flag_regime: {quantile: 0.95, method: expanding}
+    flag_quantile: {quantile: 0.95, method: expanding}
 
 - id: nasdaq_weekly_log_vol
   category: variation
@@ -199,10 +199,10 @@
   datasets: [VIXCLS, DEXSZUS]
   expect: plan
   holdout: false
-  capabilities: [load_series, resample, flag_regime, load_series, resample, forward_return,
+  capabilities: [load_series, resample, flag_quantile, load_series, resample, forward_return,
                  hac_mean_difference]
   key_params:
-    flag_regime: {method: expanding}
+    flag_quantile: {method: expanding}
   guardrails: {approve: [V10], warn: [], block: []}
 
 - id: p1_chf_long
@@ -211,10 +211,10 @@
   datasets: [VIXCLS, DEXSZUS]
   expect: plan
   holdout: false
-  capabilities: [load_series, resample, flag_regime, load_series, resample, forward_return,
+  capabilities: [load_series, resample, flag_quantile, load_series, resample, forward_return,
                  hac_mean_difference]
   key_params:
-    flag_regime: {method: expanding}
+    flag_quantile: {method: expanding}
   guardrails: {approve: [V10], warn: [], block: []}
 
 - id: p1_chf_plain
@@ -223,10 +223,10 @@
   datasets: [VIXCLS, DEXSZUS]
   expect: plan
   holdout: true
-  capabilities: [load_series, resample, flag_regime, load_series, resample, forward_return,
+  capabilities: [load_series, resample, flag_quantile, load_series, resample, forward_return,
                  hac_mean_difference]
   key_params:
-    flag_regime: {method: expanding}
+    flag_quantile: {method: expanding}
   guardrails: {approve: [V10], warn: [], block: []}
 
 - id: p1_chf_technical
@@ -235,11 +235,11 @@
   datasets: [VIXCLS, DEXSZUS]
   expect: plan
   holdout: false
-  capabilities: [load_series, resample, flag_regime, load_series, resample, forward_return,
+  capabilities: [load_series, resample, flag_quantile, load_series, resample, forward_return,
                  hac_mean_difference]
   key_params:
     resample: {freq: W}
-    flag_regime: {quantile: 0.90, method: expanding}
+    flag_quantile: {quantile: 0.90, method: expanding}
     forward_return: {method: simple}
   guardrails: {approve: [V10], warn: [], block: []}
   note: >-
@@ -252,10 +252,10 @@
   datasets: [NASDAQCOM]
   expect: plan
   holdout: false
-  capabilities: [load_series, resample, compute_returns, flag_regime, forward_return,
+  capabilities: [load_series, resample, compute_returns, flag_quantile, forward_return,
                  hac_mean_difference]
   key_params:
-    flag_regime: {quantile: 0.10, direction: below}
+    flag_quantile: {quantile: 0.10, direction: below}
   guardrails: {approve: [V10, V10], warn: [], block: []}
 
 - id: p5_dip_long
@@ -264,11 +264,11 @@
   datasets: [NASDAQCOM]
   expect: plan
   holdout: true
-  capabilities: [load_series, resample, compute_returns, flag_regime, forward_return,
+  capabilities: [load_series, resample, compute_returns, flag_quantile, forward_return,
                  hac_mean_difference]
   key_params:
     resample: {freq: W}
-    flag_regime: {quantile: 0.10, direction: below}
+    flag_quantile: {quantile: 0.10, direction: below}
   guardrails: {approve: [V10, V10], warn: [], block: []}
 
 - id: p5_dip_plain
@@ -277,10 +277,10 @@
   datasets: [NASDAQCOM]
   expect: plan
   holdout: false
-  capabilities: [load_series, resample, compute_returns, flag_regime, forward_return,
+  capabilities: [load_series, resample, compute_returns, flag_quantile, forward_return,
                  hac_mean_difference]
   key_params:
-    flag_regime: {quantile: 0.10, direction: below}
+    flag_quantile: {quantile: 0.10, direction: below}
   guardrails: {approve: [V10, V10], warn: [], block: []}
 
 - id: p5_dip_technical
@@ -289,12 +289,12 @@
   datasets: [NASDAQCOM]
   expect: plan
   holdout: false
-  capabilities: [load_series, resample, compute_returns, flag_regime, forward_return,
+  capabilities: [load_series, resample, compute_returns, flag_quantile, forward_return,
                  hac_mean_difference]
   key_params:
     resample: {freq: W}
     compute_returns: {method: simple}
-    flag_regime: {quantile: 0.10, method: expanding, direction: below}
+    flag_quantile: {quantile: 0.10, method: expanding, direction: below}
   guardrails: {approve: [V10, V10], warn: [], block: []}
 
 # --- Capability coverage -------------------------------------------------------------
@@ -367,10 +367,10 @@
   datasets: [DGS2]
   expect: plan
   holdout: false
-  capabilities: [load_series, resample, flag_regime]
+  capabilities: [load_series, resample, flag_quantile]
   key_params:
     resample: {freq: W}
-    flag_regime: {quantile: 0.90, method: expanding}
+    flag_quantile: {quantile: 0.90, method: expanding}
 
 - id: cov_forward_sp500_after_vix
   category: capability
@@ -378,7 +378,7 @@
   datasets: [VIXCLS, SP500]
   expect: plan
   holdout: false
-  capabilities: [load_series, resample, flag_regime, load_series, resample, forward_return,
+  capabilities: [load_series, resample, flag_quantile, load_series, resample, forward_return,
                  compare_groups]
   note: >-
     The following week's return is a forward return, used only as the comparison's
@@ -390,9 +390,9 @@
   datasets: [VIXCLS, DGS10]
   expect: plan
   holdout: true
-  capabilities: [load_series, flag_regime, load_series, difference, compare_groups]
+  capabilities: [load_series, flag_quantile, load_series, difference, compare_groups]
   key_params:
-    flag_regime: {quantile: 0.95}
+    flag_quantile: {quantile: 0.95}
 
 - id: cov_test_sp500_on_vix_days
   category: capability
@@ -400,9 +400,9 @@
   datasets: [VIXCLS, SP500]
   expect: plan
   holdout: false
-  capabilities: [load_series, flag_regime, load_series, compute_returns, hac_mean_difference]
+  capabilities: [load_series, flag_quantile, load_series, compute_returns, hac_mean_difference]
   key_params:
-    flag_regime: {quantile: 0.90}
+    flag_quantile: {quantile: 0.90}
 
 # --- Parameter coverage --------------------------------------------------------------
 # Requests that state a value other than the registry's default.
@@ -446,10 +446,10 @@
   datasets: [DEXSZUS]
   expect: plan
   holdout: false
-  capabilities: [load_series, resample, compute_returns, flag_regime]
+  capabilities: [load_series, resample, compute_returns, flag_quantile]
   key_params:
     resample: {freq: M}
-    flag_regime: {quantile: 0.05, direction: below}
+    flag_quantile: {quantile: 0.05, direction: below}
 
 - id: param_sp500_13w_simple_returns
   category: parameter
@@ -468,10 +468,10 @@
   datasets: [VIXCLS]
   expect: plan
   holdout: true
-  capabilities: [load_series, resample, flag_regime]
+  capabilities: [load_series, resample, flag_quantile]
   key_params:
     resample: {freq: W}
-    flag_regime: {quantile: 0.90, method: full_sample}
+    flag_quantile: {quantile: 0.90, method: full_sample}
   guardrails: {approve: [V09], warn: [], block: []}
   note: >-
     The user asks for the full-sample threshold explicitly, so the planner uses it and
@@ -483,10 +483,10 @@
   datasets: [NASDAQCOM]
   expect: plan
   holdout: false
-  capabilities: [load_series, resample, compute_returns, flag_regime, forward_return,
+  capabilities: [load_series, resample, compute_returns, flag_quantile, forward_return,
                  compare_groups]
   key_params:
-    flag_regime: {quantile: 0.10, direction: below}
+    flag_quantile: {quantile: 0.10, direction: below}
   note: >-
     Example 5's question described rather than tested: compare_groups, not
     hac_mean_difference.
@@ -516,11 +516,11 @@
   datasets: [VIXCLS, NASDAQCOM]
   expect: plan
   holdout: false
-  capabilities: [load_series, resample, flag_regime, load_series, resample, compute_returns,
+  capabilities: [load_series, resample, flag_quantile, load_series, resample, compute_returns,
                  compare_groups]
   key_params:
     resample: {freq: W}
-    flag_regime: {quantile: 0.90}
+    flag_quantile: {quantile: 0.90}
   guardrails: {approve: [V10], warn: [], block: []}
   note: >-
     The VIX is daily and the returns weekly: the VIX must be resampled to weekly before
@@ -532,11 +532,11 @@
   datasets: [SP500, DEXSZUS]
   expect: plan
   holdout: true
-  capabilities: [load_series, resample, compute_returns, flag_regime, load_series, resample,
+  capabilities: [load_series, resample, compute_returns, flag_quantile, load_series, resample,
                  forward_return, hac_mean_difference]
   key_params:
     resample: {freq: W}
-    flag_regime: {quantile: 0.10, direction: below}
+    flag_quantile: {quantile: 0.10, direction: below}
   guardrails: {approve: [V10, V10], warn: [], block: []}
   note: >-
     The week after is a forward return of USD/CHF, used only as the test's outcome
@@ -561,10 +561,10 @@
   datasets: [VIXCLS]
   expect: plan
   holdout: false
-  capabilities: [load_series, resample, flag_regime]
+  capabilities: [load_series, resample, flag_quantile]
   key_params:
     resample: {freq: W}
-    flag_regime: {method: expanding}
+    flag_quantile: {method: expanding}
   guardrails: {approve: [], warn: [], block: []}
   note: >-
     No threshold method stated: the planner must take the expanding one (no look-ahead,
@@ -576,11 +576,11 @@
   datasets: [DGS10, NASDAQCOM]
   expect: plan
   holdout: true
-  capabilities: [load_series, resample, difference, flag_regime, load_series, resample,
+  capabilities: [load_series, resample, difference, flag_quantile, load_series, resample,
                  compute_returns, hac_mean_difference]
   key_params:
     resample: {freq: W}
-    flag_regime: {direction: above}
+    flag_quantile: {direction: above}
   guardrails: {approve: [V10], warn: [], block: []}
   note: >-
     "Significant" asks for the test, not a description; the yield's rise is its weekly
@@ -610,11 +610,11 @@
   datasets: []
   expect: plan
   holdout: false
-  capabilities: [load_series, resample, compute_returns, flag_regime]
+  capabilities: [load_series, resample, compute_returns, flag_quantile]
   key_params:
     load_series: {dataset_id: DEXSZUS}
     resample: {freq: M}
-    flag_regime: {quantile: 0.10, direction: below}
+    flag_quantile: {quantile: 0.10, direction: below}
   note: >-
     DEXSZUS is quoted in francs per dollar, so a stronger franc is a fall: the lower
     tail.

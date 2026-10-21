@@ -367,7 +367,7 @@ def test_a_fixable_block_does_not_reject_the_plan(catalog: Catalog) -> None:
     ("capability", "inputs", "params"),
     [
         ("rolling_volatility", {"series": "s6"}, {"window": 12}),
-        ("flag_regime", {"series": "s6"}, {}),
+        ("flag_quantile", {"series": "s6"}, {}),
         ("compute_returns", {"series": "s6"}, {"method": "log"}),
         ("difference", {"series": "s6"}, {"periods": 1}),
         ("spread", {"a": "s6", "b": "s3"}, {}),

@@ -153,7 +153,7 @@ from that version on.
 | C04 | `difference` | Changes of a rate or yield, in its own units |
 | C05 | `spread` | a - b on the dates both series share |
 | C06 | `rolling_volatility` | Trailing rolling standard deviation, annualised |
-| C07 | `flag_regime` | Flag periods above, or below, a quantile threshold (e.g. high volatility, or the most negative spreads) |
+| C07 | `flag_quantile` | Flag periods above, or below, a quantile threshold (e.g. high volatility, or the most negative spreads) |
 | C08 | `forward_return` | The return from the close of t to the close of t+1 (the next period), stamped at t (an outcome only) |
 | C09 | `compare_groups` | Mean and standard deviation of a series in flagged vs normal periods, and the number of flagged episodes (descriptive, no test) |
 | C10 | `hac_mean_difference` | Significance test of the difference in mean outcome between flagged and normal periods (Newey-West standard errors) |

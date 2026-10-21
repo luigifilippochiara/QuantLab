@@ -40,7 +40,7 @@ def synthetic_price(n: int, seed: int, start_level: float = 100.0) -> np.ndarray
 
     The regime switches with a small daily probability, so high-volatility
     episodes come in contiguous runs, like real markets. That gives
-    flag_regime real high-volatility periods to find.
+    flag_quantile real high-volatility periods to find.
     """
     rng = np.random.default_rng(seed)
     stressed = np.zeros(n, dtype=bool)
@@ -237,7 +237,7 @@ VOLATILITY_PLAN: dict[str, Any] = {
         },
         {
             "id": "s5",
-            "capability": "flag_regime",
+            "capability": "flag_quantile",
             "inputs": {"series": "s4"},
             "params": {
                 "method": "expanding",
@@ -291,7 +291,7 @@ LOOK_AHEAD_PLAN: dict[str, Any] = {
         {"id": "s1", "capability": "load_series", "params": {"dataset_id": "VIXCLS"}},
         {
             "id": "s2",
-            "capability": "flag_regime",
+            "capability": "flag_quantile",
             "inputs": {"series": "s1"},
             "params": {"method": "full_sample", "quantile": 0.95, "direction": "above"},
         },

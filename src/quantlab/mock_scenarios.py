@@ -14,7 +14,7 @@ the MockPlanner know these five and nothing else.
    with an E04 warning: the VIX starts in 1990. Its result carries the audit trail.
 2. Frequency-alignment protection (`spread_frequency_mismatch_block`): when was
    the yield curve most negative? The spread of a weekly and a daily yield, planned
-   exactly as requested, then its bottom 10% over the whole history (`flag_regime`
+   exactly as requested, then its bottom 10% over the whole history (`flag_quantile`
    with direction below, a full-sample threshold that needs the look-ahead approval,
    V09). The validator, not the planner, catches the mismatch (V08
    FREQUENCY_MISMATCH) before anything runs.
@@ -29,7 +29,7 @@ the MockPlanner know these five and nothing else.
    the planner refusing; this one shows the wall that holds when it does not.
 5. Buy the dip in tech? (`buy_the_dip_tech`): does the NASDAQ's following week
    differ after its biggest drops? The weeks whose return is in the bottom 10% of
-   past weekly returns (`flag_regime` with direction below and the registry's
+   past weekly returns (`flag_quantile` with direction below and the registry's
    expanding threshold), then a significance test of the following week's return,
    which reports both groups' means. It runs after the two return-method approvals
    (V10, on s3 and s5).
@@ -182,7 +182,7 @@ VIX_CHF_STEPS = [
     # and no rolling volatility. "High" is read as the top 10%: above the 90th
     # percentile; with the expanding method each threshold uses past weeks only
     # (after 52 weeks of history), so every flag could have been set at the time.
-    _step("s3", "flag_regime", {"series": "s2"},
+    _step("s3", "flag_quantile", {"series": "s2"},
           {"method": "expanding", "quantile": 0.90, "min_periods": 52, "direction": "above"},
           rationale="Flag weeks when the VIX is above the 90th percentile of its past levels."),
     # DEXSZUS is quoted in Swiss francs per US dollar (USD/CHF): a fall means the
@@ -275,7 +275,7 @@ DIP_STEPS = [
     # "The bottom 10%": below the 10th percentile of weekly returns. The registry's
     # default threshold is expanding (past data only, after 52 weeks of history), so
     # every dip could have been seen at the time and no look-ahead approval is needed.
-    _step("s4", "flag_regime", {"series": "s3"}, {"quantile": 0.10, "direction": "below"},
+    _step("s4", "flag_quantile", {"series": "s3"}, {"quantile": 0.10, "direction": "below"},
           rationale="Flag weeks below the 10th percentile of past weekly returns: the dips."),
     # The outcome: next week's SIMPLE return, from the weekly prices (s2), so it starts
     # at the close of the dip week and never overlaps the drop itself.
@@ -370,7 +370,7 @@ SCENARIOS: list[Scenario] = [
                 # spread). It needs the look-ahead approval (V09).
                 _step(
                     "s5",
-                    "flag_regime",
+                    "flag_quantile",
                     {"series": "s4"},
                     {
                         "method": "full_sample",

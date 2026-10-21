@@ -434,7 +434,7 @@ def deterministic_narrative(
             what = {"rolling_volatility": "rolling volatility", "spread": "spread",
                     "difference": "change"}[cap]  # fmt: skip
             sentences.append(f"The latest {what} ({sid}) is {d['last_value']} on {d['end']}.")
-        elif cap == "flag_regime":
+        elif cap == "flag_quantile":
             sentences.append(
                 f"{d['n_flagged']} of {d['n_obs']} observations (a share of "
                 f"{d['share_flagged']}) were flagged, in {d['n_episodes']} distinct episodes."

@@ -27,7 +27,8 @@ snapshots.
   volatility) became example 1, the earlier example 1 moved to example 6 and
   example 3's forecast request moved to the S&P 500.
 - "yield_curve_below": all six examples and the mock eval set, recorded after
-  commit 24372ea, when flag_regime gained `direction` (below: the lower tail) and
+  commit 24372ea, when flag_quantile (then named flag_regime) gained `direction`
+  (below: the lower tail) and
   example 2 asked for the weeks when the yield curve was most negative.
 - "scenario_1_vix_chf": all six examples and the mock eval set, recorded after
   commit 1754629, when example 1 flagged stress weeks with the VIX level and
@@ -63,7 +64,7 @@ the older records then no longer vouch for; the renumbering swapped examples 2 a
 5, so their eval cases' ids (which start with the example number) were renamed; the
 new example 1 moved the earlier one, unchanged, to example 6 under a new id (and its
 eval case with it). Example 3's new request leaves its recorded result as it was (a
-refusal records no dataset). flag_regime's new `direction` parameter adds
+refusal records no dataset). flag_quantile's new `direction` parameter adds
 direction="above" (the default, the old behaviour) to every recorded flag step, and
 example 2's new question replaced it and its eval case; the VIX version of example 1
 replaced examples 1 and 5 and their eval cases; buy the dip replaced example 6 and
@@ -75,7 +76,9 @@ mean_flagged changed example 5's results (its eval case, a plan and issues, is
 unchanged); example 5's test-only plan then replaced it and its eval case, and
 example 1's plan in the live planner's order replaced it and its eval case, and
 example 4's single unregistered step replaced it and its eval case. The golden set
-then grew without changing any earlier case, so it needed no migration. No narrative
+then grew without changing any earlier case, so it needed no migration. Every record
+names the flagging capability flag_regime, renamed flag_quantile afterwards: the
+rename translates the name in every recorded plan and step record. No narrative
 raises N01, and no example or eval request raises R01.
 
 The examples run through the graph (graph.run_graph), the orchestrator. Every record
@@ -144,6 +147,7 @@ class Migration:
         replaced: example workflows and eval cases replaced on purpose: what an older
             record holds for them no longer applies, and a newer record covers them.
         renamed: example workflows and eval cases renamed on purpose: old id -> new id.
+        renamed_capabilities: capabilities renamed on purpose: old name -> new name.
     """
 
     codes: dict[str, str]
@@ -152,6 +156,7 @@ class Migration:
     replaced: tuple[str, ...] = ()
     renamed: dict[str, str] = field(default_factory=dict)
     added_params: dict[str, dict[str, Any]] = field(default_factory=dict)
+    renamed_capabilities: dict[str, str] = field(default_factory=dict)
 
 
 # Stage naming: L planner -> P, G validator -> V, R executor -> E (same numbers),
@@ -192,9 +197,10 @@ SCENARIO_1_MOVE = Migration(
     {code: code for code in GUARDRAILS}, {}, False, renamed=MOVED_SCENARIO_1_IDS
 )
 
-# Direction: flag_regime gained `direction`, whose default ("above") is the old
-# behaviour; example 2 now asks for the weeks when the yield curve was most negative,
-# so it and its eval case (under both ids it has had) were replaced.
+# Direction: flag_quantile (then named flag_regime, the name its records hold until
+# CAPABILITY_RENAME) gained `direction`, whose default ("above") is the old behaviour;
+# example 2 now asks for the weeks when the yield curve was most negative, so it and its
+# eval case (under both ids it has had) were replaced.
 REPLACED_BY_CURVE = (
     "spread_frequency_mismatch_block",
     "s5_spread_frequency_mismatch",
@@ -289,6 +295,15 @@ SCENARIO_4_SINGLE_STEP = Migration(
     {code: code for code in GUARDRAILS}, {}, False, REPLACED_BY_SCENARIO_4_SINGLE_STEP
 )
 
+# Capability rename: flag_regime became flag_quantile (the same code, C07, function,
+# parameters and results). Every record predates it.
+CAPABILITY_RENAME = Migration(
+    {code: code for code in GUARDRAILS},
+    {},
+    False,
+    renamed_capabilities={"flag_regime": "flag_quantile"},
+)
+
 # The changes made since each record was recorded, oldest first.
 MIGRATIONS = {
     "before_simplification": (
@@ -306,6 +321,7 @@ MIGRATIONS = {
         SCENARIO_5_TEST_ONLY,
         SCENARIO_1_LIVE_ORDER,
         SCENARIO_4_SINGLE_STEP,
+        CAPABILITY_RENAME,
     ),
     "final_examples": (
         RESTRUCTURE,
@@ -321,6 +337,7 @@ MIGRATIONS = {
         SCENARIO_5_TEST_ONLY,
         SCENARIO_1_LIVE_ORDER,
         SCENARIO_4_SINGLE_STEP,
+        CAPABILITY_RENAME,
     ),
     "before_restructure": (
         RESTRUCTURE,
@@ -336,6 +353,7 @@ MIGRATIONS = {
         SCENARIO_5_TEST_ONLY,
         SCENARIO_1_LIVE_ORDER,
         SCENARIO_4_SINGLE_STEP,
+        CAPABILITY_RENAME,
     ),
     "before_stage_codes": (
         STAGES,
@@ -350,6 +368,7 @@ MIGRATIONS = {
         SCENARIO_5_TEST_ONLY,
         SCENARIO_1_LIVE_ORDER,
         SCENARIO_4_SINGLE_STEP,
+        CAPABILITY_RENAME,
     ),
     "simulated_injection": (
         RENUMBERING,
@@ -362,6 +381,7 @@ MIGRATIONS = {
         SCENARIO_5_TEST_ONLY,
         SCENARIO_1_LIVE_ORDER,
         SCENARIO_4_SINGLE_STEP,
+        CAPABILITY_RENAME,
     ),
     "scenario_1_nasdaq_vol_chf": (
         DIRECTION,
@@ -372,6 +392,7 @@ MIGRATIONS = {
         SCENARIO_5_TEST_ONLY,
         SCENARIO_1_LIVE_ORDER,
         SCENARIO_4_SINGLE_STEP,
+        CAPABILITY_RENAME,
     ),
     "yield_curve_below": (
         VIX_SCENARIO_1,
@@ -381,6 +402,7 @@ MIGRATIONS = {
         SCENARIO_5_TEST_ONLY,
         SCENARIO_1_LIVE_ORDER,
         SCENARIO_4_SINGLE_STEP,
+        CAPABILITY_RENAME,
     ),
     "scenario_1_vix_chf": (
         BUY_THE_DIP,
@@ -389,6 +411,7 @@ MIGRATIONS = {
         SCENARIO_5_TEST_ONLY,
         SCENARIO_1_LIVE_ORDER,
         SCENARIO_4_SINGLE_STEP,
+        CAPABILITY_RENAME,
     ),
     "buy_the_dip": (
         LOOK_AHEAD_REMOVED,
@@ -396,14 +419,20 @@ MIGRATIONS = {
         SCENARIO_5_TEST_ONLY,
         SCENARIO_1_LIVE_ORDER,
         SCENARIO_4_SINGLE_STEP,
+        CAPABILITY_RENAME,
     ),
-    "hac_both_means": (SCENARIO_5_TEST_ONLY, SCENARIO_1_LIVE_ORDER, SCENARIO_4_SINGLE_STEP),
-    "scenario_5_test_only": (SCENARIO_1_LIVE_ORDER, SCENARIO_4_SINGLE_STEP),
-    "scenario_1_live_order": (SCENARIO_4_SINGLE_STEP,),
-    "scenario_4_single_step": (),
+    "hac_both_means": (
+        SCENARIO_5_TEST_ONLY,
+        SCENARIO_1_LIVE_ORDER,
+        SCENARIO_4_SINGLE_STEP,
+        CAPABILITY_RENAME,
+    ),
+    "scenario_5_test_only": (SCENARIO_1_LIVE_ORDER, SCENARIO_4_SINGLE_STEP, CAPABILITY_RENAME),
+    "scenario_1_live_order": (SCENARIO_4_SINGLE_STEP, CAPABILITY_RENAME),
+    "scenario_4_single_step": (CAPABILITY_RENAME,),
     # The golden set grew by 39 cases; no existing case or example changed, so the
     # records above need no migration for it, and this record covers the new cases.
-    "golden_set_grown": (),
+    "golden_set_grown": (CAPABILITY_RENAME,),
 }
 # The records that hold (part of) the mock eval set.
 EVAL_RECORDS = (
@@ -587,11 +616,21 @@ def migrate_issue(issue: dict[str, Any], migration: Migration) -> dict[str, Any]
     return migrated
 
 
+def migrate_capability(name: str, migration: Migration) -> str:
+    """A recorded capability name after one migration (unchanged unless it was renamed)."""
+    return migration.renamed_capabilities.get(name, name)
+
+
 def migrate_step(step: dict[str, Any], migration: Migration) -> dict[str, Any]:
-    """A recorded plan step without the parameters the migration removed, with those it added."""
+    """A recorded plan step without the parameters the migration removed, with those it
+    added, under its new capability name (the parameters are keyed by the recorded name)."""
     removed = migration.removed_params.get(step["capability"], ())
     kept = {k: v for k, v in step["params"].items() if k not in removed}
-    return {**step, "params": {**kept, **migration.added_params.get(step["capability"], {})}}
+    return {
+        **step,
+        "capability": migrate_capability(step["capability"], migration),
+        "params": {**kept, **migration.added_params.get(step["capability"], {})},
+    }
 
 
 def migrate_result(recorded: dict[str, Any], migration: Migration) -> dict[str, Any]:
@@ -602,6 +641,10 @@ def migrate_result(recorded: dict[str, Any], migration: Migration) -> dict[str, 
         "runtime_issues": [migrate_issue(i, migration) for i in recorded["runtime_issues"]],
         "approvals": [migrate_issue_id(issue_id, migration) for issue_id in recorded["approvals"]],
         "plan": [migrate_step(step, migration) for step in recorded["plan"]],
+        "steps": [
+            {**record, "capability": migrate_capability(record["capability"], migration)}
+            for record in recorded["steps"]
+        ],
     }
 
 

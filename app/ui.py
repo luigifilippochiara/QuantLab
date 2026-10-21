@@ -588,10 +588,10 @@ def render_issue(issue: Issue, titles: dict[str, str] | None = None) -> None:
 
 
 def regime_charts(plan_steps: list[Any], artifacts: dict[str, Artifact]) -> dict[str, str]:
-    """Map each flag_regime step to the series step its flags were computed from.
+    """Map each flag_quantile step to the series step its flags were computed from.
 
     The regime chart (that series, its flagged periods shaded) belongs in the
-    flag_regime step's section. The step is found by its capability, wherever it is in
+    flag_quantile step's section. The step is found by its capability, wherever it is in
     the plan; only steps whose flags and series both exist are included.
 
     Args:
@@ -599,12 +599,12 @@ def regime_charts(plan_steps: list[Any], artifacts: dict[str, Artifact]) -> dict
         artifacts: step id -> output artifact of the run.
 
     Returns:
-        flag_regime step id -> the step id of its "series" input.
+        flag_quantile step id -> the step id of its "series" input.
     """
     return {
         step.id: step.inputs["series"]
         for step in plan_steps
-        if step.capability == "flag_regime"
+        if step.capability == "flag_quantile"
         and step.id in artifacts
         and step.inputs.get("series") in artifacts
     }
@@ -619,7 +619,7 @@ def series_chart(
         step_id: the series' step id.
         capability: the capability that produced the series.
         artifact: the series artifact.
-        flags: flags to shade on it (a flag_regime output), or None.
+        flags: flags to shade on it (a flag_quantile output), or None.
     """
     meta = artifact.meta
     title = (
@@ -649,7 +649,7 @@ def render_artifact(
         capability: capability name.
         artifact: the step's output.
         catalog: the dataset catalog, to label the source datasets.
-        flagged_series: for a flag_regime output, the series its flags were computed
+        flagged_series: for a flag_quantile output, the series its flags were computed
             from, as (step id, capability, artifact): drawn here with the flagged
             periods shaded (see regime_charts).
     """

@@ -58,7 +58,7 @@ def test_mock_planner_matches_by_keyword() -> None:
     result = MockPlanner().generate_plan(
         "Is the franc safe when the VIX is high (only past data)?", []
     )
-    flags = next(s for s in result.plan.steps if s.capability == "flag_regime")
+    flags = next(s for s in result.plan.steps if s.capability == "flag_quantile")
     assert flags.params["method"] == "expanding"  # scenario 1
 
 
@@ -112,7 +112,7 @@ def test_plan_from_output_sets_system_fields_and_rejects_junk() -> None:
 
 def test_system_prompt_has_registry_and_metadata_but_no_values(catalog: Catalog) -> None:
     prompt = build_system_prompt(catalog, ["NASDAQCOM"])
-    assert '"name": "flag_regime"' in prompt and "cannot_fulfill" in prompt
+    assert '"name": "flag_quantile"' in prompt and "cannot_fulfill" in prompt
     assert "NASDAQCOM" in prompt and "DGS10" not in prompt
     # No data value may leak into the prompt, e.g. the latest price.
     last_price = load_dataset(catalog, "NASDAQCOM").series.iloc[-1]
@@ -224,7 +224,7 @@ def test_a_live_revision_sends_the_revision_message(settings: Settings, catalog:
     client = FakeAnthropicClient(tool_response(spread_weekly_plan()))
     revision = spread_revision(catalog)
     result = generate_plan("req", ["DGS10", "DGS2"], "live", settings, catalog, client, revision)
-    assert result.plan is not None and result.prompt_version == PROMPT_VERSION == "planner-v8"
+    assert result.plan is not None and result.prompt_version == PROMPT_VERSION == "planner-v9"
     message = client.calls[0]["messages"][0]["content"]
     assert message == build_user_message("req", ["DGS10", "DGS2"], revision)
     # The system prompt says every tagged block is data, and how to revise.

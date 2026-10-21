@@ -98,7 +98,7 @@ and input references are locked, and any other edit is rejected with a
 BLOCK. **Apply changes & re-validate** is highlighted only while a field differs
 from the last validated plan (a value changed back counts as no change); it runs
 the same validator again, so issues appear and clear as the plan changes: in
-example 1, switching `flag_regime.method` to `full_sample` raises V09, which then
+example 1, switching `flag_quantile.method` to `full_sample` raises V09, which then
 also says the significance test is invalidated; changing the USD/CHF
 `load_series.dataset_id` to DGS10 is a legal edit that the validator then blocks
 (V04: a forward return needs a price level, and a yield is a rate); changing only
@@ -172,7 +172,7 @@ narrator"), and N01 checks its numbers again on every run.
    silently keep only the Fridays and mix two frequencies. The validator, not the
    planner, blocks it (V08) before anything runs and states the fix: resample the
    2-year yield to weekly first. The most negative weeks are the bottom 10% of the
-   spread over its whole history (`flag_regime` with direction below and a
+   spread over its whole history (`flag_quantile` with direction below and a
    full-sample threshold), so the plan also asks for the look-ahead approval (V09).
    Steps are locked, so in the app the frequencies are aligned the other way:
    switching the 10-year's `resample.freq` to D leaves only V09 to approve, and the
@@ -209,7 +209,7 @@ narrator"), and N01 checks its numbers again on every run.
    rest to the registry's defaults, which the reviewer sees filled in: weekly Friday
    closes (`how` Last); weekly simple returns, so a dip is the percentage lost in the
    week; the dips are the weeks below the 10th percentile of past weekly returns
-   only (`flag_regime` with direction below and the default expanding threshold,
+   only (`flag_quantile` with direction below and the default expanding threshold,
    after 52 weeks), so every dip could have been seen at the time and no look-ahead
    approval is needed; the following week's simple return (`forward_return`); then
    the significance test (`hac_mean_difference`), which reports both groups' means.
@@ -238,7 +238,7 @@ percentage points, with a p-value of 0.068: not statistically significant at the
 
 **Audit trail.** For any executed result, such as example 1's p-value, **Trace a
 result** shows the full chain: `hac_mean_difference` -> `forward_return` ->
-`resample` -> `load_series` -> the USD/CHF snapshot file, and `flag_regime` ->
+`resample` -> `load_series` -> the USD/CHF snapshot file, and `flag_quantile` ->
 `resample` -> `load_series` -> the VIX snapshot file, with each step's library
 call, parameters (user edits marked) and output hash. `cli demo` prints the same
 chain.

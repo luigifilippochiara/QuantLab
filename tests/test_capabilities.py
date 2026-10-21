@@ -133,7 +133,7 @@ def test_rolling_volatility_of_multi_period_returns_scales_by_periods() -> None:
 def test_expanding_flags_match_independent_computation() -> None:
     rng = np.random.default_rng(0)
     values = rng.normal(size=80)
-    out = cap.flag_regime(
+    out = cap.flag_quantile(
         make_artifact(values, kind=SeriesKind.VOLATILITY), 0.8, "expanding", min_periods=20
     )
     # Independent check: for each t >= 20, compare x_t with the quantile of x_0..x_{t-1}.
@@ -147,12 +147,12 @@ def test_expanding_flags_have_no_look_ahead() -> None:
     """Changing values after t must not change any flag at or before t."""
     rng = np.random.default_rng(1)
     values = rng.normal(size=120)
-    original = cap.flag_regime(make_artifact(values), 0.9, "expanding", min_periods=20).value
+    original = cap.flag_quantile(make_artifact(values), 0.9, "expanding", 20).value
 
     t = 70
     altered_values = values.copy()
     altered_values[t + 1 :] = rng.normal(loc=50.0, size=len(values) - t - 1)  # wild future
-    altered = cap.flag_regime(make_artifact(altered_values), 0.9, "expanding", min_periods=20).value
+    altered = cap.flag_quantile(make_artifact(altered_values), 0.9, "expanding", 20).value
 
     cutoff = original.index[t - 20]  # flags start at position 20
     pd.testing.assert_series_equal(original[:cutoff], altered[:cutoff])
@@ -161,7 +161,7 @@ def test_expanding_flags_have_no_look_ahead() -> None:
 
 def test_full_sample_flags_use_one_threshold() -> None:
     values = np.arange(1.0, 21.0)
-    out = cap.flag_regime(make_artifact(values), 0.9, "full_sample", min_periods=20)
+    out = cap.flag_quantile(make_artifact(values), 0.9, "full_sample", min_periods=20)
     assert out.value.tolist() == (values > np.quantile(values, 0.9)).tolist()
     assert "future" in out.meta.notes[0]
 
@@ -170,21 +170,21 @@ def test_below_flags_the_lower_tail() -> None:
     # 1..20: the full-sample 10% quantile is 1 + 0.1 * 19 = 2.9 (linear interpolation),
     # so exactly the two lowest values are flagged.
     values = np.arange(1.0, 21.0)
-    out = cap.flag_regime(make_artifact(values), 0.10, "full_sample", direction="below")
+    out = cap.flag_quantile(make_artifact(values), 0.10, "full_sample", direction="below")
     assert out.value.tolist() == [True, True] + [False] * 18
     assert out.meta.notes[0] == "flag = value < full-sample 0.1 quantile (uses future data)"
     # Expanding: x_t against the 10% quantile of x_0..x_{t-1}, from past data only.
     rng = np.random.default_rng(2)
     values = rng.normal(size=80)
-    out = cap.flag_regime(make_artifact(values), 0.10, "expanding", 20, direction="below")
+    out = cap.flag_quantile(make_artifact(values), 0.10, "expanding", 20, direction="below")
     assert out.value.tolist() == [values[t] < np.quantile(values[:t], 0.10) for t in range(20, 80)]
 
 
 def test_a_value_equal_to_its_threshold_is_never_flagged() -> None:
     # The median of 1..5 is exactly 3: neither tail takes it, so the tails never overlap.
     values = np.arange(1.0, 6.0)
-    above = cap.flag_regime(make_artifact(values), 0.5, "full_sample").value
-    below = cap.flag_regime(make_artifact(values), 0.5, "full_sample", direction="below").value
+    above = cap.flag_quantile(make_artifact(values), 0.5, "full_sample").value
+    below = cap.flag_quantile(make_artifact(values), 0.5, "full_sample", direction="below").value
     assert above.tolist() == [False, False, False, True, True]
     assert below.tolist() == [True, True, False, False, False]
 

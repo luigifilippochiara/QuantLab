@@ -98,7 +98,7 @@ def test_every_request_matches_only_its_own_scenario(scenario: Scenario) -> None
 SCENARIO_1_PLAN = [
     ("s1", "load_series", {}, {"dataset_id": "VIXCLS"}),
     ("s2", "resample", {"series": "s1"}, {"freq": "W", "how": "last"}),
-    ("s3", "flag_regime", {"series": "s2"},
+    ("s3", "flag_quantile", {"series": "s2"},
      {"method": "expanding", "quantile": 0.90, "min_periods": 52, "direction": "above"}),
     ("s4", "load_series", {}, {"dataset_id": "DEXSZUS"}),
     ("s5", "resample", {"series": "s4"}, {"freq": "W", "how": "last"}),
@@ -129,10 +129,10 @@ def test_requests_rely_on_these_registry_defaults() -> None:
     defaults = {
         ("resample", "how"): "last",
         ("compute_returns", "periods"): 1,
-        ("flag_regime", "method"): "expanding",
-        ("flag_regime", "quantile"): 0.90,
-        ("flag_regime", "min_periods"): 52,
-        ("flag_regime", "direction"): "above",
+        ("flag_quantile", "method"): "expanding",
+        ("flag_quantile", "quantile"): 0.90,
+        ("flag_quantile", "min_periods"): 52,
+        ("flag_quantile", "direction"): "above",
     }
     for (capability, name), expected in defaults.items():
         spec_param = REGISTRY[capability].param(name)
@@ -302,7 +302,7 @@ DIP_PLAN = [
     ("s1", "load_series", {}, {"dataset_id": "NASDAQCOM"}),
     ("s2", "resample", {"series": "s1"}, {"freq": "W"}),
     ("s3", "compute_returns", {"series": "s2"}, {"method": "simple"}),
-    ("s4", "flag_regime", {"series": "s3"}, {"quantile": 0.10, "direction": "below"}),
+    ("s4", "flag_quantile", {"series": "s3"}, {"quantile": 0.10, "direction": "below"}),
     ("s5", "forward_return", {"series": "s2"}, {"method": "simple"}),
     ("s6", "hac_mean_difference", {"outcome": "s5", "flags": "s4"}, {}),
 ]  # fmt: skip
@@ -453,7 +453,7 @@ def test_scenario_2_frequency_mismatch_blocks_before_anything_runs(settings: Set
 
 def test_scenario_2_asks_for_the_bottom_tail_of_the_spread() -> None:
     flags = SCENARIOS_BY_ID["spread_frequency_mismatch_block"].plan["steps"][4]
-    assert (flags["capability"], flags["inputs"]) == ("flag_regime", {"series": "s4"})
+    assert (flags["capability"], flags["inputs"]) == ("flag_quantile", {"series": "s4"})
     assert flags["params"] == {"method": "full_sample", "quantile": 0.10, "min_periods": 52,
                                "direction": "below"}  # fmt: skip
 

@@ -113,7 +113,7 @@ def test_scenario_1_full_flow(app_env: Settings) -> None:
     assert NUMBERS_CHECKED_NOTE in captions
     # Results and trace name each capability by code and name.
     results = [e.label for e in app.expander if e.label.startswith("s")]
-    assert results[2].startswith("s3 · C07 · Flag regime · completed")
+    assert results[2].startswith("s3 · C07 · Flag quantile · completed")
     assert results[6].startswith("s7 · C10 · HAC mean difference · completed")
     # Under each USD/CHF result, and in the narrative: which way the rate reads.
     quote = "DEXSZUS is quoted as USD/CHF, in Swiss francs per US dollar"
@@ -812,8 +812,8 @@ def test_plan_steps_are_collapsed_and_approvals_stay_in_validation(app_env: Sett
         headers[2][0] == "Step 3 · C03 · Compute returns · Return type: Simple, periods: 1"
     )  # no badge; periods is the registry's default, shown filled in
     assert headers[3][0] == (
-        "Step 4 · C07 · Flag regime · Quantile: 0\\.1, Threshold from: Past data only, Flag: Below "
-        "the threshold"
+        "Step 4 · C07 · Flag quantile · Quantile: 0\\.1, Threshold from: Past data only, Flag: "
+        "Below the threshold"
     )
     assert headers[4][0] == "Step 5 · C08 · Forward return · Return type: Simple"
     assert headers[5][0] == "Step 6 · C10 · HAC mean difference"  # no parameters: no summary
@@ -852,9 +852,9 @@ def test_step_summary_falls_back_to_every_parameter(app_env: Settings) -> None:
     import ui  # importable once app_env has put app/ on the path
 
     catalog = load_catalog(app_env.catalog_path)
-    flag = Step(id="s5", capability="flag_regime", inputs={"series": "s4"},
+    flag = Step(id="s5", capability="flag_quantile", inputs={"series": "s4"},
                 params={"quantile": 0.9, "method": "expanding", "min_periods": 52})  # fmt: skip
-    spec = REGISTRY["flag_regime"]
+    spec = REGISTRY["flag_quantile"]
     assert (
         ui.step_summary(flag, spec, "W", catalog) == "Quantile: 0.9, Threshold from: Past data only"
     )
@@ -917,12 +917,12 @@ def test_flagged_spans_are_shaded_one_band_each(app_env: Settings) -> None:
         pytest.param(volatility_plan(), {"s5": "s4"}, id="volatility plan"),
     ],
 )
-def test_each_regime_chart_belongs_to_its_flag_regime_step(
+def test_each_regime_chart_belongs_to_its_flag_quantile_step(
     app_env: Settings, raw: dict, expected: dict[str, str]
 ) -> None:
     import ui  # importable once app_env has put app/ on the path
 
-    # Found by capability, wherever the step is: flag_regime step -> its series input.
+    # Found by capability, wherever the step is: flag_quantile step -> its series input.
     plan = as_plan(raw)
     ran = {step.id: None for step in plan.steps}  # every step produced an output
     assert ui.regime_charts(plan.steps, ran) == expected
@@ -933,14 +933,14 @@ def test_each_regime_chart_belongs_to_its_flag_regime_step(
     assert ui.regime_charts(plan.steps, no_series) == {}
 
 
-def test_the_regime_chart_is_in_the_open_flag_regime_section(app_env: Settings) -> None:
+def test_the_regime_chart_is_in_the_open_flag_quantile_section(app_env: Settings) -> None:
     app = plan_scenario_1(app_env)
     approve_all(app)
     button(app, "Execute plan").click().run()
     assert not app.exception, app.exception
     sections = {e.label.split(" · completed")[0]: e for e in app.expander if " · C" in e.label}
-    flags, series = sections["s3 · C07 · Flag regime"], sections["s2 · C02 · Resample"]
-    # The flag_regime section opens and holds the regime chart: the weekly VIX (its own
+    flags, series = sections["s3 · C07 · Flag quantile"], sections["s2 · C02 · Resample"]
+    # The flag_quantile section opens and holds the regime chart: the weekly VIX (its own
     # title) with the flagged weeks shaded.
     assert flags.proto.expanded
     (chart,) = flags.get("plotly_chart")
@@ -995,7 +995,7 @@ def test_every_registered_choice_has_a_label_that_round_trips(app_env: Settings)
                 assert "(in periods" not in labels.param_label(spec.name, spec_param.name)
                 assert "counted in periods of the input's frequency" in spec_param.description
                 assert labels.param_note(spec.name, spec_param.name) == PERIODS_NOTE
-    assert labels.param_note("flag_regime", "quantile") is None
+    assert labels.param_note("flag_quantile", "quantile") is None
     # Anything unmapped is shown as it is.
     assert labels.param_label("compute_returns", "periods") == "periods"
     assert labels.param_value_label("compute_returns", "periods", 1) == "1"

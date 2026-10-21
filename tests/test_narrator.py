@@ -102,7 +102,7 @@ PLAN = Plan(
     plan_id="p",
     request="r",
     steps=[
-        {"id": "s4", "capability": "flag_regime", "params": {"quantile": 0.9, "min_periods": 252}}
+        {"id": "s4", "capability": "flag_quantile", "params": {"quantile": 0.9, "min_periods": 252}}
     ],
 )
 

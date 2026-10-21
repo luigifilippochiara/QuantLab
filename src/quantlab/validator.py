@@ -552,14 +552,14 @@ def check_look_ahead(
     input_metas: dict[str, StaticMeta | None],
     tested_in: list[str],
 ) -> list[Issue]:
-    """V09 LOOK_AHEAD: flag_regime with a full-sample threshold (needs approval).
+    """V09 LOOK_AHEAD: flag_quantile with a full-sample threshold (needs approval).
 
     Without it, a threshold computed from the whole sample (including the future)
     would be used silently; flags then use information nobody had at the time,
     and any backtest looks better than reality. When the flags feed a significance
     test (`tested_in`), the message says that the test is invalidated too.
     """
-    if spec.name != "flag_regime" or params.get("method") != "full_sample":
+    if spec.name != "flag_quantile" or params.get("method") != "full_sample":
         return []
     meta = input_metas.get("series")
     period = PERIOD_NAMES.get(meta.frequency, "period") if meta else "period"

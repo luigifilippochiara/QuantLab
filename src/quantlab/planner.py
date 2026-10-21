@@ -46,8 +46,8 @@ from quantlab.validator import check_schema, planner_failure_issue
 
 # Bump whenever SYSTEM_PROMPT changes: it is part of the plan-cache key and of
 # every run record, so old cached plans are not reused with a new prompt.
-PROMPT_VERSION = "planner-v8"
-MOCK_PROMPT_VERSION = "canned-scenarios-v24"
+PROMPT_VERSION = "planner-v9"
+MOCK_PROMPT_VERSION = "canned-scenarios-v25"
 TOOL_NAME = "submit_plan"
 
 # Server-side refusal fallback (Anthropic API beta): if the model declines a
@@ -82,7 +82,7 @@ request names or the user selected.
 5. Respect what series mean: compute returns of prices and indices, but difference rates and \
 yields; resample levels before computing returns or changes; give spread two inputs with the \
 same frequency.
-6. Prefer method="expanding" in flag_regime, because it uses no future data. Use \
+6. Prefer method="expanding" in flag_quantile, because it uses no future data. Use \
 "full_sample" only if the user explicitly asks for it.
 7. Only when the request asks what happens AFTER flagged periods (for example the return in \
 the following week), compute forward_return from the same resampled price level the flags were \
@@ -97,7 +97,7 @@ significant or asks to test it. Such a comparison describes the past; it is not 
 statistical tests other than hac_mean_difference, other models or statistics, other data, code \
 execution, file, network or system access), set cannot_fulfill=true and name what is missing in \
 refusal_reason. Before declining, check whether the registered capabilities can answer the \
-question: for example, flag_regime flags the highest or the lowest values of a series. If only \
+question: for example, flag_quantile flags the highest or the lowest values of a series. If only \
 part of the request needs something outside the registry, decline the whole request and name \
 that part: never plan only the part you can do, never invent capabilities and never silently \
 substitute a different analysis.

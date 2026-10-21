@@ -476,8 +476,8 @@ st.subheader("Results")
 if state.get("execution_error"):
     st.error(ui.escape_md(state["execution_error"]), title=f"Execution {state['status']}")
 artifacts = state.get("artifacts", {})
-# flag_regime step id -> the series its flags were computed from: the regime chart is
-# drawn in the flag_regime step's section, which opens; the series' own step does not.
+# flag_quantile step id -> the series its flags were computed from: the regime chart is
+# drawn in the flag_quantile step's section, which opens; the series' own step does not.
 regimes = ui.regime_charts(plan.steps, artifacts)
 flagged_series = set(regimes.values())
 # Step id -> capability: to title the regime chart and label each fact by its step.
@@ -488,8 +488,8 @@ for step in plan.steps:
     if record is None:
         continue
     artifact = artifacts.get(step.id)
-    # Open: a table (the test), a flag_regime step with its regime chart, and a spread
-    # that no flag_regime step charts (a flagged one is shown in the flag's section).
+    # Open: a table (the test), a flag_quantile step with its regime chart, and a spread
+    # that no flag_quantile step charts (a flagged one is shown in the flag's section).
     key_output = artifact is not None and (
         artifact.data_type.value == "table"
         or step.id in regimes

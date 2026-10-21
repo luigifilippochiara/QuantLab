@@ -391,15 +391,15 @@ ROLLING_VOLATILITY = CapabilitySpec(
     summary_params=("window", "annualize"),
 )
 
-FLAG_REGIME = CapabilitySpec(
+FLAG_QUANTILE = CapabilitySpec(
     code="C07",
-    name="flag_regime",
+    name="flag_quantile",
     description=(
         "Flag observations above (or below) a quantile threshold, e.g. periods of high "
         "volatility or the most negative spreads. Prefer method=expanding: it only uses "
         "past data."
     ),
-    func=capabilities.flag_regime,
+    func=capabilities.flag_quantile,
     inputs=(
         InputSpec(
             "series",
@@ -629,7 +629,7 @@ REGISTRY: dict[str, CapabilitySpec] = {
         DIFFERENCE,
         SPREAD,
         ROLLING_VOLATILITY,
-        FLAG_REGIME,
+        FLAG_QUANTILE,
         FORWARD_RETURN,
         COMPARE_GROUPS,
         HAC_MEAN_DIFFERENCE,

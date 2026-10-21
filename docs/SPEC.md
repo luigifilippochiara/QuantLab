@@ -115,7 +115,7 @@ Each CapabilitySpec has: name, description (for the LLM), func (the wrapper; exc
 4. difference(series; periods: int 1–52) -> SERIES kind=changes. The correct transform for rates and yields.
 5. spread(a, b; both SERIES) -> SERIES kind=spread, a − b on the inner-joined index.
 6. rolling_volatility(series of kind returns/changes/spread; window: int 4–260; annualize: bool default true) -> SERIES kind=volatility. Sample std with ddof=1 × sqrt(annualisation factor of the input frequency). Records the annualisation factor as an assumption.
-7. flag_regime(series; quantile: float 0.50–0.99, default 0.90; method: "expanding" | "full_sample", default "expanding"; min_periods: int 20–520, default 52) -> FLAGS. Expanding method: threshold at t = quantile of values up to t−1 (shift by one) so a flag never uses future information. full_sample uses future data (look-ahead) and needs approval.
+7. flag_quantile(series; quantile: float 0.50–0.99, default 0.90; method: "expanding" | "full_sample", default "expanding"; min_periods: int 20–520, default 52) -> FLAGS. Expanding method: threshold at t = quantile of values up to t−1 (shift by one) so a flag never uses future information. full_sample uses future data (look-ahead) and needs approval.
 8. forward_return(returns series; horizon: int 1–26) -> SERIES kind=forward_return. Value at t = return from t+1 to t+horizon: compounded for simple returns (product of 1+r, minus 1), summed for log returns, based on return_method metadata. Comment why it starts at t+1.
 9. summary_stats(series) -> TABLE: count, mean, std, min, max, skew, excess kurtosis, start, end.
 10. compare_groups(values: SERIES; flags: FLAGS; test: "welch_t" | "mann_whitney", default "welch_t"; nonoverlapping: bool default false) -> TEST_RESULT. Inner-join values and flags, split into flagged vs normal, report n per group, mean per group, difference in means, statistic, p_value, and the number of distinct flagged episodes (contiguous runs of True). If nonoverlapping, keep every horizon-th observation (horizon from the values' metadata) before testing.
@@ -145,7 +145,7 @@ Static checks (before execution, no data values needed). Run a metadata dry-run 
 - V06 UNKNOWN_DATASET (BLOCK): dataset_id not in catalog.
 - V07 RETURNS_ON_RATES (BLOCK): compute_returns on a rate_level series; suggest difference.
 - V08 FREQUENCY_MISMATCH (BLOCK): two-input steps (spread, compare_groups, ols_hac) whose inputs have different frequencies; suggest resample.
-- V09 LOOK_AHEAD (APPROVE): flag_regime with method full_sample.
+- V09 LOOK_AHEAD (APPROVE): flag_quantile with method full_sample.
 - OVERLAPPING_OBSERVATIONS (WARN; removed since, with multi-period forward returns): compare_groups on forward_return with horizon > 1 and nonoverlapping false; suggest nonoverlapping=true or ols_hac.
 - V10 MATERIAL_ASSUMPTION (APPROVE): any capability assumption marked requires_approval (v1: return method in compute_returns).
 - P01 PLANNER_REFUSED (BLOCK): cannot_fulfill true; show refusal_reason.

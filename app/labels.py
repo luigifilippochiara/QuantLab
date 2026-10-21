@@ -24,7 +24,7 @@ PARAM_LABELS: dict[tuple[str | None, str], str] = {
     ("resample", "how"): "How",
     ("compute_returns", "method"): "Return type",
     ("forward_return", "method"): "Return type",
-    ("flag_regime", "method"): "Threshold from",
+    ("flag_quantile", "method"): "Threshold from",
     (None, "quantile"): "Quantile",
     (None, "min_periods"): "Minimum history",
     (None, "direction"): "Flag",
@@ -41,7 +41,7 @@ VALUE_LABELS: dict[tuple[str | None, str], dict[Any, str]] = {
     (None, "freq"): FREQUENCY_LABELS,
     ("compute_returns", "method"): RETURN_TYPE_LABELS,
     ("forward_return", "method"): RETURN_TYPE_LABELS,
-    ("flag_regime", "method"): {
+    ("flag_quantile", "method"): {
         "expanding": "Past data only",
         "full_sample": "Full history (look-ahead)",
     },
@@ -128,7 +128,7 @@ def param_value_label(
 def param_note(capability: str | None, name: str) -> str | None:
     """What a parameter's number is measured in, for those counted in periods; else None.
 
-    E.g. ("flag_regime", "min_periods") -> PERIODS_NOTE. Read from the registry, so a
+    E.g. ("flag_quantile", "min_periods") -> PERIODS_NOTE. Read from the registry, so a
     new parameter counted in periods gets the note too.
     """
     spec = REGISTRY.get(capability) if capability else None

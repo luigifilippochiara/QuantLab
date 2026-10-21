@@ -22,7 +22,7 @@ ASSIGNED_CODES = {
     "C04": "difference",
     "C05": "spread",
     "C06": "rolling_volatility",
-    "C07": "flag_regime",
+    "C07": "flag_quantile",
     "C08": "forward_return",
     "C09": "compare_groups",
     "C10": "hac_mean_difference",
@@ -96,7 +96,7 @@ def test_window_parameters_state_their_unit() -> None:
     """A window counts periods of the input's frequency: weeks on weekly data, days on daily."""
     by_name = {c["name"]: c for c in json.loads(llm_summary())}
     window = by_name["rolling_volatility"]["params"][0]
-    min_periods = by_name["flag_regime"]["params"][2]
+    min_periods = by_name["flag_quantile"]["params"][2]
     assert (window["name"], min_periods["name"]) == ("window", "min_periods")
     for p in (window, min_periods):
         assert p["unit"] == "periods of the input frequency"

@@ -336,11 +336,11 @@ def rolling_volatility(series: Artifact, window: int, annualize: bool = True) ->
 
 
 # ---------------------------------------------------------------------------
-# 7. flag_regime
+# 7. flag_quantile
 # ---------------------------------------------------------------------------
 
 
-def flag_regime(
+def flag_quantile(
     series: Artifact,
     quantile: float = 0.90,
     method: str = "expanding",
